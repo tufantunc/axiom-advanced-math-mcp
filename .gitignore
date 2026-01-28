@@ -137,3 +137,7 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# Build directories and files
+/tmp/giac-build
+scripts/build-giac-wasm.sh

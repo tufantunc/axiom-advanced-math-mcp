@@ -1,0 +1,71 @@
+{
+  "name": "axiom-advanced-math-mcp",
+  "version": "0.1.0",
+  "description": "Advanced Math MCP Server - Symbolic and numerical computation engine for LLMs",
+  "type": "module",
+  "main": "./dist/index.js",
+  "bin": {
+    "axiom-mcp": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "build:giac:wasm": "bash scripts/build-giac-wasm.sh",
+    "start": "node dist/cli.js",
+    "start:stdio": "node dist/cli.js --transport stdio",
+    "start:http": "node dist/http.js",
+    "dev": "tsx src/cli.ts",
+    "dev:stdio": "tsx src/cli.ts --transport stdio",
+    "dev:http": "tsx src/http.ts",
+    "test": "vitest",
+    "test:unit": "vitest run --test.unit",
+    "test:e2e": "vitest run --test.e2e",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint src --ext .ts",
+    "lint:fix": "eslint src --ext .ts --fix",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\"",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "math",
+    "cas",
+    "computer-algebra",
+    "symbolic",
+    "giac",
+    "mathjs",
+    "llm",
+    "claude"
+  ],
+  "author": "Tufan Tunç",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.25.3",
+    "express": "^4.18.2",
+    "mathjs": "^13.0.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/express": "^4.17.21",
+    "typescript": "^5.3.3",
+    "tsx": "^4.7.0",
+    "vitest": "^1.2.0",
+    "@vitest/coverage-v8": "^1.2.0",
+    "eslint": "^8.56.0",
+    "@typescript-eslint/eslint-plugin": "^6.19.0",
+    "@typescript-eslint/parser": "^6.19.0",
+    "prettier": "^3.2.4"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "files": [
+    "dist",
+    "src/server/giac",
+    "scripts",
+    "README.md",
+    "LICENSE"
+  ]
+}
