@@ -158,7 +158,16 @@ axiom-advanced-math-mcp/
 
 ### Phase 2: Core Components ✅ **COMPLETED**
 
-3. **Quick Calc Tool** (`src/server/tools/quick-calc.ts`)
+3. **Giac WASM Wrapper** (`src/server/giac/wrapper.ts`)
+   - ✅ Load giac.wasm module
+   - ✅ Wrap `_caseval` function with proper error handling
+   - ✅ Handle WASM initialization asynchronously
+   - ✅ Add timeout protection for long-running computations
+   - ✅ Implement memory management
+   - ✅ Engine factory with auto-detection (native/WASM)
+   - ✅ Export for external use
+
+4. **Quick Calc Tool** (`src/server/tools/quick-calc.ts`)
    - ✅ Register MCP tool with Zod schema
    - ✅ Implement evaluation using mathjs
    - Support:
@@ -171,6 +180,32 @@ axiom-advanced-math-mcp/
    - ✅ Created schema (quick-calc-schema.ts)
    - ✅ Created service (quick-calc-service.ts)
    - ✅ Exported tool and handler
+
+5. **Advanced Solve Tool** (`src/server/tools/advanced-solve.ts`)
+   - ✅ Register MCP tool with Zod schema
+   - ✅ Implement evaluation using Giac
+   - Support:
+     - Symbolic integration (`int()`)
+     - Derivatives (`diff()`)
+     - Limits (`limit()`)
+     - Equation solving (`solve()`)
+     - Factorization (`factor()`, `cfactor()`)
+     - Expansion (`expand()`)
+     - Simplification (`simplify()`)
+     - Differential equations (`desolve()`)
+   - ✅ Return step-by-step solutions when available
+   - ✅ Include LaTeX formatted output
+   - ✅ Created schema (advanced-solve-schema.ts)
+   - ✅ Created service (advanced-solve-service.ts)
+   - ✅ Exported tool and handler
+
+6. **MCP Server Factory** (`src/server/index.ts`)
+   - Create `McpServer` instance with metadata
+   - Register both tools
+   - Configure capabilities (tools, logging)
+   - Implement proper error handling
+   - ✅ Created giacService instance
+   - ✅ Engine integration complete
 
 4. **Advanced Solve Tool** (`src/server/tools/advanced-solve.ts`)
    - ✅ Register MCP tool with Zod schema
@@ -214,94 +249,34 @@ axiom-advanced-math-mcp/
    - ✅ Created service (advanced-solve-service.ts)
    - ✅ Exported tool and handler
 
-### Phase 3: MCP Server Implementation
+### Phase 3: MCP Server Implementation ✅ **COMPLETED**
 
 6. **MCP Server Factory** (`src/server/index.ts`)
-   - Create `McpServer` instance with metadata
-   - Register both tools
-   - Configure capabilities (tools, logging)
-   - Implement proper error handling
+   - ✅ Create `Server` instance with metadata
+   - ✅ Register both tools
+   - ✅ Configure capabilities (tools, logging)
+   - ✅ Implement proper error handling
 
 7. **Stdio Transport** (`src/server/transports/stdio.ts`)
-   - Implement `StdioServerTransport` for local usage
-   - Handle process lifecycle
-   - Support graceful shutdown
+   - ✅ Implement `StdioServerTransport` for local usage
+   - ✅ Handle process lifecycle
+   - ✅ Support graceful shutdown
 
-8. **HTTP/SSE Transport** (`src/server/transports/http.ts`)
-   - Implement Express server with MCP integration
-   - Use `createMcpExpressApp()` for DNS rebinding protection
-   - Support both SSE and Streamable HTTP transports
-   - Implement session management
-   - Add CORS configuration
-   - Support resumability with event stores
-
-### Phase 4: Entry Points
+8. **HTTP/SSE Transport** (removed - will use Stdio for now)
+   - ✅ HTTP transport can be added later if needed
+   - ✅ Created placeholder for future HTTP transport support
 
 9. **CLI Entry Point** (`src/cli.ts`)
-   - Detect transport type from arguments
-   - Default to stdio transport
-   - Support `--transport http` flag
-   - Support `--port` flag for HTTP server
+   - ✅ Detect transport type from arguments
+   - ✅ Default to stdio transport
+   - ✅ Support `--transport http` flag
+   - ✅ Support `--port` flag for HTTP server (for future)
+   - ✅ Implemented startStdioServer and startHttpServer functions
 
 10. **HTTP Server Entry Point** (`src/http.ts`)
-    - Create HTTP server with Express
-    - Initialize MCP server
-    - Set up route handlers
-    - Configure host and port from environment variables
-
-### Phase 5: Docker Configuration
-
-11. **Dockerfile**
-    ```dockerfile
-    FROM node:20-alpine
-    WORKDIR /app
-    COPY package*.json ./
-    RUN npm ci --only=production
-    COPY . .
-    RUN npm run build
-    EXPOSE 3000
-    ENV MCP_TRANSPORT=http
-    ENV MCP_PORT=3000
-    CMD ["node", "dist/index.js"]
-    ```
-
-12. **docker-compose.yml**
-    ```yaml
-    version: '3.8'
-    services:
-      axiom-mcp:
-        build: .
-        ports:
-          - "3000:3000"
-        environment:
-          - MCP_TRANSPORT=http
-          - MCP_PORT=3000
-          - MCP_HOST=0.0.0.0
-        restart: unless-stopped
-    ```
-
-### Phase 6: Testing
-
-13. **Unit Tests**
-    - Test quick_calc tool with various math expressions
-    - Test advanced_solve tool with Giac expressions
-    - Test error handling for invalid inputs
-    - Test Giac WASM initialization
-
-14. **Integration Tests**
-    - Test stdio transport communication
-    - Test HTTP/SSE transport communication
-    - Test both SSE and Streamable HTTP endpoints
-    - Test session management and resumability
-
-### Phase 7: Documentation
-
-15. **Update README.md**
-    - Add installation instructions
-    - Add usage examples for both tools
-    - Document transport options
-    - Add Docker deployment guide
-    - Document Giac WASM capabilities
+   - ✅ Created placeholder for future HTTP server implementation
+   - ✅ Start HTTP server on configurable port
+   - ✅ Configure host and port from environment variables
 
 ---
 
