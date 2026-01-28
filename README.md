@@ -1,15 +1,82 @@
-# Axiom-MCP: The Advanced Math Engine for LLMs
+# Axiom Advanced Math MCP Server
 
-Axiom-MCP gives Large Language Models (Claude, etc.) the ability to perform rigorous scientific and financial calculations. Unlike standard calculator tools, Axiom acts as a bridge to a full Computer Algebra System (CAS).
+Advanced mathematical computation engine for LLMs powered by the Model Context Protocol.
 
-### 🚀 Features
-- **Symbolic Computation:** Solve integrals, derivatives, and limits with steps (via Giac/Xcas).
-- **Financial Analysis:** Process large time-series datasets (e.g., Bitcoin OHLCV) for volatility, regression, and stochastic modeling.
-- **Hybrid Architecture:**
-  - 🟢 **Local Mode:** Runs entirely on your machine using WebAssembly and mathjs. Free and privacy-focused.
-  - ☁️ **Axiom Cloud (Coming Soon):** Offload heavy computations (Monte Carlo simulations, 500k+ row datasets) to our high-performance clusters via API key.
+## Features
 
-### 🛠 Tech Stack
-- **Core:** TypeScript, Node.js
-- **Math Engines:** Giac/Xcas (Wasm), mathjs, numeric
-- **Protocol:** Model Context Protocol (MCP) over Stdio & SSE
+- **Quick Calc**: Fast numerical calculations using math.js
+  - Arithmetic operations
+  - Unit conversions
+  - Trigonometric functions
+  - Matrix operations
+  - Complex numbers
+
+- **Advanced Solve**: Symbolic computation using Giac/Xcas
+  - Symbolic integration
+  - Derivatives
+  - Limits
+  - Equation solving
+  - Differential equations
+
+- **Multiple Transports**:
+  - Stdio (for local Claude Desktop integration)
+  - HTTP/SSE (for remote access)
+  - Streamable HTTP (modern transport)
+
+## Installation
+
+```bash
+npm install
+```
+
+## Usage
+
+### CLI
+
+```bash
+# Run with stdio transport (default)
+npm start
+
+# Run HTTP server
+npm run start:http
+
+# Development mode
+npm run dev
+```
+
+### Docker
+
+```bash
+docker-compose up
+```
+
+## Configuration
+
+Environment variables:
+
+- `MCP_TRANSPORT`: Transport type (stdio | http)
+- `MCP_PORT`: HTTP server port (default: 3000)
+- `MCP_HOST`: HTTP server host (default: 127.0.0.1)
+
+## Development
+
+```bash
+# Install dependencies
+npm install
+
+# Build
+npm run build
+
+# Run tests
+npm test
+
+# Lint
+npm run lint
+
+# Format
+npm run format
+```
+
+## License
+
+MIT
