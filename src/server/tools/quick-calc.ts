@@ -1,4 +1,3 @@
-import type { CallToolResultSchema } from '@modelcontextprotocol/sdk';
 import type { Tool } from '@modelcontextprotocol/sdk';
 import { quickCalcToolSchema } from './quick-calc-schema.js';
 import { QuickCalcService } from './quick-calc-service.js';
@@ -41,7 +40,7 @@ export const quickCalcTool: Tool = {
 
 export async function quickCalcHandler(
   args: Record<string, unknown>
-): CallToolResultSchema {
+) {
   const service = new QuickCalcService();
   const result = service.evaluate(args as any);
 

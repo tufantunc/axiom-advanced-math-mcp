@@ -1,4 +1,3 @@
-import type { CallToolResultSchema } from '@modelcontextprotocol/sdk';
 import type { Tool } from '@modelcontextprotocol/sdk';
 import { advancedSolveToolSchema } from './advanced-solve-schema.js';
 import { AdvancedSolveService } from './advanced-solve-service.js';
@@ -46,7 +45,7 @@ export const advancedSolveTool: Tool = {
 
 export async function advancedSolveHandler(
   args: Record<string, unknown>
-): CallToolResultSchema {
+) {
   const service = new AdvancedSolveService();
   const result = await service.evaluate(args as any);
 
