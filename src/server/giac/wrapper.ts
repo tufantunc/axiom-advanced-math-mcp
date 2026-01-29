@@ -17,5 +17,3 @@ export function createGiacEngine(type: GiacEngineType = 'auto'): GiacEngine {
 }
 
 export const giacEngine = createGiacEngine(process.env.GIAC_ENGINE as GiacEngineType || 'auto');
-
-export const giacEngine = createGiacEngine(process.env.GIAC_ENGINE as GiacEngineType || 'auto');

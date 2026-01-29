@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  giac-native-builder:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.native
+    container_name: giac-native-build
+    volumes:
+      - ./native-output:/output
+    mem_limit: 3g
+    cpus: 2.0
+    networks:
+      - build-network
+
+networks:
+  build-network:
+    driver: bridge
