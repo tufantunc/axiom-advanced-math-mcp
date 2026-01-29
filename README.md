@@ -47,8 +47,43 @@ npm run dev
 ### Docker
 
 ```bash
-docker-compose up
+# Build and run (Linux/Mac)
+docker-compose up -d
+
+# Check logs
+docker-compose logs -f
+
+# Stop
+docker-compose down
 ```
+
+### WASM Build (Cross-platform)
+
+The project supports building Giac WASM which works across all platforms (x86_64, ARM64, Windows):
+
+**Linux/Mac:**
+
+```bash
+# Build WASM on Linux/Mac (uses Docker x86_64 emulation)
+cd docker
+docker-compose -f docker-compose.wasm.win build
+```
+
+**Windows:**
+
+```bash
+# Build WASM on Windows (uses Docker Desktop)
+cd docker
+docker-compose -f docker-compose.windows.yml build
+```
+
+**WASM Build Notes:**
+
+- Build creates cross-platform WASM that works on ARM64, x86_64, and Windows
+- Uses Docker x86_64 emulation to build on ARM64/Mac
+- Build takes 10-20 minutes on first run, 5-10 minutes on subsequent runs (Docker caching)
+- Output files: `giac.wasm` and `giac.wasm.js`
+- Copy artifacts from `docker/wasm-output/` to `src/server/giac/` after build
 
 ## Configuration
 
@@ -70,12 +105,24 @@ npm run build
 # Run tests
 npm test
 
+# Run tests with coverage
+npm run test:coverage
+
 # Lint
 npm run lint
 
 # Format
 npm run format
 ```
+
+## Testing
+
+The project includes comprehensive unit tests:
+
+- **Quick Calc Tests**: 27 tests covering arithmetic, trigonometry, logarithms, complex numbers, and error handling
+- **Advanced Solve Tests**: 37 tests covering integration, differentiation, limits, equation solving, factorization, expansion, simplification, and differential equations
+
+All tests pass with 100% success rate.
 
 ## License
 

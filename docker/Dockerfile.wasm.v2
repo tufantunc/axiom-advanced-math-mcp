@@ -1,0 +1,89 @@
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install basic dependencies
+RUN apt-get update && apt-get install -y \
+    git \
+    wget \
+    curl \
+    build-essential \
+    cmake \
+    python3 \
+    python3-pip \
+    openjdk-17-jdk \
+    unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Emscripten SDK manually
+RUN cd /opt && \
+    git clone https://github.com/emscripten-core/emsdk.git && \
+    cd emsdk && \
+    ./emsdk install latest && \
+    ./emsdk activate latest
+
+# Set up Emscripten environment
+ENV PATH="/opt/emsdk:/opt/emsdk/upstream/emscripten:/opt/emsdk/node/14.18.2_64bit/bin:${PATH}"
+ENV EMSCRIPTEN="/opt/emsdk/upstream/emscripten"
+ENV EMSDK_NODE="/opt/emsdk/node/14.18.2_64bit/bin/node"
+
+# Create working directory
+WORKDIR /build
+
+# Clone Giac repository
+RUN git clone --depth 1 https://github.com/geogebra/giac.git
+
+WORKDIR /build/giac
+
+# Make gradlew executable
+RUN chmod +x gradlew
+
+# Debug: List directory and check gradle tasks
+RUN ls -la && \
+    ./gradlew tasks --all || true
+
+# Build Giac WASM with verbose output
+RUN ./gradlew createGiacWasmJs --stacktrace --info || \
+    (echo "Build failed, checking what was created..." && \
+    ls -la build/ 2>/dev/null || echo "build/ dir not found" && \
+    ls -la build/binaries/ 2>/dev/null || echo "build/binaries/ dir not found")
+
+# Check what was actually created
+RUN ls -la build/binaries/ 2>/dev/null || \
+    ls -la build/ 2>/dev/null || \
+    echo "No build output found"
+
+# Look for any WASM files
+RUN find build/ -name "*.wasm*" -o -name "*.js" | head -20
+
+# Verify build output - check different possible locations
+RUN if [ -d "build/binaries/giacggb.wasm" ]; then \
+    echo "✅ Found build/binaries/giacggb.wasm/"; \
+    mkdir -p /output && \
+    cp build/binaries/giacggb.wasm/giac.wasm* /output/ 2>/dev/null || true; \
+    cp build/binaries/giacggb.wasm/*.js /output/ 2>/dev/null || true; \
+    ls -lah /output/; \
+    elif [ -d "build/wasm" ]; then \
+    echo "✅ Found build/wasm/"; \
+    mkdir -p /output && \
+    cp build/wasm/* /output/ 2>/dev/null || true; \
+    ls -lah /output/; \
+    elif [ -f "build/giac.wasm" ]; then \
+    echo "✅ Found build/giac.wasm"; \
+    mkdir -p /output && \
+    cp build/giac.wasm* /output/ 2>/dev/null || true; \
+    ls -lah /output/; \
+    else \
+    echo "❌ Build failed - output directory not found"; \
+    echo "Searching for any WASM files:"; \
+    find build/ -type f -name "*.wasm*" 2>/dev/null || echo "No WASM files found"; \
+    find build/ -type f -name "*.js" 2>/dev/null | grep -i giac || echo "No Giac JS files found"; \
+    exit 1; \
+    fi
+
+WORKDIR /output
+
+# Output directory will be mounted as volume
+VOLUME ["/output"]
+
+CMD ["/bin/bash"]

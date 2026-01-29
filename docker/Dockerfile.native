@@ -1,0 +1,82 @@
+# Build Giac native Node.js module - Cross-platform (Linux/Mac/Windows)
+FROM --platform=linux/amd64 ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install dependencies for Node.js native module compilation
+RUN apt-get update && apt-get install -y \
+    git \
+    build-essential \
+    cmake \
+    python3 \
+    python3-pip \
+    libgmp-dev \
+    libmpfr-dev \
+    nodejs \
+    npm \
+    && rm -rf /var/lib/apt/lists/*
+
+# Verify Node.js and npm
+RUN node --version && npm --version
+
+WORKDIR /build
+
+# Clone Giac repository
+RUN git clone --depth 1 https://github.com/geogebra/giac.git
+
+WORKDIR /build/giac
+
+# Build Node.js native module
+RUN npm install node-gyp -g
+
+# Navigate to Node.js bindings
+RUN cd src/nodegiac && \
+    npm install && \
+    npm run build || \
+    (echo "Build failed, trying alternative..." && \
+    node-gyp rebuild)
+
+# Find the built Node.js module
+RUN echo "Searching for built module..." && \
+    find build/Release -name "*.node" 2>/dev/null || \
+    find build/Debug -name "*.node" 2>/dev/null || \
+    find . -name "*.node" | head -5 || \
+    echo "No .node file found, checking build output..." && \
+    ls -la build/ 2>/dev/null || echo "No build dir"
+
+# Copy built files to output
+RUN mkdir -p /output && \
+    if [ -d "src/nodegiac/build/Release" ]; then \
+        cp src/nodegiac/build/Release/*.node /output/ && \
+        echo "✅ Copied from Release"; \
+    elif [ -d "src/nodegiac/build/Debug" ]; then \
+        cp src/nodegiac/build/Debug/*.node /output/ && \
+        echo "✅ Copied from Debug"; \
+    elif [ -f "src/nodegiac/build/giac.node" ]; then \
+        cp src/nodegiac/build/giac.node /output/ && \
+        echo "✅ Copied giac.node"; \
+    elif [ -f "build/giac.node" ]; then \
+        cp build/giac.node /output/ && \
+        echo "✅ Copied from build/"; \
+    else \
+        echo "❌ No module found"; \
+        echo "Available files:"; \
+        find . -name "*.node" 2>/dev/null || echo "No .node files"; \
+        find . -name "*.so" 2>/dev/null || echo "No .so files"; \
+        exit 1; \
+    fi && \
+    ls -lah /output/
+
+# Final stage - minimal image with Node.js module
+FROM alpine:latest
+
+RUN apk add --no-cache nodejs
+
+WORKDIR /app
+
+COPY --from=0 /output/*.node ./
+
+RUN ls -lah && \
+    echo "✅ Giac Node.js module ready!"
+
+CMD ["/bin/sh"]

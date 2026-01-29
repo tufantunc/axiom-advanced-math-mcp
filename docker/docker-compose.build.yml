@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  giac-wasm-builder:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.wasm.optimized
+    container_name: giac-wasm-build
+    volumes:
+      - ./wasm-output:/output
+    mem_limit: 3g
+    cpus: 2.0
+    environment:
+      - EMCC_DEBUG=0
+      - EMCC_CFLAGS="-O2"
+      - EMCC_CXXFLAGS="-O2"
+    networks:
+      - build-network
+
+networks:
+  build-network:
+    driver: bridge

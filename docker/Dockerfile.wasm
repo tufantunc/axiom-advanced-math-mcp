@@ -1,0 +1,64 @@
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install basic dependencies
+RUN apt-get update && apt-get install -y \
+    git \
+    wget \
+    curl \
+    build-essential \
+    cmake \
+    python3 \
+    python3-pip \
+    openjdk-17-jdk \
+    unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Emscripten for WASM build
+RUN apt-get update && apt-get install -y \
+    emscripten \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set up Emscripten environment
+ENV EMSDK=/usr/lib/emscripten
+ENV PATH=${EMSDK}:${PATH}
+ENV EMSCRIPTEN=${EMSDK}/upstream/emscripten
+
+# Create working directory
+WORKDIR /build
+
+# Clone Giac repository
+RUN git clone --depth 1 https://github.com/geogebra/giac.git
+
+WORKDIR /build/giac
+
+# Make gradlew executable
+RUN chmod +x gradlew
+
+# Build Giac WASM
+RUN ./gradlew createGiacWasmJs || \
+    (echo "Build failed, checking logs..." && \
+    ls -la build/binaries/ && \
+    cat build/reports/tests/test/classes/* 2>/dev/null || true)
+
+# Verify build output
+RUN if [ ! -d "build/binaries/giacggb.wasm" ]; then \
+    echo "❌ Build failed - output directory not found"; \
+    ls -la build/binaries/; \
+    exit 1; \
+    fi && \
+    echo "✅ Build successful!"
+
+# Copy WASM artifacts to output directory
+RUN mkdir -p /output && \
+    cp build/binaries/giacggb.wasm/giac.wasm /output/ && \
+    cp build/binaries/giacggb.wasm/giac.wasm.js /output/ && \
+    ls -lah /output/
+
+WORKDIR /output
+
+# Output directory will be mounted as volume
+VOLUME ["/output"]
+
+CMD ["/bin/bash"]

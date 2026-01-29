@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  axiom-math-mcp:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: axiom-advanced-math-mcp
+    environment:
+      - NODE_ENV=production
+      - MCP_TRANSPORT=stdio
+      - GIAC_ENGINE=native
+      - GIAC_TIMEOUT=30000
+      - GIAC_MEMORY=67108864
+      - LOG_LEVEL=info
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+    networks:
+      - axiom-network
+
+networks:
+  axiom-network:
+    driver: bridge
+
+volumes:
+  data:

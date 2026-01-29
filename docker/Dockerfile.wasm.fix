@@ -1,0 +1,102 @@
+# Multi-platform WASM build - build on x86_64, run on any platform
+FROM --platform=linux/amd64 ubuntu:22.04 AS emscripten-base
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install basic dependencies
+RUN apt-get update && apt-get install -y \
+    git \
+    wget \
+    curl \
+    build-essential \
+    cmake \
+    python3 \
+    python3-pip \
+    openjdk-17-jdk \
+    unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Emscripten SDK properly
+RUN cd /opt && \
+    git clone https://github.com/emscripten-core/emsdk.git && \
+    cd emsdk && \
+    ./emsdk install 3.1.14 && \
+    ./emsdk activate 3.1.14
+
+# Set up Emscripten environment
+ENV PATH="/opt/emsdk:/opt/emsdk/upstream/emscripten:/opt/emsdk/node/14.18.2_64bit/bin:${PATH}"
+ENV EMSCRIPTEN="/opt/emsdk/upstream/emscripten"
+
+# Build stage
+FROM --platform=linux/amd64 emscripten-base AS builder
+
+WORKDIR /build
+
+# Clone Giac repository
+RUN git clone --depth 1 https://github.com/geogebra/giac.git
+
+WORKDIR /build/giac
+
+RUN chmod +x gradlew
+
+# Try to find correct Gradle task for WASM
+RUN ./gradlew tasks --all | grep -i wasm || echo "No WASM task found"
+
+# Try to manually compile Giac for WASM
+# First, let's see what's available in Giac
+RUN ls -la src/ && \
+    find src/ -name "*.cpp" | head -5 && \
+    find src/ -name "*.h" | head -5
+
+# Check if there's a specific WASM build directory or script
+RUN ls -la && \
+    find . -name "*wasm*" -o -name "*emscripten*" 2>/dev/null || true
+
+# Try the WASM build with proper platform specification
+RUN ./gradlew createGiacWasmJs -Dorg.gradle.project.platform=linux-x86_64 || \
+    (echo "Build failed, checking Giac build system..." && \
+    ls -la build/ 2>/dev/null || echo "No build dir" && \
+    find . -name "CMakeLists.txt" | head -5)
+
+# Check what Gradle tasks are actually available
+RUN ./gradlew tasks --all | grep -E "(wasm|web|emscripten)" | head -20
+
+# Try alternative approach - manually compile with Emscripten if Gradle fails
+# First, create a simple C++ file to test emscripten
+RUN echo '#include <iostream>\nint main() { std::cout << "Hello WASM"; return 0; }' > /tmp/test.cpp && \
+    emcc /tmp/test.cpp -o /tmp/test.html && \
+    echo "✅ Emscripten works!"
+
+# Look for any pre-built WASM artifacts
+RUN find build/ -type f \( -name "*.wasm*" -o -name "*.html" \) 2>/dev/null | head -20
+
+# If build succeeded, copy files
+RUN mkdir -p /output && \
+    if [ -d "build/binaries/giacggb.wasm" ]; then \
+        cp -r build/binaries/giacggb.wasm/* /output/ && \
+        echo "✅ Copied from build/binaries/giacggb.wasm/"; \
+    elif [ -d "build/wasm" ]; then \
+        cp -r build/wasm/* /output/ && \
+        echo "✅ Copied from build/wasm/"; \
+    elif [ -f "build/giac.wasm" ]; then \
+        cp build/*.wasm* /output/ 2>/dev/null || true && \
+        echo "✅ Copied WASM files"; \
+    else \
+        echo "❌ No WASM output found"; \
+        echo "Available in build/:"; \
+        ls -la build/ 2>/dev/null || echo "No build dir"; \
+        exit 1; \
+    fi && \
+    ls -lah /output/
+
+# Final stage - minimal image with just WASM files
+FROM alpine:latest
+
+WORKDIR /app
+
+COPY --from=builder /output/ ./
+
+RUN ls -lah && \
+    echo "✅ WASM files ready!"
+
+CMD ["/bin/sh"]

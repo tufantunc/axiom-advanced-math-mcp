@@ -1,0 +1,62 @@
+# Base image with Emscripten - cache this!
+FROM ubuntu:22.04 AS emscripten-base
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install basic dependencies once and cache
+RUN apt-get update && apt-get install -y \
+    git \
+    wget \
+    curl \
+    build-essential \
+    cmake \
+    python3 \
+    python3-pip \
+    openjdk-17-jdk \
+    unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Emscripten SDK once and cache
+RUN cd /opt && \
+    git clone https://github.com/emscripten-core/emsdk.git && \
+    cd emsdk && \
+    ./emsdk install latest && \
+    ./emsdk activate latest
+
+ENV PATH="/opt/emsdk:/opt/emsdk/upstream/emscripten:/opt/emsdk/node/14.18.2_64bit/bin:${PATH}"
+ENV EMSCRIPTEN="/opt/emsdk/upstream/emscripten"
+
+# Build stage - use cached base
+FROM emscripten-base AS builder
+
+WORKDIR /build
+
+# Clone Giac repository
+RUN git clone --depth 1 https://github.com/geogebra/giac.git
+
+WORKDIR /build/giac
+
+RUN chmod +x gradlew
+
+# Build Giac WASM (only this part rebuilds on changes)
+RUN ./gradlew createGiacWasmJs --stacktrace
+
+# Find and copy WASM files
+RUN mkdir -p /output && \
+    find build/ -name "*.wasm" -exec cp {} /output/ \; && \
+    find build/ -name "giac.wasm.js" -exec cp {} /output/ \; && \
+    ls -lah /output/
+
+# Final stage - minimal image with just WASM files
+FROM alpine:latest
+
+RUN apk add --no-cache nodejs npm
+
+WORKDIR /app
+
+COPY --from=builder /output/*.wasm* ./
+COPY --from=builder /output/*.js ./
+
+RUN ls -lah
+
+CMD ["/bin/sh"]

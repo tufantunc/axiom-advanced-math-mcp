@@ -1,0 +1,81 @@
+# Cross-platform WASM build - Works on Windows/Linux/Mac
+# Builds on x86_64, outputs cross-platform WASM that works on ARM64
+FROM ubuntu:22.04 AS emscripten-base
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install basic dependencies
+RUN apt-get update && apt-get install -y \
+    git \
+    wget \
+    curl \
+    build-essential \
+    cmake \
+    python3 \
+    python3-pip \
+    openjdk-17-jdk \
+    unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Emscripten SDK - Proper version for stability
+RUN cd /opt && \
+    git clone https://github.com/emscripten-core/emsdk.git && \
+    cd emsdk && \
+    ./emsdk install 3.1.14 && \
+    ./emsdk activate 3.1.14
+
+ENV PATH="/opt/emsdk:/opt/emsdk/upstream/emscripten:/opt/emsdk/node/14.18.2_64bit/bin:${PATH}"
+ENV EMSCRIPTEN="/opt/emsdk/upstream/emscripten"
+ENV EMSDK_NODE="/opt/emsdk/node/14.18.2_64bit/bin/node"
+
+# Build stage
+FROM emscripten-base AS builder
+
+WORKDIR /build
+
+# Clone Giac repository
+RUN git clone --depth 1 https://github.com/geogebra/giac.git
+
+WORKDIR /build/giac
+
+RUN chmod +x gradlew
+
+# Check available Gradle tasks
+RUN ./gradlew tasks --all | grep -i wasm || echo "Checking Giac build system..."
+
+# Use Gradle wrapper with proper configuration
+RUN ./gradlew createGiacWasmJs --stacktrace --no-daemon || \
+    (echo "Gradle build failed, checking for alternative..." && \
+    ls -la build/ 2>/dev/null || echo "No build directory" && \
+    find build/ -name "*.wasm*" -o -name "*.html" | head -10)
+
+# Search for ANY WASM artifacts in different locations
+RUN echo "Searching for WASM artifacts..." && \
+    mkdir -p /output && \
+    find build/ -type f \( -name "*.wasm" -o -name "*.wasm.js" -o -name "*.html" \) 2>/dev/null | xargs -I {} cp {} /output/ 2>/dev/null || echo "No WASM files found"
+
+# List what we found
+RUN ls -lah /output/ 2>/dev/null || echo "Output directory empty"
+
+# If we found WASM files, great! If not, show what exists
+RUN if [ "$(ls -A /output/ 2>/dev/null)" ]; then \
+        echo "✅ WASM files copied successfully!"; \
+        ls -lah /output/; \
+    else \
+        echo "❌ No WASM artifacts found. Showing build directory:"; \
+        find build/ -type f | head -20; \
+        exit 1; \
+    fi
+
+# Final stage - minimal image with WASM files
+FROM alpine:latest
+
+WORKDIR /app
+
+COPY --from=builder /output/ ./
+
+RUN ls -lah && \
+    echo "✅ Cross-platform WASM files ready!"
+    echo "These files work on x86_64, ARM64, and all platforms!"
+
+CMD ["/bin/sh"]
