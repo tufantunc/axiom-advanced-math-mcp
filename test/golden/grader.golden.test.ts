@@ -13,6 +13,9 @@ describe('golden grader corpus', () => {
     it(c.description, async () => {
       const r = await gradeV2Async(c.candidate, c.ground, { giacEval });
       expect(r.match).toBe(c.shouldMatch);
+      if (c.expectedMethod !== undefined) {
+        expect(r.method).toBe(c.expectedMethod);
+      }
     });
   }
 });
