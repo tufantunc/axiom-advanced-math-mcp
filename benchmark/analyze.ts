@@ -39,8 +39,15 @@ type Category =
   | 'EMPTY_TOOL_RESULT'
   | 'OUTPUT_PARSE_ERROR'
   | 'GRADER_MISMATCH'
-  | 'WRONG_TOOL_CALL'
   | 'WRONG_ANSWER';
+
+/** Substring match that requires non-alphanumeric boundaries on either side. */
+function containsBounded(haystack: string, needle: string): boolean {
+  if (!needle) return false;
+  const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`(^|[^A-Za-z0-9_])${escaped}([^A-Za-z0-9_]|$)`);
+  return re.test(haystack);
+}
 
 function classify(d: Detail): Category {
   const tc = d.toolAugmented.toolCalls;
@@ -54,13 +61,17 @@ function classify(d: Detail): Category {
   );
   if (empty && !d.toolAugmented.correct) return 'EMPTY_TOOL_RESULT';
 
-  // If any tool result contains the ground truth substring, model probably
-  // saw the answer but failed to extract it.
+  // If any tool result contains the ground truth as a bounded token, model
+  // probably saw the answer but failed to extract it. We require a word
+  // boundary on each side and skip very short GTs (e.g., "1", "3") because
+  // a bare digit matches incidentally in unrelated tool output.
   const gt = d.groundTruth.trim();
   const altGt = gt.replace(/\\frac\{(\d+)\}\{(\d+)\}/g, '$1/$2').trim();
-  const containsAnswer = tc.some(
-    (c) => c.result.includes(gt) || (altGt !== gt && c.result.includes(altGt))
-  );
+  const containsAnswer =
+    gt.length > 2 &&
+    tc.some(
+      (c) => containsBounded(c.result, gt) || (altGt !== gt && containsBounded(c.result, altGt))
+    );
   if (containsAnswer && !d.toolAugmented.correct) return 'OUTPUT_PARSE_ERROR';
 
   // If grader-v2 (with the model's extracted answer) would have said yes, this is a grader miss.
@@ -106,7 +117,6 @@ async function main(): Promise<void> {
     EMPTY_TOOL_RESULT: 0,
     OUTPUT_PARSE_ERROR: 0,
     GRADER_MISMATCH: 0,
-    WRONG_TOOL_CALL: 0,
     WRONG_ANSWER: 0,
   };
 
@@ -134,6 +144,10 @@ async function main(): Promise<void> {
   }
   lines.push(``);
   lines.push(`## Examples`);
+  if (taggedRegressions.length > 20) {
+    lines.push(``);
+    lines.push(`*Showing first 20 of ${taggedRegressions.length} regressions.*`);
+  }
   for (const d of taggedRegressions.slice(0, 20)) {
     lines.push(``);
     lines.push(`### #${d.index} [${d.dataset}] — ${d.category}`);
