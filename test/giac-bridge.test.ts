@@ -26,4 +26,22 @@ describe('giac-bridge', () => {
     });
     expect(await bridge.evaluate('bad')).toBeNull();
   });
+
+  it('caches distinct expressions independently', async () => {
+    const fake = vi.fn(async (e: string) => `result:${e}`);
+    const bridge = createGiacBridge({ engine: { evaluate: fake } });
+    const a = await bridge.evaluate('expr_a');
+    const b = await bridge.evaluate('expr_b');
+    expect(a).toBe('result:expr_a');
+    expect(b).toBe('result:expr_b');
+    expect(fake).toHaveBeenCalledTimes(2);
+  });
+
+  it('treats whitespace-trimmed keys as equal', async () => {
+    const fake = vi.fn().mockResolvedValue('42');
+    const bridge = createGiacBridge({ engine: { evaluate: fake } });
+    await bridge.evaluate('foo');
+    await bridge.evaluate('  foo  ');
+    expect(fake).toHaveBeenCalledTimes(1);
+  });
 });
