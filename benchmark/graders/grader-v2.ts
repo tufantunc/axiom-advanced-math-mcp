@@ -25,13 +25,20 @@ export interface GradeOptions {
 }
 
 /**
- * Strip redundant parentheses around plain numeric/identifier tokens in
- * fraction position: `(82)/(27)` → `82/27`.  Only removes parens that wrap
- * a maximal run of digits, letters, dots, and underscores — never strips
- * parens that group a compound sub-expression (e.g. `(a+b)/c` stays).
+ * Collapse redundant parens around atomic tokens, e.g. `(82)` → `82`.
+ * Skips function-call parens by requiring the preceding character to NOT be
+ * a letter/digit/underscore: `sqrt(2)` is left alone because `t` precedes `(`.
  */
 function stripRedundantParens(s: string): string {
-  return s.replace(/\(([A-Za-z0-9_.]+)\)/g, '$1');
+  // Repeatedly strip parens around an atomic alphanumeric token when the
+  // opening paren is at start-of-string or preceded by a non-identifier char.
+  let prev: string;
+  let cur = s;
+  do {
+    prev = cur;
+    cur = cur.replace(/(^|[^A-Za-z0-9_])\(([A-Za-z0-9_.]+)\)/g, '$1$2');
+  } while (cur !== prev);
+  return cur;
 }
 
 export function gradeV2(
