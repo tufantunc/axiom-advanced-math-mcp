@@ -5,7 +5,11 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     // No setupFiles — giac mock must NOT be loaded
-    include: ['test/integration.test.ts', 'test/golden/tool.golden.test.ts'],
+    include: [
+      'test/integration.test.ts',
+      'test/golden/tool.golden.test.ts',
+      'test/golden/output.golden.test.ts',
+    ],
     testTimeout: 60000,
     hookTimeout: 60000,
   }
