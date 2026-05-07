@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { gradeV2 } from '../benchmark/graders/grader-v2.js';
+import { gradeV2, gradeV2Async } from '../benchmark/graders/grader-v2.js';
 
 describe('gradeV2 — early stages', () => {
   it('exact match', () => {
@@ -72,5 +72,40 @@ describe('gradeV2 — interval match', () => {
 describe('gradeV2 — conditional match', () => {
   it('matches "x = a or x = b" against {a, b}', () => {
     expect(gradeV2('x = -1/8 or x = 3/2', '\\{-1/8, 3/2\\}').match).toBe(true);
+  });
+});
+
+describe('gradeV2 — symbolic equivalence', () => {
+  function fakeBridge(map: Record<string, string | null>) {
+    return {
+      evaluate: async (expr: string): Promise<string | null> => map[expr] ?? null,
+    };
+  }
+
+  it('matches expressions that simplify to 0', async () => {
+    const bridge = fakeBridge({
+      'simplify((cos(x)*x^2+sin(x)*2*x) - (2*x*sin(x)+x^2*cos(x)))': '0',
+    });
+    const r = await gradeV2Async(
+      'cos(x)*x^2+sin(x)*2*x',
+      '2*x*sin(x)+x^2*cos(x)',
+      { giacEval: bridge.evaluate }
+    );
+    expect(r.match).toBe(true);
+    expect(r.method).toBe('symbolic');
+  });
+
+  it('returns false when simplify is non-zero', async () => {
+    const bridge = fakeBridge({
+      'simplify(x - 2)': 'x-2',
+    });
+    const r = await gradeV2Async('x', '2', { giacEval: bridge.evaluate });
+    expect(r.match).toBe(false);
+  });
+
+  it('skips symbolic when bridge unavailable', async () => {
+    const r = await gradeV2Async('cos(x)*x^2', '2*x*sin(x)');
+    expect(r.match).toBe(false);
+    expect(r.method).toBe('none');
   });
 });

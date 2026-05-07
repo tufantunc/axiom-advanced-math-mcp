@@ -203,3 +203,41 @@ function finish(
 ): GradeResultV2 {
   return { match, reason, kind, method };
 }
+
+/**
+ * Async variant: same as gradeV2 but adds a final symbolic-equivalence stage
+ * via Giac when an evaluator is provided.
+ */
+export async function gradeV2Async(
+  predicted: string,
+  ground: string,
+  opts: GradeOptions = {}
+): Promise<GradeResultV2> {
+  const sync = gradeV2(predicted, ground, opts);
+  if (sync.match) return sync;
+
+  if (!opts.giacEval) return sync;
+
+  // Only attempt symbolic equivalence when both sides are symbolic-ish.
+  const p = normalize(predicted);
+  const g = normalize(ground);
+  if (!p.canonical || !g.canonical) return sync;
+  if (p.kind === 'scalar' && g.kind === 'scalar') return sync;
+  if (p.kind === 'set' || g.kind === 'set') return sync;
+  if (p.kind === 'interval' || g.kind === 'interval') return sync;
+
+  const expr = `simplify((${p.canonical}) - (${g.canonical}))`;
+  let result: string | null;
+  try {
+    result = await opts.giacEval(expr);
+  } catch {
+    return sync;
+  }
+  if (result === null) return sync;
+
+  const trimmed = result.trim().replace(/\s+/g, '');
+  if (trimmed === '0' || trimmed === '0.0') {
+    return finish(true, 'symbolic-equivalence', g.kind, 'symbolic');
+  }
+  return sync;
+}
