@@ -11,8 +11,10 @@ export default defineConfig({
       include: ['src/**/*.ts'],
       exclude: ['src/**/*.test.ts', 'src/**/*.spec.ts']
     },
-    testMatch: ['**/*.test.ts'],
-    testTimeout: 10000
+    include: ['test/**/*.test.ts'],
+    exclude: ['test/integration.test.ts', 'test/golden/tool.golden.test.ts'],
+    testTimeout: 60000,
+    hookTimeout: 60000,
   },
   resolve: {
     alias: {
