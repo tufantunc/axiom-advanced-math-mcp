@@ -65,9 +65,20 @@ describeIntegration('verifyHandler — v2 envelope', () => {
   it('attaches fix_attempt on identity failure', async () => {
     const r = await verifyHandler({ claim: 'sin(x) = 2', method: 'symbolic' });
     const json = JSON.parse(r.content[0].text.split('\n')[0]);
-    if (json.answer === 'FALSE') {
-      expect(json.fix_attempt).toBeDefined();
-      expect(json.fix_attempt.next_call.tool).toBe('compute');
-    }
+    // sin(x) = 2 has no real solution; this MUST verify FALSE.
+    expect(json.answer).toBe('FALSE');
+    expect(json.fix_attempt).toBeDefined();
+    expect(json.fix_attempt.next_call.tool).toBe('compute');
+  });
+
+  it('passes checks_performed via steps and explanation field', async () => {
+    const r = await verifyHandler({ claim: '1 + 1 = 2', method: 'symbolic' });
+    const json = JSON.parse(r.content[0].text.split('\n')[0]);
+    expect(Array.isArray(json.steps)).toBe(true);
+    expect(json.steps.length).toBeGreaterThan(0);
+    expect(typeof json.explanation).toBe('string');
+    expect(json.explanation.length).toBeGreaterThan(0);
+    // raw should NOT carry explanation anymore.
+    expect(json).not.toHaveProperty('raw');
   });
 });

@@ -367,7 +367,7 @@ async function handleSolutionVerification(
 
   return {
     verified: solution.verified,
-    confidence: solution.verified ? 'high' : 'high',
+    confidence: solution.verified ? 'high' : 'medium',
     explanation: solution.verified
       ? `Verified: ${variable}=${value} satisfies ${equation}`
       : `NOT verified: ${variable}=${value} does not satisfy ${equation}`,
@@ -397,8 +397,8 @@ function formatVerifyResponse(
     return formatToolResponseV2({
       answer: result.verified ? 'TRUE' : 'FALSE',
       confidence: result.confidence,
-      warnings: result.checks_performed,
-      raw: result.explanation,
+      steps: result.checks_performed,
+      explanation: result.explanation,
       ...(fix !== undefined ? { fix_attempt: fix } : {}),
     });
   }
