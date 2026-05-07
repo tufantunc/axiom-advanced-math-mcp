@@ -60,4 +60,27 @@ describe('response-formatter-v2 — basic envelope', () => {
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain('Tool failed');
   });
+
+  it('handles backslash-rich LaTeX answers correctly', () => {
+    const r = formatToolResponseV2({
+      answer: '\\frac{1}{2}',
+      confidence: 'medium',
+    });
+    const lines = r.content[0].text.split('\n');
+    expect(lines[lines.length - 1]).toBe('\\boxed{\\frac{1}{2}}');
+    const parsed = JSON.parse(lines[0]);
+    expect(parsed.answer).toBe('\\frac{1}{2}');
+    expect(parsed.answer_boxed).toBe('\\boxed{\\frac{1}{2}}');
+  });
+
+  it('keeps boxed trailer single-line even when answer contains newlines', () => {
+    const r = formatToolResponseV2({
+      answer: 'line1\nline2',
+      confidence: 'medium',
+    });
+    const lines = r.content[0].text.split('\n');
+    // Should still be exactly 3 lines: JSON, blank, boxed.
+    expect(lines).toHaveLength(3);
+    expect(lines[lines.length - 1]).toBe('\\boxed{line1 line2}');
+  });
 });

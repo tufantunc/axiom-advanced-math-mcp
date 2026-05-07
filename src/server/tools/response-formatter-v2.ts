@@ -45,9 +45,12 @@ export function formatToolResponseV2(input: ToolResponseV2Input): {
     };
   }
 
+  // Collapse whitespace in the boxed trailer so it's always single-line —
+  // the LLM and the answer parser both rely on \boxed{...} being on the last line.
+  const boxedAnswer = input.answer.replace(/\s+/g, ' ').trim();
   const body: ToolResponseV2Body = {
     answer: input.answer,
-    answer_boxed: `\\boxed{${input.answer}}`,
+    answer_boxed: `\\boxed{${boxedAnswer}}`,
     confidence: input.confidence,
   };
   if (input.answer_latex !== undefined) body.answer_latex = input.answer_latex;
