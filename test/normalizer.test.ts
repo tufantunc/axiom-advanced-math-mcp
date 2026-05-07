@@ -40,4 +40,12 @@ describe('normalizer — LaTeX/Unicode basics', () => {
     expect(normalize('5 \\text{ apples}').canonical).toBe('5apples');
     expect(normalize('\\mathrm{e}^2').canonical).toBe('e^2');
   });
+
+  it('strips unknown LaTeX commands but keeps the name', () => {
+    expect(normalize('\\alpha + 1').canonical).toBe('alpha+1');
+  });
+
+  it('preserves \\% as a literal percent', () => {
+    expect(normalize('25\\%').canonical).toBe('25%');
+  });
 });

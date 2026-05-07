@@ -13,7 +13,9 @@ export interface NormalizedAnswer {
   kind: AnswerKind;
 }
 
-/** Extract `\boxed{...}` content (innermost, balanced braces). Returns null if not present. */
+/** Extract the LAST `\boxed{...}` content with balanced braces. Returns null if not present.
+ *  We take the last occurrence because models typically place the final answer in the
+ *  last `\boxed{}` of their response. */
 function extractBoxed(s: string): string | null {
   const idx = s.lastIndexOf('\\boxed{');
   if (idx === -1) return null;
@@ -45,9 +47,11 @@ function latexToPlain(s: string): string {
   r = r.replace(/\\mathrm\{([^}]*)\}/g, '$1');
   r = r.replace(/\\mathbf\{([^}]*)\}/g, '$1');
   r = r.replace(/\\displaystyle\b/g, '');
-  // Drop spacing macros: \, \; \: \! \\ \%
-  r = r.replace(/\\[,;:!%]/g, '');
+  // Drop spacing macros: \, \; \: \!
+  r = r.replace(/\\[,;:!]/g, '');
   r = r.replace(/\\\\/g, '');
+  // \% is an escaped literal percent — preserve it as %
+  r = r.replace(/\\%/g, '%');
   // Strip remaining unknown LaTeX commands like \alpha (keep the name).
   r = r.replace(/\\([a-zA-Z]+)/g, '$1');
   return r;
