@@ -75,9 +75,23 @@ describe('normalizer — decimal and exactness', () => {
     expect(n.is_exact).toBe(false);
   });
 
-  it('extracts decimal for \\sqrt{2}', () => {
+  it('extracts decimal for \\sqrt{2} but marks is_exact false (irrational)', () => {
     const n = normalize('\\sqrt{2}');
     expect(n.decimal).toBeCloseTo(Math.sqrt(2), 9);
-    expect(n.is_exact).toBe(true);
+    expect(n.is_exact).toBe(false);
+  });
+
+  it('rejects array-literal injection', () => {
+    expect(normalize('1*[]').decimal).toBeNull();
+  });
+
+  it('rejects comma-operator injection', () => {
+    expect(normalize('(1,2)').decimal).toBeNull();
+  });
+
+  it('treats pi as irrational (decimal known, is_exact false)', () => {
+    const n = normalize('pi');
+    expect(n.decimal).toBeCloseTo(Math.PI, 9);
+    expect(n.is_exact).toBe(false);
   });
 });

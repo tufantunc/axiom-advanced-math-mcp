@@ -97,7 +97,10 @@ export function normalize(input: string): NormalizedAnswer {
   const canonical = s.replace(/\s+/g, '');
 
   const decimal = tryEval(canonical);
-  const is_exact = decimal !== null;
+  // is_exact holds only when the decimal IS the exact value — not a float
+  // approximation. Excludes irrational roots and transcendental constants.
+  const has_irrational = /\bsqrt\b|\bpi\b|\be\b/.test(canonical);
+  const is_exact = decimal !== null && !has_irrational;
 
   return {
     canonical,
@@ -108,17 +111,28 @@ export function normalize(input: string): NormalizedAnswer {
   };
 }
 
-/** Attempt safe numeric eval. Returns null if expression contains variables or is unsafe. */
+/**
+ * Attempt safe numeric eval of an already-canonicalized expression.
+ * Returns null if expression contains anything outside the strict allowlist
+ * (digits, decimal point, + - * / ^ parentheses, whitespace, pi, e, sqrt(...)).
+ *
+ * @param expr - must be a canonical string already processed by latexToPlain/unicodeToPlain.
+ */
 function tryEval(expr: string): number | null {
   if (!expr) return null;
   let e = expr
     .replace(/\bpi\b/g, String(Math.PI))
-    .replace(/\be\b(?![a-zA-Z])/g, String(Math.E))
+    .replace(/\be\b/g, String(Math.E))
     .replace(/sqrt\(([^()]+)\)/g, 'Math.sqrt($1)')
     .replace(/\^/g, '**');
-  // After substitution, only digits/operators/Math.sqrt should remain.
-  if (!/^[\d.+\-*/()\s]|Math\.sqrt/.test(e)) return null;
-  if (/[a-zA-Z](?!sqrt)/.test(e.replace(/Math\.sqrt/g, ''))) return null;
+
+  // Strip recognized Math.sqrt(...) calls, then verify the residue is composed
+  // exclusively of digits, decimal point, arithmetic operators, parentheses,
+  // and whitespace. This rejects array literals, comma operators, identifiers,
+  // and anything else.
+  const stripped = e.replace(/Math\.sqrt\([^()]*\)/g, '');
+  if (!/^[\d.+\-*/()\s]*$/.test(stripped)) return null;
+
   try {
     // eslint-disable-next-line no-new-func
     const v = Function(`"use strict"; return (${e})`)() as number;
