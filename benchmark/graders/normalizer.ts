@@ -31,9 +31,16 @@ function extractBoxed(s: string): string | null {
   return null;
 }
 
+// Private-use placeholder characters to protect \{ \} set delimiters from brace-stripping.
+const SET_OPEN = '';
+const SET_CLOSE = '';
+
 /** Apply LaTeX → plain transformations. */
 function latexToPlain(s: string): string {
   let r = s;
+  // Protect LaTeX set delimiters \{ and \} before any other processing.
+  r = r.replace(/\\\{/g, SET_OPEN);
+  r = r.replace(/\\\}/g, SET_CLOSE);
   // Iteratively expand \frac / \dfrac / \tfrac with one-level nesting support.
   for (let i = 0; i < 5; i++) {
     r = r.replace(/\\[dt]?frac\{((?:[^{}]|\{[^}]*\})+)\}\{((?:[^{}]|\{[^}]*\})+)\}/g, '($1)/($2)');
@@ -93,6 +100,10 @@ export function normalize(input: string): NormalizedAnswer {
   s = s.replace(/\^\{([^{}]+)\}/g, '^$1');
   s = s.replace(/[{}]/g, '');
 
+  // Restore set delimiters that were protected from brace-stripping.
+  s = s.replace(new RegExp(SET_OPEN, 'g'), '{');
+  s = s.replace(new RegExp(SET_CLOSE, 'g'), '}');
+
   // Collapse whitespace
   const canonical = s.replace(/\s+/g, '');
 
@@ -102,13 +113,31 @@ export function normalize(input: string): NormalizedAnswer {
   const has_irrational = /\bsqrt\b|\bpi\b|\be\b/.test(canonical);
   const is_exact = decimal !== null && !has_irrational;
 
+  const kind = detectKind(canonical);
+
   return {
     canonical,
     latex: input.trim(),
     decimal,
     is_exact,
-    kind: 'scalar',
+    kind,
   };
+}
+
+function detectKind(canonical: string): AnswerKind {
+  // Strip a leading minus that might trip the scalar check
+  const trimmed = canonical.replace(/^-/, '');
+  if (/^[(\[].*[)\]]$/.test(canonical) && /,/.test(canonical)) {
+    // Has surrounding brackets and a comma — interval or set
+    if (canonical.startsWith('{') || /^\\\{/.test(canonical)) return 'set';
+    return 'interval';
+  }
+  if (/^\{.*\}$/.test(canonical)) return 'set';
+  if (/(>=|<=|>|<|=)/.test(canonical) && /[a-zA-Z]/.test(canonical)) return 'conditional';
+  if (/\bor\b/.test(canonical)) return 'conditional';
+  // Pure scalar = no letters except the constants pi / e / i
+  if (!/[a-df-hj-zA-DF-HJ-Z]/.test(trimmed)) return 'scalar';
+  return 'expression';
 }
 
 /**

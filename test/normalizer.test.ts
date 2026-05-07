@@ -95,3 +95,31 @@ describe('normalizer — decimal and exactness', () => {
     expect(n.is_exact).toBe(false);
   });
 });
+
+describe('normalizer — kind detection', () => {
+  it('detects scalar', () => {
+    expect(normalize('42').kind).toBe('scalar');
+    expect(normalize('\\frac{1}{2}').kind).toBe('scalar');
+  });
+
+  it('detects sets like {1, 2, 3}', () => {
+    const n = normalize('\\{1, 2, 3\\}');
+    expect(n.kind).toBe('set');
+  });
+
+  it('detects intervals like [a, b], (a, b], (-∞, 0)', () => {
+    expect(normalize('[1, 5]').kind).toBe('interval');
+    expect(normalize('(0, \\infty)').kind).toBe('interval');
+    expect(normalize('[\\frac{11}{2}, \\infty)').kind).toBe('interval');
+  });
+
+  it('detects conditionals like x >= 1, x = 2 or x = 3', () => {
+    expect(normalize('x >= 11/2').kind).toBe('conditional');
+    expect(normalize('x = 2 or x = -2').kind).toBe('conditional');
+  });
+
+  it('detects expressions with variables', () => {
+    expect(normalize('3*x^2').kind).toBe('expression');
+    expect(normalize('\\sin(x) + \\cos(x)').kind).toBe('expression');
+  });
+});
