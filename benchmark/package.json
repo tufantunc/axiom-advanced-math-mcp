@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "analyze": "tsx analyze.ts",
+    "regrade": "tsx regrade.ts",
     "run": "tsx index.ts",
     "quick": "tsx index.ts --quick",
     "quick:zai": "tsx index.ts --quick --zai",
