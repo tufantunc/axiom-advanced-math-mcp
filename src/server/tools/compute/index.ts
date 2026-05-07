@@ -35,12 +35,23 @@ export async function computeHandler(
     }
 
     // 2. Dispatch — always in v1 mode so normalize() receives structured text lines.
-    // When AXIOM_OUTPUT_V2=1, formatOutput() rebuilds the v2 envelope from the clean
-    // ComputeEnvelope rather than the handler's own v2 JSON blob.
+    // The v1 formatToolResponse shim (response-formatter.ts) routes to v2
+    // when AXIOM_OUTPUT_V2 is set, but compute/normalize() expects the v1
+    // line format from inner handlers. Suppress the flag during dispatch
+    // so inner handlers emit v1 text; we'll build the v2 envelope ourselves
+    // from the parsed ComputeEnvelope below. NOTE: This approach is not
+    // concurrency-safe across parallel computeHandler calls — acceptable
+    // for sequential benchmark use; revisit when adding HTTP transport.
     const savedV2 = process.env.AXIOM_OUTPUT_V2;
     delete process.env.AXIOM_OUTPUT_V2;
-    const response = await dispatch(handler, handlerArgs);
-    if (savedV2 !== undefined) process.env.AXIOM_OUTPUT_V2 = savedV2;
+    let response: Awaited<ReturnType<typeof dispatch>>;
+    try {
+      response = await dispatch(handler, handlerArgs);
+    } finally {
+      if (savedV2 !== undefined) {
+        process.env.AXIOM_OUTPUT_V2 = savedV2;
+      }
+    }
 
     // 3. Normalize
     const envelope = normalize(response, handler, handlerArgs);

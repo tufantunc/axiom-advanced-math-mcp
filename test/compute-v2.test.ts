@@ -20,12 +20,25 @@ describe('computeHandler — v2 output flag', () => {
     expect(last.endsWith('}')).toBe(true);
   });
 
-  it('emits low confidence on empty solve result', async () => {
-    // The mock returns predictable "[]" for unsolvable; production Giac may differ.
-    const r = await computeHandler({ problem: 'solve(x^2+1=0, x)', domain: 'real' });
-    if (r.isError) return; // Mock may shape this differently — skip if so.
+  it('emits a confidence field of the correct type', async () => {
+    const r = await computeHandler({ problem: 'diff(x^3, x)' });
+    if (r.isError) {
+      // Mock or runtime error — skip; structural assertion not possible.
+      return;
+    }
     const json = JSON.parse(r.content[0].text.split('\n')[0]);
-    // We only assert the shape here; specific confidence depends on mock data.
+    expect(json).toHaveProperty('confidence');
     expect(['low', 'medium', 'high']).toContain(json.confidence);
+  });
+
+  it('builds the JSON envelope with answer + answer_boxed + confidence', async () => {
+    const r = await computeHandler({ problem: '2 + 3' });
+    if (r.isError) return; // skip on runtime/mock error
+    const json = JSON.parse(r.content[0].text.split('\n')[0]);
+    expect(json).toHaveProperty('answer');
+    expect(json).toHaveProperty('answer_boxed');
+    expect(json).toHaveProperty('confidence');
+    // Boxed mirrors the answer:
+    expect(json.answer_boxed).toBe(`\\boxed{${json.answer}}`);
   });
 });
