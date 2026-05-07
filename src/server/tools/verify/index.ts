@@ -399,6 +399,7 @@ function formatVerifyResponse(
       confidence: result.confidence,
       steps: result.checks_performed,
       explanation: result.explanation,
+      omit_boxed_trailer: true,
       ...(fix !== undefined ? { fix_attempt: fix } : {}),
     });
   }

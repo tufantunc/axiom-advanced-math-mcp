@@ -22,11 +22,16 @@ export interface ToolResponseV2Input {
   explanation?: string;
   /** If set, returned response is marked isError=true and the body becomes the error message. */
   error?: string;
+  /** When true, the response is JSON-only — no trailing blank line + boxed.
+   *  Use for tools whose "answer" is meta-information (verify TRUE/FALSE)
+   *  rather than the user's substantive answer. Prevents the trailer from
+   *  hijacking lastIndexOf('\\boxed{') in downstream answer parsers. */
+  omit_boxed_trailer?: boolean;
 }
 
 interface ToolResponseV2Body {
   answer: string;
-  answer_boxed: string;
+  answer_boxed?: string;
   answer_latex?: string;
   answer_numeric?: number;
   alternatives?: string[];
@@ -54,9 +59,11 @@ export function formatToolResponseV2(input: ToolResponseV2Input): {
   const boxedAnswer = input.answer.replace(/\s+/g, ' ').trim();
   const body: ToolResponseV2Body = {
     answer: input.answer,
-    answer_boxed: `\\boxed{${boxedAnswer}}`,
     confidence: input.confidence,
   };
+  if (!input.omit_boxed_trailer) {
+    body.answer_boxed = `\\boxed{${boxedAnswer}}`;
+  }
   if (input.answer_latex !== undefined) body.answer_latex = input.answer_latex;
   if (input.answer_numeric !== undefined && Number.isFinite(input.answer_numeric)) {
     body.answer_numeric = input.answer_numeric;
@@ -68,8 +75,11 @@ export function formatToolResponseV2(input: ToolResponseV2Input): {
   if (input.fix_attempt) body.fix_attempt = input.fix_attempt;
   if (input.explanation !== undefined) body.explanation = input.explanation;
 
-  // Single-line JSON keeps the trailer on a predictable line for the LLM.
-  const text = `${JSON.stringify(body)}\n\n${body.answer_boxed}`;
+  // Trailer on a predictable line for the LLM — but only when we're emitting
+  // a substantive answer. Verify-style "TRUE/FALSE" tools opt out via omit_boxed_trailer.
+  const text = body.answer_boxed
+    ? `${JSON.stringify(body)}\n\n${body.answer_boxed}`
+    : JSON.stringify(body);
 
   return {
     content: [{ type: 'text' as const, text }],

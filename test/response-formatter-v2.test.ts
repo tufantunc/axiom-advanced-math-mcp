@@ -83,6 +83,30 @@ describe('response-formatter-v2 — basic envelope', () => {
     expect(lines).toHaveLength(3);
     expect(lines[lines.length - 1]).toBe('\\boxed{line1 line2}');
   });
+
+  it('omits boxed trailer AND answer_boxed field when requested', () => {
+    const r = formatToolResponseV2({
+      answer: 'TRUE',
+      confidence: 'high',
+      omit_boxed_trailer: true,
+    });
+    const text = r.content[0].text;
+    // No blank line, no boxed trailer — just JSON.
+    expect(text).not.toContain('\n\n');
+    expect(text).not.toMatch(/\\boxed\{/);
+    const json = JSON.parse(text);
+    expect(json.answer).toBe('TRUE');
+    expect(json.confidence).toBe('high');
+    expect(json).not.toHaveProperty('answer_boxed');
+  });
+
+  it('still includes boxed by default (regression guard)', () => {
+    const r = formatToolResponseV2({ answer: '3*x^2', confidence: 'medium' });
+    const lines = r.content[0].text.split('\n');
+    expect(lines[lines.length - 1]).toBe('\\boxed{3*x^2}');
+    const json = JSON.parse(lines[0]);
+    expect(json.answer_boxed).toBe('\\boxed{3*x^2}');
+  });
 });
 
 import { formatToolResponse } from '../src/server/tools/response-formatter.js';

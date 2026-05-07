@@ -52,19 +52,22 @@ describeIntegration('verifyHandler — v2 envelope', () => {
     delete process.env.AXIOM_OUTPUT_V2;
   });
 
-  it('emits boxed TRUE / FALSE answer + confidence', async () => {
+  it('emits JSON-only envelope (no boxed trailer) for verify result', async () => {
     const r = await verifyHandler({ claim: '1 + 1 = 2', method: 'symbolic' });
     expect(r.isError).toBe(false);
-    const lines = r.content[0].text.split('\n');
-    expect(lines[lines.length - 1]).toMatch(/^\\boxed\{(TRUE|FALSE)\}$/);
-    const json = JSON.parse(lines[0]);
+    const text = r.content[0].text;
+    // verify is meta-information; must NOT emit a boxed trailer that
+    // would hijack the model's last-boxed-wins extraction.
+    expect(text).not.toMatch(/\\boxed\{/);
+    const json = JSON.parse(text);
     expect(['TRUE', 'FALSE']).toContain(json.answer);
     expect(['high', 'medium', 'low']).toContain(json.confidence);
+    expect(json).not.toHaveProperty('answer_boxed');
   });
 
   it('attaches fix_attempt on identity failure', async () => {
     const r = await verifyHandler({ claim: 'sin(x) = 2', method: 'symbolic' });
-    const json = JSON.parse(r.content[0].text.split('\n')[0]);
+    const json = JSON.parse(r.content[0].text);  // text is now pure JSON
     // sin(x) = 2 has no real solution; this MUST verify FALSE.
     expect(json.answer).toBe('FALSE');
     expect(json.fix_attempt).toBeDefined();
@@ -73,7 +76,7 @@ describeIntegration('verifyHandler — v2 envelope', () => {
 
   it('passes checks_performed via steps and explanation field', async () => {
     const r = await verifyHandler({ claim: '1 + 1 = 2', method: 'symbolic' });
-    const json = JSON.parse(r.content[0].text.split('\n')[0]);
+    const json = JSON.parse(r.content[0].text);
     expect(Array.isArray(json.steps)).toBe(true);
     expect(json.steps.length).toBeGreaterThan(0);
     expect(typeof json.explanation).toBe('string');
@@ -85,7 +88,7 @@ describeIntegration('verifyHandler — v2 envelope', () => {
   it('emits low confidence when identity verification fails', async () => {
     // sin(x) = 2 has no real solution; symbolic check should return false.
     const r = await verifyHandler({ claim: 'sin(x) = 2', method: 'symbolic' });
-    const json = JSON.parse(r.content[0].text.split('\n')[0]);
+    const json = JSON.parse(r.content[0].text);
     expect(json.answer).toBe('FALSE');
     expect(json.confidence).toBe('low');
   });
