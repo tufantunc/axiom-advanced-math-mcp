@@ -49,3 +49,35 @@ describe('normalizer — LaTeX/Unicode basics', () => {
     expect(normalize('25\\%').canonical).toBe('25%');
   });
 });
+
+describe('normalizer — decimal and exactness', () => {
+  it('extracts decimal for plain integers', () => {
+    const n = normalize('42');
+    expect(n.decimal).toBe(42);
+    expect(n.is_exact).toBe(true);
+  });
+
+  it('extracts decimal for fractions', () => {
+    const n = normalize('\\frac{1}{2}');
+    expect(n.decimal).toBeCloseTo(0.5, 9);
+    expect(n.is_exact).toBe(true);
+  });
+
+  it('extracts decimal for negative fractions', () => {
+    const n = normalize('-\\frac{82}{27}');
+    expect(n.decimal).toBeCloseTo(-82 / 27, 9);
+    expect(n.is_exact).toBe(true);
+  });
+
+  it('marks expressions with variables as non-exact, decimal null', () => {
+    const n = normalize('3*x^2');
+    expect(n.decimal).toBeNull();
+    expect(n.is_exact).toBe(false);
+  });
+
+  it('extracts decimal for \\sqrt{2}', () => {
+    const n = normalize('\\sqrt{2}');
+    expect(n.decimal).toBeCloseTo(Math.sqrt(2), 9);
+    expect(n.is_exact).toBe(true);
+  });
+});

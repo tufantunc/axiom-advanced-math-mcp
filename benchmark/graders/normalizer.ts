@@ -96,11 +96,34 @@ export function normalize(input: string): NormalizedAnswer {
   // Collapse whitespace
   const canonical = s.replace(/\s+/g, '');
 
+  const decimal = tryEval(canonical);
+  const is_exact = decimal !== null;
+
   return {
     canonical,
     latex: input.trim(),
-    decimal: null,
-    is_exact: false,
+    decimal,
+    is_exact,
     kind: 'scalar',
   };
+}
+
+/** Attempt safe numeric eval. Returns null if expression contains variables or is unsafe. */
+function tryEval(expr: string): number | null {
+  if (!expr) return null;
+  let e = expr
+    .replace(/\bpi\b/g, String(Math.PI))
+    .replace(/\be\b(?![a-zA-Z])/g, String(Math.E))
+    .replace(/sqrt\(([^()]+)\)/g, 'Math.sqrt($1)')
+    .replace(/\^/g, '**');
+  // After substitution, only digits/operators/Math.sqrt should remain.
+  if (!/^[\d.+\-*/()\s]|Math\.sqrt/.test(e)) return null;
+  if (/[a-zA-Z](?!sqrt)/.test(e.replace(/Math\.sqrt/g, ''))) return null;
+  try {
+    // eslint-disable-next-line no-new-func
+    const v = Function(`"use strict"; return (${e})`)() as number;
+    return typeof v === 'number' && isFinite(v) ? v : null;
+  } catch {
+    return null;
+  }
 }
