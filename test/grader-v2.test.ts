@@ -40,3 +40,37 @@ describe('gradeV2 — early stages', () => {
     expect(r.match).toBe(false);
   });
 });
+
+describe('gradeV2 — set match', () => {
+  it('matches sets ignoring order', () => {
+    const r = gradeV2('\\{1, 2, 3\\}', '\\{3, 1, 2\\}');
+    expect(r.match).toBe(true);
+    expect(r.method).toBe('set');
+  });
+
+  it('matches sets across LaTeX/plain', () => {
+    const r = gradeV2('\\{-1/8, 3/2\\}', '{3/2, -1/8}');
+    expect(r.match).toBe(true);
+  });
+
+  it('rejects sets with different members', () => {
+    expect(gradeV2('\\{1, 2\\}', '\\{1, 3\\}').match).toBe(false);
+  });
+});
+
+describe('gradeV2 — interval match', () => {
+  it('matches intervals across notation', () => {
+    expect(gradeV2('[1, 5]', '[1,5]').match).toBe(true);
+    expect(gradeV2('(0, \\infty)', '(0,inf)').match).toBe(true);
+  });
+
+  it('matches conditional vs interval', () => {
+    expect(gradeV2('x >= 11/2', '[\\frac{11}{2}, \\infty)').match).toBe(true);
+  });
+});
+
+describe('gradeV2 — conditional match', () => {
+  it('matches "x = a or x = b" against {a, b}', () => {
+    expect(gradeV2('x = -1/8 or x = 3/2', '\\{-1/8, 3/2\\}').match).toBe(true);
+  });
+});
