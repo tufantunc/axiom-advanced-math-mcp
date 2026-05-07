@@ -97,10 +97,44 @@ describe('gradeV2 — symbolic equivalence', () => {
 
   it('returns false when simplify is non-zero', async () => {
     const bridge = fakeBridge({
-      'simplify(x - 2)': 'x-2',
+      'simplify((x) - (2))': 'x-2',
     });
     const r = await gradeV2Async('x', '2', { giacEval: bridge.evaluate });
     expect(r.match).toBe(false);
+    expect(r.method).toBe('none');
+  });
+
+  it('matches when simplify returns "0.0" (decimal zero)', async () => {
+    const bridge = fakeBridge({
+      'simplify((cos(x)) - (cos(x)))': '0.0',
+    });
+    const r = await gradeV2Async('cos(x)', 'cos(x)', { giacEval: bridge.evaluate });
+    // sync stage already matches via exact, but if not, symbolic should
+    expect(r.match).toBe(true);
+  });
+
+  it('matches when simplify returns "0.0" — symbolic-only path', async () => {
+    // Use distinct expressions so sync stages don't match; force the symbolic path.
+    const bridge = fakeBridge({
+      'simplify((cos(x)*x^2+sin(x)*2*x) - (2*x*sin(x)+x^2*cos(x)))': '0.0',
+    });
+    const r = await gradeV2Async(
+      'cos(x)*x^2+sin(x)*2*x',
+      '2*x*sin(x)+x^2*cos(x)',
+      { giacEval: bridge.evaluate }
+    );
+    expect(r.match).toBe(true);
+    expect(r.method).toBe('symbolic');
+  });
+
+  it('falls back to sync when giacEval throws', async () => {
+    const r = await gradeV2Async(
+      'cos(x)*x^2+sin(x)*2*x',
+      '2*x*sin(x)+x^2*cos(x)',
+      { giacEval: async () => { throw new Error('boom'); } }
+    );
+    expect(r.match).toBe(false);
+    expect(r.method).toBe('none');
   });
 
   it('skips symbolic when bridge unavailable', async () => {
