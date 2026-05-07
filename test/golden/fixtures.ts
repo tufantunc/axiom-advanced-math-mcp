@@ -85,3 +85,37 @@ export const TOOL_CASES: ToolCase[] = [
     expectedContains: ['-82/27'],
   },
 ];
+
+export interface OutputCase {
+  description: string;
+  computeProblem: string;
+  expectedAnswerSubstring: string;
+  expectedBoxed: string; // exact `\boxed{...}` line we expect to see at end of response
+}
+
+export const OUTPUT_CASES: OutputCase[] = [
+  {
+    description: 'derivative of x^3 produces \\boxed{3*x^2} (regression CAS 2026-04-08)',
+    computeProblem: 'diff(x^3, x)',
+    expectedAnswerSubstring: '3*x^2',
+    expectedBoxed: '\\boxed{3*x^2}',
+  },
+  {
+    description: 'definite integral sqrt(x) on [0,4] produces \\boxed{16/3} (regression CAS #28)',
+    computeProblem: 'int(sqrt(x), x, 0, 4)',
+    expectedAnswerSubstring: '16/3',
+    expectedBoxed: '\\boxed{16/3}',
+  },
+  {
+    description: 'remainder polynomial division produces \\boxed{-82/27} (regression MATH L4 #45)',
+    computeProblem: 'rem(3*y^4 - 4*y^3 + 5*y^2 - 13*y + 4, 3*y - 2, y)',
+    expectedAnswerSubstring: '-82/27',
+    expectedBoxed: '\\boxed{-82/27}',
+  },
+  {
+    description: 'product-rule derivative produces \\boxed{...} (regression #45 CAS-style)',
+    computeProblem: 'diff(sin(x)*x^2, x)',
+    expectedAnswerSubstring: 'cos(x)',
+    expectedBoxed: '', // exact boxed output depends on Giac normalization order; we assert presence only
+  },
+];

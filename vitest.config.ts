@@ -12,7 +12,11 @@ export default defineConfig({
       exclude: ['src/**/*.test.ts', 'src/**/*.spec.ts']
     },
     include: ['test/**/*.test.ts'],
-    exclude: ['test/integration.test.ts', 'test/golden/tool.golden.test.ts'],
+    exclude: [
+      'test/integration.test.ts',
+      'test/golden/tool.golden.test.ts',
+      'test/golden/output.golden.test.ts',
+    ],
     testTimeout: 60000,
     hookTimeout: 60000,
   },
