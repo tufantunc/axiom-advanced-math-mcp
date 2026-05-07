@@ -16,8 +16,8 @@ export async function createMCPProxy(serverCmd: string[]): Promise<MCPProxy> {
   const [command, ...args] = serverCmd;
 
   // Pass the runner's full env to the spawned MCP server. Without this, the
-  // SDK's getDefaultEnvironment() strips custom flags like AXIOM_OUTPUT_V2,
-  // and the server runs with v1 defaults regardless of --features=output-v2.
+  // SDK's getDefaultEnvironment() strips custom env flags and the server
+  // runs without any caller-set env vars.
   const transport = new StdioClientTransport({
     command,
     args,

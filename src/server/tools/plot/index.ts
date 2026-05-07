@@ -59,25 +59,10 @@ export function registerPlotTools(server: McpServer): void {
 
         const svgBase64 = Buffer.from(svg, 'utf-8').toString('base64');
 
-        const summary = `Plot of f(${variable}) = ${args.expression} over [${xMin}, ${xMax}]`;
-        const v2 = process.env.AXIOM_OUTPUT_V2 === '1';
-
         return {
           content: [
-            {
-              type: 'image' as const,
-              data: svgBase64,
-              mimeType: 'image/svg+xml',
-            },
-            { type: 'text' as const, text: summary },
-            ...(v2
-              ? [
-                  {
-                    type: 'text' as const,
-                    text: `\\boxed{plot: f(${variable}) = ${args.expression}}`,
-                  },
-                ]
-              : []),
+            { type: 'image' as const, data: svgBase64, mimeType: 'image/svg+xml' },
+            { type: 'text' as const, text: `Plot of f(${variable}) = ${args.expression} over [${xMin}, ${xMax}]` },
           ],
           isError: false,
         };

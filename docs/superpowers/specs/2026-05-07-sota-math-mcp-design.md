@@ -207,70 +207,21 @@ Policy: any new tool-level or grader-level regression observed in a benchmark ru
 
 Phase 0 ships before any tool-side change. We rerun the 360-problem benchmark and publish the delta from grader work alone.
 
-## Phase 1 — Output Hygiene
+## Phase 1 — Output Hygiene (REJECTED)
 
-Once the grader is honest, we make the tool output easier for any LLM to extract.
+**Status:** Hypothesis rejected by live A/B benchmark. Removed from codebase.
 
-### 1.1 Structured tool response
+The structured JSON envelope + `\boxed{...}` trailer hypothesis assumed
+LLMs repeat `\boxed{}` content verbatim. In practice the model
+paraphrases symbolic answers into its own LaTeX style, breaking the
+answer parser. See [`2026-05-07-phase-1-results.md`](./2026-05-07-phase-1-results.md)
+for the full analysis.
 
-All tools (`compute`, `verify`, `plot`) return JSON inside the MCP `text` block:
+Independent fixes that survived: env passthrough in mcp-proxy,
+bare-fraction handling in answer-parser, verify confidence corrections.
 
-```typescript
-interface ToolResponse {
-  answer: string                    // Simplest form: "4" or "x = 2 or x = -2"
-  answer_boxed: string              // "\boxed{4}" — model is trained to repeat this
-  answer_latex?: string             // LaTeX form
-  answer_numeric?: number           // Decimal value if applicable
-  alternatives?: string[]           // Equivalent forms grader might expect
-  steps?: string[]                  // Optional intermediate steps
-  confidence: 'high' | 'medium' | 'low'
-  warnings?: string[]
-  raw?: string                      // Original Giac output, for debugging
-}
-```
-
-The `text` block content is intentionally a **dual-format string**: `JSON.stringify(response) + "\n\n" + answer_boxed`. The JSON is for any downstream automation that wants structured access; the trailing `\boxed{...}` line is for the LLM. The MCP `text` field stays a single string — we are not splitting into multiple content blocks.
-
-**Why `answer_boxed` and the trailing line:**
-The single largest extraction failure mode is the model writing `3` instead of `3*x^2`. LLMs trained on math documents reliably repeat `\boxed{...}` content. By placing it at the end of the tool result, we exploit a well-trained pattern instead of fighting it. The exact magnitude of this effect is an Open Question (validated in Phase 1 ablation across at least one alternate model).
-
-### 1.2 Confidence determination
-
-| Condition | Confidence |
-|---|---|
-| Symbolic + numeric verification both pass | high |
-| Only one verification passes | medium |
-| No verification, single pass succeeds | medium |
-| Empty result, partial parse, or fallback used | low |
-
-Confidence flows into how the model is prompted to handle the answer.
-
-### 1.3 Verify tool: structured fix_attempt
-
-Replace the prior "reflexion suggestion string" with a deterministic structured field:
-
-```typescript
-interface VerifyResponse {
-  verified: boolean
-  reason: string
-  confidence: 'high' | 'medium' | 'low'
-  fix_attempt?: {
-    next_call: { tool: string; args: object }   // Deterministic next call
-    rationale: string                            // For human/log readability
-  }
-  retry_budget?: number                          // Default 2; enforced server-side
-}
-```
-
-The model is instructed in the system prompt that on `verified: false` it should issue exactly the call in `fix_attempt.next_call`. No free-form reasoning required. Retry budget prevents loops.
-
-### 1.4 Phase 1 success metrics
-
-| Metric | Now | Target | Measurement |
-|---|---|---|---|
-| OUTPUT_PARSE_ERROR regressions | 3 of 8 | ≤1 | Regression analysis after Phase 1 only |
-| MATH L4 / L5 accuracy | 62% / 52% | 65% / 56% | Full rerun, Phase 0 + 1 enabled |
-| CAS subdomain (calculus) | 0% | ≥40% | Combined with Phase 0 grader |
+The "Why this revision" section's commit reference (826a9aa) and the
+phase numbering in subsequent sections still apply.
 
 ## Phase 2 — Preprocessing & Fallback Chain
 

@@ -3,8 +3,6 @@ import { dispatch } from './dispatcher.js';
 import { normalize } from './normalize.js';
 import { computeSchema } from './schema.js';
 import type { ComputeEnvelope } from './types.js';
-import { inferConfidence } from '../confidence.js';
-import { formatToolResponseV2 } from '../response-formatter-v2.js';
 
 export { computeSchema } from './schema.js';
 export type { ComputeEnvelope, ResultType } from './types.js';
@@ -34,30 +32,14 @@ export async function computeHandler(
       handlerArgs.precision = args.precision;
     }
 
-    // 2. Dispatch — always in v1 mode so normalize() receives structured text lines.
-    // The v1 formatToolResponse shim (response-formatter.ts) routes to v2
-    // when AXIOM_OUTPUT_V2 is set, but compute/normalize() expects the v1
-    // line format from inner handlers. Suppress the flag during dispatch
-    // so inner handlers emit v1 text; we'll build the v2 envelope ourselves
-    // from the parsed ComputeEnvelope below. NOTE: This approach is not
-    // concurrency-safe across parallel computeHandler calls — acceptable
-    // for sequential benchmark use; revisit when adding HTTP transport.
-    const savedV2 = process.env.AXIOM_OUTPUT_V2;
-    delete process.env.AXIOM_OUTPUT_V2;
-    let response: Awaited<ReturnType<typeof dispatch>>;
-    try {
-      response = await dispatch(handler, handlerArgs);
-    } finally {
-      if (savedV2 !== undefined) {
-        process.env.AXIOM_OUTPUT_V2 = savedV2;
-      }
-    }
+    // 2. Dispatch
+    const response = await dispatch(handler, handlerArgs);
 
     // 3. Normalize
     const envelope = normalize(response, handler, handlerArgs);
 
     // 4. Format output
-    return formatOutput(envelope, format, response, problem);
+    return formatOutput(envelope, format, response);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return {
@@ -70,23 +52,8 @@ export async function computeHandler(
 function formatOutput(
   envelope: ComputeEnvelope,
   format: string,
-  rawResponse: { content: { type: 'text'; text: string }[]; isError: boolean },
-  problem: string
+  rawResponse: { content: { type: 'text'; text: string }[]; isError: boolean }
 ): { content: { type: 'text'; text: string }[]; isError: boolean } {
-  // V2 envelope — always wins when flag is set, regardless of `format`.
-  if (process.env.AXIOM_OUTPUT_V2 === '1') {
-    const result = envelope.display ?? '';
-    const confidence = inferConfidence({ result, input: problem });
-    const numeric = parseFloat(result);
-    return formatToolResponseV2({
-      answer: result,
-      answer_latex: envelope.latex,
-      answer_numeric: Number.isFinite(numeric) ? numeric : undefined,
-      confidence,
-      raw: envelope.giac_command,
-    });
-  }
-
   switch (format) {
     case 'json':
       return {

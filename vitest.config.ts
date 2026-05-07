@@ -15,8 +15,6 @@ export default defineConfig({
     exclude: [
       'test/integration.test.ts',
       'test/golden/tool.golden.test.ts',
-      'test/golden/output.golden.test.ts',
-      'test/mcp-env-passthrough.test.ts',
     ],
     testTimeout: 60000,
     hookTimeout: 60000,

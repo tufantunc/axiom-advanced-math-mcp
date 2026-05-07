@@ -1,7 +1,5 @@
 import { z } from 'zod';
 import { giacEngine } from '../../giac/index.js';
-import { formatToolResponseV2 } from '../response-formatter-v2.js';
-import { buildFixAttempt, type ParsedClaimForFix } from './fix-attempt.js';
 
 export const verifySchema = z.object({
   claim: z
@@ -293,7 +291,7 @@ export async function verifyHandler(
         };
     }
 
-    return formatVerifyResponse(result, parsed);
+    return formatVerifyResponse(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return {
@@ -376,35 +374,8 @@ async function handleSolutionVerification(
 }
 
 function formatVerifyResponse(
-  result: VerifyResult,
-  parsed: ParsedClaim
+  result: VerifyResult
 ): { content: { type: 'text'; text: string }[]; isError: boolean } {
-  if (process.env.AXIOM_OUTPUT_V2 === '1') {
-    const fixInput: ParsedClaimForFix =
-      parsed.type === 'identity'
-        ? { verified: result.verified, type: 'identity', lhs: parsed.lhs!, rhs: parsed.rhs! }
-        : parsed.type === 'solution'
-          ? {
-              verified: result.verified,
-              type: 'solution',
-              variable: parsed.variable!,
-              value: parsed.value!,
-              equation: parsed.equation!,
-            }
-          : { verified: result.verified, type: 'unknown' };
-
-    const fix = buildFixAttempt(fixInput);
-    return formatToolResponseV2({
-      answer: result.verified ? 'TRUE' : 'FALSE',
-      confidence: result.confidence,
-      steps: result.checks_performed,
-      explanation: result.explanation,
-      omit_boxed_trailer: true,
-      ...(fix !== undefined ? { fix_attempt: fix } : {}),
-    });
-  }
-
-  // v1 line-formatted output (unchanged)
   const lines: string[] = [
     `Verified: ${result.verified ? 'TRUE ✓' : 'FALSE ✗'}`,
     `Confidence: ${result.confidence}`,
