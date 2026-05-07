@@ -81,4 +81,12 @@ describeIntegration('verifyHandler — v2 envelope', () => {
     // raw should NOT carry explanation anymore.
     expect(json).not.toHaveProperty('raw');
   });
+
+  it('emits low confidence when identity verification fails', async () => {
+    // sin(x) = 2 has no real solution; symbolic check should return false.
+    const r = await verifyHandler({ claim: 'sin(x) = 2', method: 'symbolic' });
+    const json = JSON.parse(r.content[0].text.split('\n')[0]);
+    expect(json.answer).toBe('FALSE');
+    expect(json.confidence).toBe('low');
+  });
 });

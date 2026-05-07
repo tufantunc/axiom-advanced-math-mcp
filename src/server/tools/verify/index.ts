@@ -334,7 +334,7 @@ async function handleIdentityVerification(
   if (symbolicOk === true) confidence = 'high';
   else if (numericOk === true && symbolicOk === null) confidence = 'medium';
   else if (numericOk === true && symbolicOk === false) confidence = 'low';
-  else confidence = verified ? 'medium' : 'high';
+  else confidence = verified ? 'medium' : 'low';
 
   return {
     verified,
