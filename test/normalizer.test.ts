@@ -97,9 +97,13 @@ describe('normalizer — decimal and exactness', () => {
 });
 
 describe('normalizer — kind detection', () => {
-  it('detects scalar', () => {
+  it('detects scalar (including known constants and sqrt)', () => {
     expect(normalize('42').kind).toBe('scalar');
     expect(normalize('\\frac{1}{2}').kind).toBe('scalar');
+    expect(normalize('pi').kind).toBe('scalar');
+    expect(normalize('\\sqrt{2}').kind).toBe('scalar');
+    expect(normalize('e').kind).toBe('scalar');
+    expect(normalize('-\\frac{82}{27}').kind).toBe('scalar');
   });
 
   it('detects sets like {1, 2, 3}', () => {

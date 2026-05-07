@@ -125,18 +125,27 @@ export function normalize(input: string): NormalizedAnswer {
 }
 
 function detectKind(canonical: string): AnswerKind {
-  // Strip a leading minus that might trip the scalar check
-  const trimmed = canonical.replace(/^-/, '');
+  // Bracketed comma-separated → set or interval
   if (/^[(\[].*[)\]]$/.test(canonical) && /,/.test(canonical)) {
-    // Has surrounding brackets and a comma — interval or set
-    if (canonical.startsWith('{') || /^\\\{/.test(canonical)) return 'set';
     return 'interval';
   }
   if (/^\{.*\}$/.test(canonical)) return 'set';
+
+  // Comparison operator + a variable letter → conditional
   if (/(>=|<=|>|<|=)/.test(canonical) && /[a-zA-Z]/.test(canonical)) return 'conditional';
-  if (/\bor\b/.test(canonical)) return 'conditional';
-  // Pure scalar = no letters except the constants pi / e / i
-  if (!/[a-df-hj-zA-DF-HJ-Z]/.test(trimmed)) return 'scalar';
+
+  // Pure scalar = numeric expression possibly built from known constants
+  // (pi, e, i) and known functions (sqrt). Strip these tokens before checking
+  // for residual variable letters.
+  const stripped = canonical
+    .replace(/\bsqrt\b/g, '')
+    .replace(/\bpi\b/g, '')
+    .replace(/\binfty\b/gi, '')
+    .replace(/\binfinity\b/gi, '')
+    .replace(/\be\b/g, '')
+    .replace(/\bi\b/g, '');
+  if (!/[a-zA-Z]/.test(stripped)) return 'scalar';
+
   return 'expression';
 }
 
