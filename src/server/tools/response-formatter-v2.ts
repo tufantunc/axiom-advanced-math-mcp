@@ -18,6 +18,7 @@ export interface ToolResponseV2Input {
   confidence: Confidence;
   warnings?: string[];
   raw?: string;
+  fix_attempt?: { next_call: { tool: string; args: Record<string, unknown> }; rationale: string };
   /** If set, returned response is marked isError=true and the body becomes the error message. */
   error?: string;
 }
@@ -32,6 +33,7 @@ interface ToolResponseV2Body {
   confidence: Confidence;
   warnings?: string[];
   raw?: string;
+  fix_attempt?: { next_call: { tool: string; args: Record<string, unknown> }; rationale: string };
 }
 
 export function formatToolResponseV2(input: ToolResponseV2Input): {
@@ -61,6 +63,7 @@ export function formatToolResponseV2(input: ToolResponseV2Input): {
   if (input.steps && input.steps.length > 0) body.steps = input.steps;
   if (input.warnings && input.warnings.length > 0) body.warnings = input.warnings;
   if (input.raw !== undefined) body.raw = input.raw;
+  if (input.fix_attempt) body.fix_attempt = input.fix_attempt;
 
   // Single-line JSON keeps the trailer on a predictable line for the LLM.
   const text = `${JSON.stringify(body)}\n\n${body.answer_boxed}`;
