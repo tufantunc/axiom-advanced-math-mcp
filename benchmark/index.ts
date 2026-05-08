@@ -62,7 +62,6 @@ async function flushLog(): Promise<void> {
 
 async function main(): Promise<void> {
   const config = buildConfig();
-  if (config.features.includes('v2')) process.env.AXIOM_GRADER_V2 = '1';
   if (config.features.includes('output-hygiene')) process.env.AXIOM_COMPUTE_HYGIENE = '1';
   if (config.features.includes('grader-v3')) process.env.AXIOM_GRADER_V3 = '1';
 

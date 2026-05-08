@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import { gradeV2, gradeV2Async } from '../benchmark/graders/grader-v2.js';
-import { grade } from '../benchmark/graders/grader.js';
 
 describe('gradeV2 — early stages', () => {
   it('exact match', () => {
@@ -142,22 +141,6 @@ describe('gradeV2 — symbolic equivalence', () => {
     const r = await gradeV2Async('cos(x)*x^2', '2*x*sin(x)');
     expect(r.match).toBe(false);
     expect(r.method).toBe('none');
-  });
-});
-
-describe('grade() shim — v2 toggle', () => {
-  it('uses v1 by default', () => {
-    delete process.env.AXIOM_GRADER_V2;
-    const r = grade('-82/27', '-\\frac{82}{27}');
-    expect(r.correct).toBe(true);
-  });
-
-  it('uses v2 when AXIOM_GRADER_V2=1', () => {
-    process.env.AXIOM_GRADER_V2 = '1';
-    const r = grade('\\{1, 2\\}', '\\{2, 1\\}');
-    expect(r.correct).toBe(true);
-    expect(r.method).toBe('symbolic');
-    delete process.env.AXIOM_GRADER_V2;
   });
 });
 
