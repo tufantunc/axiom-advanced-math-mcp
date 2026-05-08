@@ -26,6 +26,7 @@ export interface BenchmarkConfig {
   cacheDir: string;
   retryOptions: RetryOptions;
   features: string[];
+  selfConsistency: { N: number; temperature: number } | null;
 }
 
 // Default models per provider
@@ -164,6 +165,25 @@ export function buildConfig(): BenchmarkConfig {
   const featuresArg = args.find((a) => a.startsWith('--features='));
   if (featuresArg) features = featuresArg.slice('--features='.length).split(',').filter(Boolean);
 
+  // --- Self-consistency ----------------------------------------------------
+  // Activated by --features=self-consistency.
+  // N defaults to 3, temperature to 0.7. Both can be overridden via
+  // AXIOM_SC_N and AXIOM_SC_TEMP env vars (useful for ablation).
+  let selfConsistency: { N: number; temperature: number } | null = null;
+  if (features.includes('self-consistency')) {
+    const nRaw = process.env.AXIOM_SC_N;
+    const tRaw = process.env.AXIOM_SC_TEMP;
+    const N = nRaw ? parseInt(nRaw, 10) : 3;
+    const temperature = tRaw ? parseFloat(tRaw) : 0.7;
+    if (Number.isFinite(N) && N >= 1 && Number.isFinite(temperature) && temperature >= 0) {
+      selfConsistency = { N, temperature };
+    } else {
+      throw new Error(
+        `Invalid self-consistency config: N=${nRaw}, temperature=${tRaw}`
+      );
+    }
+  }
+
   return {
     mode,
     provider,
@@ -176,5 +196,6 @@ export function buildConfig(): BenchmarkConfig {
     cacheDir: './cache',
     retryOptions: DEFAULT_RETRY_OPTIONS,
     features,
+    selfConsistency,
   };
 }
