@@ -149,53 +149,6 @@ Limit to 3 compute calls + 1 verify call.
 At the very end, state your final answer in this exact format:
 The answer is <number>`;
 
-export const TOOL_PROMPT_OLYMPIAD = `You are solving an OLYMPIAD-LEVEL math problem. These are designed to be hard — they cannot be solved by a single direct calculation.
-
-REQUIRED APPROACH (do NOT skip steps):
-
-1. Read carefully. Identify what kind of answer the problem expects:
-   - A specific number (e.g., "what is the maximum value of...")
-   - A formula in n (e.g., "find the minimum m as a function of n")
-   - A yes/no (e.g., "does there exist..." → answer "Yes" or "No")
-
-2. Try small cases. Plug in n=2, 3, 4, 5 and compute the answer for each. Use compute for EACH small case:
-   - compute({problem: "..."}) for n=2
-   - compute({problem: "..."}) for n=3
-   - compute({problem: "..."}) for n=4
-
-3. Detect the pattern from the small-case answers:
-   - 1, 2, 3, 4 → linear in n
-   - 2, 5, 10, 17 → n²+1
-   - 1, 2, 4, 8 → 2^(n-1)
-   - 1, 2, 4, 7, 11 → ⌈n²/4⌉ or n(n-1)/2 + 1
-   - State your conjectured formula explicitly
-
-4. Verify the formula on a fresh value (n=6 or n=10):
-   - compute({problem: "your_formula(6)"})
-   - verify({claim: "f(6) = your_formula_value"})
-
-5. State the final answer in \\boxed{...} — the formula, the number, or "Yes"/"No".
-
-GIAC SYNTAX (use these exact forms — NO Python loops, NO custom functions):
-- Sums: sum(k^2, k, 1, n)
-- Products: product(k, k, 1, n)
-- Solve: solve(equation, x)
-- Combinations: binomial(n, k) or C(n, k)
-- Floor/ceil: floor(x), ceil(x)
-- Logarithms: log(x, base) or ln(x)
-- Sequences: seq(f(k), k, 1, n) returns a list
-
-DO NOT:
-- Write Python-style loops: \`for k in range(...)\` ❌
-- Define new functions inside compute: \`f(x) := ...\` ❌
-- Skip the small-cases step. Even if the pattern looks obvious, verify with at least 3 compute calls.
-- Output an empty answer. If after 3 small cases you cannot find a pattern, state your best educated guess in \\boxed{...} with a brief rationale.
-
-CRITICAL: Use compute at least 3 times per olympiad problem. The model alone cannot solve these — the tool's exact computation on small cases is what reveals the structure.
-
-At the very end, state your final answer in this exact format:
-\\boxed{<answer>}`;
-
 const CATEGORY_KEYWORDS: Record<string, string[]> = {
   cas: [
     'integral',
