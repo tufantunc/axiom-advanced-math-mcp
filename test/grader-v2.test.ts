@@ -160,3 +160,71 @@ describe('grade() shim — v2 toggle', () => {
     delete process.env.AXIOM_GRADER_V2;
   });
 });
+
+describe('gradeV2 — v3 equation-RHS stage', () => {
+  it('matches when predicted is equation-form and ground is plain RHS', () => {
+    process.env.AXIOM_GRADER_V3 = '1';
+    const r = gradeV2(
+      '\\sin(x) = x - x^3/6 + x^5/120',
+      'x - x^3/6 + x^5/120'
+    );
+    expect(r.match).toBe(true);
+    delete process.env.AXIOM_GRADER_V3;
+  });
+
+  it('matches when ground is equation-form and predicted is plain RHS', () => {
+    process.env.AXIOM_GRADER_V3 = '1';
+    const r = gradeV2(
+      '2*x+1',
+      'f(x) = 2*x+1'
+    );
+    expect(r.match).toBe(true);
+    delete process.env.AXIOM_GRADER_V3;
+  });
+
+  it('rejects bare variable assignment as equation', () => {
+    process.env.AXIOM_GRADER_V3 = '1';
+    // "x = 5" has trivial LHS — should NOT be treated as equation form by v3.
+    // Other v2 stages may still match it; we only assert v3 didn't fire.
+    const r = gradeV2('x = 5', '5');
+    if (r.match) {
+      expect(r.method).not.toBe('equation-rhs-match');
+    }
+    delete process.env.AXIOM_GRADER_V3;
+  });
+
+  it('does not fire when AXIOM_GRADER_V3 is unset', () => {
+    delete process.env.AXIOM_GRADER_V3;
+    const r = gradeV2(
+      '\\sin(x) = x - x^3/6 + x^5/120',
+      'x - x^3/6 + x^5/120'
+    );
+    // Without the flag, this should NOT match (the strings are different,
+    // and v2's other stages don't extract RHS).
+    expect(r.match).toBe(false);
+  });
+});
+
+describe('gradeV2 — v3 bare-comma-list stage', () => {
+  it('matches bare list i,-i ↔ -i,i', () => {
+    process.env.AXIOM_GRADER_V3 = '1';
+    const r = gradeV2('i,-i', '-i,i');
+    expect(r.match).toBe(true);
+    delete process.env.AXIOM_GRADER_V3;
+  });
+
+  it('matches bare list with sqrt members', () => {
+    process.env.AXIOM_GRADER_V3 = '1';
+    const r = gradeV2('sqrt(2),-sqrt(2)', '-sqrt(2),sqrt(2)');
+    expect(r.match).toBe(true);
+    delete process.env.AXIOM_GRADER_V3;
+  });
+
+  it('does not fire when AXIOM_GRADER_V3 is unset', () => {
+    delete process.env.AXIOM_GRADER_V3;
+    const r = gradeV2('i,-i', '-i,i');
+    // Without v3, bare comma lists are treated as expressions and string-compared.
+    // i,-i and -i,i are different strings.
+    expect(r.match).toBe(false);
+  });
+});
