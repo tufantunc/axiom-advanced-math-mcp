@@ -105,6 +105,7 @@ function normalizeBound(s: string): string {
 
 /**
  * Collapse redundant parens around atomic tokens, e.g. `(82)` → `82`.
+ * Also strips parens around simple power expressions like `(x^3)` → `x^3`.
  * Skips function-call parens by requiring the preceding character to NOT be
  * a letter/digit/underscore: `sqrt(2)` is left alone because `t` precedes `(`.
  */
@@ -115,7 +116,10 @@ function stripRedundantParens(s: string): string {
   let cur = s;
   do {
     prev = cur;
+    // Strip parens around plain alphanumeric atoms: (82), (x), (abc)
     cur = cur.replace(/(^|[^A-Za-z0-9_])\(([A-Za-z0-9_.]+)\)/g, '$1$2');
+    // Strip parens around simple power expressions: (x^3), (x^10), (ab^2)
+    cur = cur.replace(/(^|[^A-Za-z0-9_])\(([A-Za-z][A-Za-z0-9_]*\^[0-9]+)\)/g, '$1$2');
   } while (cur !== prev);
   return cur;
 }
