@@ -168,7 +168,7 @@ export function buildConfig(): BenchmarkConfig {
     mode,
     provider,
     model,
-    maxTokens: 4096,
+    maxTokens: features.includes('tokens-8k') ? 8192 : 4096,
     maxAgentTurns: 8,
     limits,
     mcpServerCmd: parseMcpServerCmd(),
