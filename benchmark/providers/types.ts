@@ -48,6 +48,7 @@ export interface LLMProvider {
     callTool: (name: string, args: Record<string, unknown>) => Promise<string>,
     maxTokens: number,
     maxTurns: number,
-    temperature?: number
+    temperature?: number,
+    systemPrompt?: string
   ): Promise<ToolAugmentedResult>;
 }
