@@ -1,5 +1,7 @@
 import { normalize } from './normalizer.js';
 import type { AnswerKind } from './normalizer.js';
+import { extractRHS } from './extract-rhs.js';
+import { bareCommaList } from './bare-list.js';
 
 export interface GradeResultV2 {
   match: boolean;
@@ -13,7 +15,8 @@ export interface GradeResultV2 {
     | 'interval'
     | 'conditional'
     | 'symbolic'
-    | 'none';
+    | 'none'
+    | 'equation-rhs-match';
 }
 
 const NUMERIC_TOLERANCE = 1e-6;
@@ -22,6 +25,8 @@ export interface GradeOptions {
   /** Optional Giac evaluator. Returns null if Giac timed out or errored.
    *  When absent, symbolic equivalence is skipped. */
   giacEval?: (expr: string) => Promise<string | null>;
+  /** Internal: skip the v3 equation-RHS stage on recursive grader calls to avoid loops. */
+  _skipV3?: boolean;
 }
 
 /** Split a comma-separated list at top level (depth 0). */
@@ -100,6 +105,7 @@ function normalizeBound(s: string): string {
 
 /**
  * Collapse redundant parens around atomic tokens, e.g. `(82)` → `82`.
+ * Also strips parens around simple power expressions like `(x^3)` → `x^3`.
  * Skips function-call parens by requiring the preceding character to NOT be
  * a letter/digit/underscore: `sqrt(2)` is left alone because `t` precedes `(`.
  */
@@ -110,7 +116,10 @@ function stripRedundantParens(s: string): string {
   let cur = s;
   do {
     prev = cur;
+    // Strip parens around plain alphanumeric atoms: (82), (x), (abc)
     cur = cur.replace(/(^|[^A-Za-z0-9_])\(([A-Za-z0-9_.]+)\)/g, '$1$2');
+    // Strip parens around simple power expressions: (x^3), (x^10), (ab^2)
+    cur = cur.replace(/(^|[^A-Za-z0-9_])\(([A-Za-z][A-Za-z0-9_]*\^[0-9]+)\)/g, '$1$2');
   } while (cur !== prev);
   return cur;
 }
@@ -118,10 +127,29 @@ function stripRedundantParens(s: string): string {
 export function gradeV2(
   predicted: string,
   ground: string,
-  _opts: GradeOptions = {}
+  opts: GradeOptions = {}
 ): GradeResultV2 {
   if (predicted.trim() === ground.trim()) {
     return finish(true, 'exact-string-match', 'scalar', 'exact');
+  }
+
+  // v3 equation-RHS stage — only when flag set, and skip on recursive calls.
+  if (process.env.AXIOM_GRADER_V3 === '1' && !opts._skipV3) {
+    const innerOpts: GradeOptions = { ...opts, _skipV3: true };
+    const pRHS = extractRHS(predicted);
+    if (pRHS !== null) {
+      const r = gradeV2(pRHS, ground, innerOpts);
+      if (r.match) {
+        return { ...r, method: 'equation-rhs-match' as GradeResultV2['method'] };
+      }
+    }
+    const gRHS = extractRHS(ground);
+    if (gRHS !== null) {
+      const r = gradeV2(predicted, gRHS, innerOpts);
+      if (r.match) {
+        return { ...r, method: 'equation-rhs-match' as GradeResultV2['method'] };
+      }
+    }
   }
 
   const p = normalize(predicted);
@@ -148,8 +176,15 @@ export function gradeV2(
   // the canonical collapses all whitespace, eating the spaces around "or".
   const pSetRaw = extractSetFromInput(predicted);
   const gSetRaw = extractSetFromInput(ground);
-  const pSet = pSetRaw ?? setMembers(p.canonical) ?? conditionalToSet(predicted.trim());
-  const gSet = gSetRaw ?? setMembers(g.canonical) ?? conditionalToSet(ground.trim());
+  const v3 = process.env.AXIOM_GRADER_V3 === '1';
+  const pSet = pSetRaw
+    ?? setMembers(p.canonical)
+    ?? conditionalToSet(predicted.trim())
+    ?? (v3 ? bareCommaList(predicted.trim()) : null);
+  const gSet = gSetRaw
+    ?? setMembers(g.canonical)
+    ?? conditionalToSet(ground.trim())
+    ?? (v3 ? bareCommaList(ground.trim()) : null);
   if (pSet && gSet && pSet.length === gSet.length) {
     const pn = pSet.map((m) => normalize(m).canonical).sort();
     const gn = gSet.map((m) => normalize(m).canonical).sort();

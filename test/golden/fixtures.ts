@@ -55,6 +55,36 @@ export const GRADER_CASES: GraderCase[] = [
     shouldMatch: true,
     expectedMethod: 'symbolic',
   },
+  {
+    description: 'equation-form RHS extraction (regression #56 CAS taylor sin)',
+    ground: 'x-x^3/6+x^5/120',
+    candidate: '\\sin(x) = x - \\frac{x^3}{6} + \\frac{x^5}{120}',
+    shouldMatch: true,
+  },
+  {
+    description: 'bare comma-list set match (regression #49 CAS eigenvals)',
+    ground: 'i,-i',
+    candidate: '-i,i',
+    shouldMatch: true,
+  },
+  {
+    description: 'bare comma-list with sqrt members',
+    ground: 'sqrt(2),-sqrt(2)',
+    candidate: '-sqrt(2),sqrt(2)',
+    shouldMatch: true,
+  },
+  {
+    description: 'unicode √ in candidate (regression CAS #6 atan derivative)',
+    ground: '-x/sqrt(1-x^2)',
+    candidate: '-x/√(1-x^2)',
+    shouldMatch: true,
+  },
+  {
+    description: 'equation-RHS rejects bare variable assignment "x = 5" vs "5"',
+    ground: '5',
+    candidate: 'x = 5',
+    shouldMatch: false,
+  },
 ];
 
 export interface ToolCase {

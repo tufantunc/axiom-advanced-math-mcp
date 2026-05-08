@@ -3,6 +3,8 @@ import { dispatch } from './dispatcher.js';
 import { normalize } from './normalize.js';
 import { computeSchema } from './schema.js';
 import type { ComputeEnvelope } from './types.js';
+import { applyHygiene } from './hygiene.js';
+import { giacEngine } from '../../giac/index.js';
 
 export { computeSchema } from './schema.js';
 export type { ComputeEnvelope, ResultType } from './types.js';
@@ -36,7 +38,13 @@ export async function computeHandler(
     const response = await dispatch(handler, handlerArgs);
 
     // 3. Normalize
-    const envelope = normalize(response, handler, handlerArgs);
+    let envelope = normalize(response, handler, handlerArgs);
+
+    // 3.5 Optional hygiene pass (Unicode normalize, silent-failure warn,
+    //     conservative simplify) — gated behind --features=output-hygiene.
+    if (process.env.AXIOM_COMPUTE_HYGIENE === '1') {
+      envelope = await applyHygiene(envelope, giacEngine);
+    }
 
     // 4. Format output
     return formatOutput(envelope, format, response);
@@ -76,6 +84,15 @@ function formatOutput(
       return rawResponse;
     case 'text':
     default:
+      if (envelope.warnings && envelope.warnings.length > 0) {
+        const warnLines = envelope.warnings.map(
+          (w) => ({ type: 'text' as const, text: `[Warning: ${w}]` })
+        );
+        return {
+          content: [...warnLines, ...rawResponse.content],
+          isError: rawResponse.isError,
+        };
+      }
       return rawResponse;
   }
 }

@@ -3,6 +3,8 @@
  * comparable string. Pure-function module — no I/O.
  */
 
+import { unicodeToAscii } from '../../src/server/tools/unicode-normalize.js';
+
 export type AnswerKind = 'scalar' | 'set' | 'interval' | 'conditional' | 'expression';
 
 export interface NormalizedAnswer {
@@ -66,20 +68,7 @@ function latexToPlain(s: string): string {
 
 /** Apply Unicode → plain transformations. */
 function unicodeToPlain(s: string): string {
-  return s
-    .replace(/π/g, 'pi')
-    .replace(/×/g, '*')
-    .replace(/÷/g, '/')
-    .replace(/²/g, '^2')
-    .replace(/³/g, '^3')
-    .replace(/⁰/g, '^0')
-    .replace(/¹/g, '^1')
-    .replace(/⁴/g, '^4')
-    .replace(/⁵/g, '^5')
-    .replace(/⁶/g, '^6')
-    .replace(/⁷/g, '^7')
-    .replace(/⁸/g, '^8')
-    .replace(/⁹/g, '^9');
+  return unicodeToAscii(s);
 }
 
 /**
