@@ -27,6 +27,7 @@ import { loadCAS } from './datasets/cas-problems.js';
 import { gradeNumeric, grade } from './graders/grader.js';
 import { runBaseline } from './runners/baseline.js';
 import { runToolAugmented } from './runners/tool-augmented.js';
+import { voteBaseline, voteToolAugmented } from './runners/self-consistency.js';
 import { createMCPProxy } from './runners/mcp-proxy.js';
 import { generateReport } from './report/generator.js';
 import type { ProblemDetail } from './problem-detail.js';
@@ -74,6 +75,9 @@ async function main(): Promise<void> {
   log(`  Model:    ${config.model}`);
   log(`  MCP:      ${config.mcpServerCmd.join(' ')}`);
   if (config.features.length > 0) log(`  Features: ${config.features.join(',')}`);
+  if (config.selfConsistency) {
+    log(`  Self-consistency: N=${config.selfConsistency.N}, temperature=${config.selfConsistency.temperature}`);
+  }
   log('');
 
   // Validate required API keys
@@ -149,7 +153,16 @@ async function main(): Promise<void> {
       let baselineMethod = '';
       let baselineError: string | undefined;
       try {
-        const br = await runBaseline(problemText, provider, config.maxTokens, config.retryOptions);
+        const br = config.selfConsistency
+          ? await voteBaseline(
+              problemText,
+              provider,
+              config.selfConsistency.N,
+              config.selfConsistency.temperature,
+              config.maxTokens,
+              config.retryOptions
+            )
+          : await runBaseline(problemText, provider, config.maxTokens, config.retryOptions);
         totalBaselineTokens += br.inputTokens + br.outputTokens;
         totalDurationMs += br.durationMs;
 
@@ -173,14 +186,25 @@ async function main(): Promise<void> {
       let toolCalls: ProblemDetail['toolAugmented']['toolCalls'] = [];
       let turns = 0;
       try {
-        const tr = await runToolAugmented(
-          problemText,
-          provider,
-          proxy,
-          config.maxTokens,
-          config.maxAgentTurns,
-          config.retryOptions
-        );
+        const tr = config.selfConsistency
+          ? await voteToolAugmented(
+              problemText,
+              provider,
+              proxy,
+              config.selfConsistency.N,
+              config.selfConsistency.temperature,
+              config.maxTokens,
+              config.maxAgentTurns,
+              config.retryOptions
+            )
+          : await runToolAugmented(
+              problemText,
+              provider,
+              proxy,
+              config.maxTokens,
+              config.maxAgentTurns,
+              config.retryOptions
+            );
         totalToolTokens += tr.inputTokens + tr.outputTokens;
         totalDurationMs += tr.durationMs;
         toolCalls = tr.toolCalls;
@@ -216,6 +240,7 @@ async function main(): Promise<void> {
           correct: baselineOk,
           method: baselineMethod,
           error: baselineError,
+          ...(('selfConsistency' in br && br.selfConsistency) ? { selfConsistency: br.selfConsistency } : {}),
         },
         toolAugmented: {
           extractedAnswer: toolExtracted,
@@ -224,6 +249,7 @@ async function main(): Promise<void> {
           toolCalls,
           turns,
           error: toolError,
+          ...(('selfConsistency' in tr && tr.selfConsistency) ? { selfConsistency: tr.selfConsistency } : {}),
         },
         regression: baselineOk && !toolOk,
         improvement: !baselineOk && toolOk,
