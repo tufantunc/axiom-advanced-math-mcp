@@ -95,8 +95,7 @@ export async function voteToolAugmented(
   temperature: number,
   maxTokens: number,
   maxTurns: number,
-  retryOptions?: import('../providers/retry.js').RetryOptions,
-  systemPrompt?: string
+  retryOptions?: import('../providers/retry.js').RetryOptions
 ): Promise<ToolAugmentedResult & { selfConsistency: SelfConsistencyData }> {
   const samples: ToolAugmentedResult[] = [];
   for (let i = 0; i < N; i++) {
@@ -108,8 +107,7 @@ export async function voteToolAugmented(
         maxTokens,
         maxTurns,
         retryOptions,
-        temperature,
-        systemPrompt
+        temperature
       )
     );
   }

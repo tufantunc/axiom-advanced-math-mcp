@@ -67,8 +67,7 @@ export class OpenAICompatProvider implements LLMProvider {
     callTool: (name: string, args: Record<string, unknown>) => Promise<string>,
     maxTokens: number,
     maxTurns: number,
-    temperature?: number,
-    systemPrompt?: string
+    temperature?: number
   ): Promise<ToolAugmentedResult> {
     const start = Date.now();
 
@@ -82,7 +81,7 @@ export class OpenAICompatProvider implements LLMProvider {
     }));
 
     const messages: OpenAI.ChatCompletionMessageParam[] = [
-      { role: 'system', content: systemPrompt ?? getToolPromptForProblem(problem) },
+      { role: 'system', content: getToolPromptForProblem(problem) },
       { role: 'user', content: problem },
     ];
 
