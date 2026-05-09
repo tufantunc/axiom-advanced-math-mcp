@@ -51,6 +51,15 @@ npm run gsm8k:quick:zai
 npm run math:quick:zai
 ```
 
+**Local models (LM Studio, Ollama, vLLM):**
+
+Set `LOCAL_BASE_URL` in `.env` or inline, then run with `--local --model <name>`:
+
+```bash
+LOCAL_BASE_URL=http://localhost:1234/v1 tsx index.ts --quick --local --model llama-3.2
+LOCAL_BASE_URL=http://localhost:11434/v1 tsx index.ts --quick --local --model llama3
+```
+
 Optional opt-in flags (see README "Optional ablation features"):
 - `--features=output-hygiene`
 - `--features=grader-v3`

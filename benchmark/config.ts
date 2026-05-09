@@ -34,6 +34,7 @@ const DEFAULT_MODELS: Record<ProviderName, string> = {
   anthropic: 'claude-sonnet-4-6',
   zai: 'glm-5.1',
   openrouter: 'meta-llama/llama-3.3-70b-instruct',
+  local: '',
 };
 
 // Sample sizes per size mode
@@ -143,13 +144,19 @@ export function buildConfig(): BenchmarkConfig {
     provider = 'zai';
   } else if (args.includes('--openrouter')) {
     provider = 'openrouter';
+  } else if (args.includes('--local')) {
+    provider = 'local';
   } else {
     const providerIdx = args.indexOf('--provider');
     if (providerIdx !== -1) {
       const raw = args[providerIdx + 1];
-      if (raw === 'anthropic' || raw === 'zai' || raw === 'openrouter') provider = raw;
-      else throw new Error(`Unknown provider: "${raw}". Valid options: anthropic, zai, openrouter`);
+      if (raw === 'anthropic' || raw === 'zai' || raw === 'openrouter' || raw === 'local') provider = raw;
+      else throw new Error(`Unknown provider: "${raw}". Valid options: anthropic, zai, openrouter, local`);
     }
+  }
+
+  if (provider === 'local' && !args.includes('--model')) {
+    throw new Error('--model <name> is required when using --local provider');
   }
 
   // --- Model (explicit --model overrides the default) -------------------

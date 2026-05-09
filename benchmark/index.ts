@@ -5,15 +5,18 @@ import 'dotenv/config';
  *
  * Usage:
  *   tsx index.ts [--quick|--full|--gsm8k|--math|--olympiad|--cas]
- *                [--provider anthropic|zai|openrouter] [--model <name>]
+ *                [--provider anthropic|zai|openrouter|local] [--model <name>]
  *                [--zai]         shorthand for --provider zai
  *                [--openrouter]  shorthand for --provider openrouter
+ *                [--local]       shorthand for --provider local (requires --model)
  *
  * Examples:
  *   tsx index.ts --quick                                         Claude
  *   tsx index.ts --quick --zai                                   GLM
  *   tsx index.ts --cas --quick --zai                             CAS only
  *   tsx index.ts --quick --openrouter --model deepseek/deepseek-r1
+ *   LOCAL_BASE_URL=http://localhost:1234/v1 tsx index.ts --quick --local --model llama-3.2
+ *   LOCAL_BASE_URL=http://localhost:11434/v1 tsx index.ts --quick --local --model llama3
  */
 
 import { writeFile, mkdir } from 'fs/promises';
@@ -87,6 +90,7 @@ async function main(): Promise<void> {
     anthropic: 'ANTHROPIC_API_KEY',
     zai: 'ZAI_API_KEY',
     openrouter: 'OPENROUTER_API_KEY',
+    local: 'LOCAL_BASE_URL',
   };
   const keyName = requiredKey[config.provider];
   if (keyName && !process.env[keyName]) {
