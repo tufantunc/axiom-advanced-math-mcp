@@ -1,4 +1,4 @@
-import { QuickCalcService } from './quick-calc-service.js';
+import { QuickCalcService, type QuickCalcOptions } from './quick-calc-service.js';
 import { preprocessExpression } from './quick-calc-preprocessor.js';
 import { tryExactResult } from './exact-arithmetic.js';
 import { formatToolResponse, formatErrorResponse } from './response-formatter.js';
@@ -10,7 +10,13 @@ export async function quickCalcHandler(args: Record<string, unknown>) {
     const { expression } = preprocessExpression(rawExpr);
 
     const service = new QuickCalcService();
-    const result = service.evaluate({ ...(args as any), expression });
+    const opts: QuickCalcOptions = {
+      expression,
+      units: args.units as QuickCalcOptions['units'],
+      precision: args.precision as number | undefined,
+      format: args.format as QuickCalcOptions['format'],
+    };
+    const result = service.evaluate(opts);
 
     const numericResult =
       typeof result.result === 'number' ? result.result : parseFloat(String(result.result));

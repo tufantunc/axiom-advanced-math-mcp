@@ -1,24 +1,6 @@
-import { z } from 'zod';
 import { formatToolResponse, formatErrorResponse } from './response-formatter.js';
 import { tryExactResult } from './exact-arithmetic.js';
 import { QuickCalcService } from './quick-calc-service.js';
-
-export const exactValueSchema = z.object({
-  operation: z
-    .enum(['to_exact', 'to_decimal', 'simplify_fraction'])
-    .describe(
-      'Conversion operation:\n' +
-        '  to_exact — convert decimal to exact form (fraction, sqrt, pi expression)\n' +
-        '  to_decimal — evaluate symbolic expression to decimal\n' +
-        '  simplify_fraction — reduce a fraction to lowest terms'
-    ),
-  value: z
-    .string()
-    .describe(
-      'Value to convert. Decimal number for to_exact, expression for to_decimal, "a/b" for simplify_fraction.'
-    ),
-  precision: z.number().optional().describe('Decimal precision for to_decimal (default: 10)'),
-});
 
 export async function exactValueHandler(args: Record<string, unknown>) {
   try {

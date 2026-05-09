@@ -1,26 +1,6 @@
-import { z } from 'zod';
-import { giacEngine } from '../giac/index.js';
-import { formatToolResponse, formatErrorResponse } from './response-formatter.js';
+import { formatErrorResponse } from './response-formatter.js';
 import { validateExpression } from './symbolic/validator.js';
-import { evaluationCache } from './symbolic/cache.js';
-
-export const solveEquationSchema = z.object({
-  equation: z
-    .string()
-    .describe(
-      'Equation to solve. Use "=" for equality (e.g., "x^2-4=0", "sin(x)=1/2"). If no "=" present, solved as equal to 0.'
-    ),
-  variable: z.string().describe('Variable to solve for (e.g., "x", "y")'),
-  domain: z
-    .enum(['real', 'complex'])
-    .optional()
-    .describe('Solution domain: "real" (default) or "complex"'),
-});
-
-export const solveSystemSchema = z.object({
-  equations: z.array(z.string()).describe('List of equations (e.g., ["x+y=5", "x-y=1"])'),
-  variables: z.array(z.string()).describe('Variables to solve for (e.g., ["x", "y"])'),
-});
+import { evalWithLatex } from './giac-eval.js';
 
 export async function solveEquationHandler(args: Record<string, unknown>) {
   try {
@@ -36,40 +16,10 @@ export async function solveEquationHandler(args: Record<string, unknown>) {
 
     const fn = domain === 'complex' ? 'csolve' : 'solve';
     const giacExpr = `${fn}(${equation},${variable})`;
-
-    const cached = evaluationCache.get(giacExpr);
-    if (cached) {
-      return formatToolResponse({
-        result: cached.result,
-        latex: cached.latex,
-        giacCommand: giacExpr,
-      });
-    }
-
-    const result = await giacEngine.evaluate(giacExpr);
-    if (!result || result === 'undef') {
-      return formatErrorResponse('Could not solve equation');
-    }
-
-    let latex: string | undefined;
-    try {
-      const rawLatex = await giacEngine.evaluate(`latex(${result})`);
-      if (rawLatex && rawLatex !== 'undef' && !rawLatex.startsWith('latex')) {
-        latex = rawLatex
-          .replace(/\\dfrac\b/g, '\\frac')
-          .replace(/\\displaystyle\s*/g, '')
-          .replace(/\\textstyle\s*/g, '');
-      }
-    } catch {
-      /* best effort */
-    }
-
-    evaluationCache.set(giacExpr, { result, latex });
-
-    return formatToolResponse({
-      result,
-      latex,
-      giacCommand: giacExpr,
+    return evalWithLatex({
+      giacExpr,
+      operation: 'solve',
+      errorMessage: 'Could not solve equation',
     });
   } catch (error) {
     return formatErrorResponse(error instanceof Error ? error.message : String(error));
@@ -94,40 +44,10 @@ export async function solveSystemHandler(args: Record<string, unknown>) {
     }
 
     const giacExpr = `solve([${equations.join(',')}],[${variables.join(',')}])`;
-
-    const cached = evaluationCache.get(giacExpr);
-    if (cached) {
-      return formatToolResponse({
-        result: cached.result,
-        latex: cached.latex,
-        giacCommand: giacExpr,
-      });
-    }
-
-    const result = await giacEngine.evaluate(giacExpr);
-    if (!result || result === 'undef') {
-      return formatErrorResponse('Could not solve system');
-    }
-
-    let latex: string | undefined;
-    try {
-      const rawLatex = await giacEngine.evaluate(`latex(${result})`);
-      if (rawLatex && rawLatex !== 'undef' && !rawLatex.startsWith('latex')) {
-        latex = rawLatex
-          .replace(/\\dfrac\b/g, '\\frac')
-          .replace(/\\displaystyle\s*/g, '')
-          .replace(/\\textstyle\s*/g, '');
-      }
-    } catch {
-      /* best effort */
-    }
-
-    evaluationCache.set(giacExpr, { result, latex });
-
-    return formatToolResponse({
-      result,
-      latex,
-      giacCommand: giacExpr,
+    return evalWithLatex({
+      giacExpr,
+      operation: 'solve_system',
+      errorMessage: 'Could not solve system',
     });
   } catch (error) {
     return formatErrorResponse(error instanceof Error ? error.message : String(error));

@@ -1,3 +1,5 @@
+import { type McpResponse } from './types.js';
+
 import { calculusHandler } from '../calculus.js';
 import { algebraHandler } from '../algebra.js';
 import { solveEquationHandler, solveSystemHandler } from '../solve.js';
@@ -15,11 +17,6 @@ import { fourierTransformHandler } from '../fourier-transform.js';
 import { linearRegressionHandler } from '../linear-regression.js';
 import { numberPropertiesHandler } from '../number-properties.js';
 import { sequenceIdentifyHandler } from '../sequence-identify.js';
-
-type McpResponse = {
-  content: { type: 'text'; text: string }[];
-  isError: boolean;
-};
 
 /**
  * Dispatch to an existing handler by key.

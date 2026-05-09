@@ -1,10 +1,15 @@
-import { AdvancedSolveService } from './advanced-solve-service.js';
+import { AdvancedSolveService, type AdvancedSolveOptions } from './advanced-solve-service.js';
 import { formatToolResponse, formatErrorResponse } from './response-formatter.js';
 
 export async function advancedSolveHandler(args: Record<string, unknown>) {
   try {
     const service = new AdvancedSolveService();
-    const result = await service.evaluate(args as any);
+    const result = await service.evaluate({
+      expression: args.expression as string,
+      format: args.format as AdvancedSolveOptions['format'],
+      steps: args.steps as boolean | undefined,
+      simplify: args.simplify as boolean | undefined,
+    });
 
     const notes: string[] = [];
     if (result.latex) notes.push(`LaTeX: ${result.latex}`);

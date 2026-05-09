@@ -37,3 +37,8 @@ export interface RouterRule {
   test: (problem: string, domain?: string) => boolean;
   extract: (problem: string, domain?: string) => RouteResult;
 }
+
+export type McpResponse = {
+  content: { type: 'text'; text: string }[];
+  isError: boolean;
+};

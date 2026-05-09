@@ -45,3 +45,28 @@ export function formatErrorResponse(message: string): {
     isError: true,
   };
 }
+
+export function formatRawResponse(lines: string[]): {
+  content: { type: 'text'; text: string }[];
+  isError: boolean;
+} {
+  return {
+    content: [{ type: 'text' as const, text: lines.join('\n') }],
+    isError: false,
+  };
+}
+
+export function formatRawError(error: unknown): {
+  content: { type: 'text'; text: string }[];
+  isError: boolean;
+} {
+  return {
+    content: [
+      {
+        type: 'text' as const,
+        text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+      },
+    ],
+    isError: true,
+  };
+}

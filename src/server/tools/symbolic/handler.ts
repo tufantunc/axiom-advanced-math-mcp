@@ -17,11 +17,19 @@ export function createSymbolicHandler(definition: SymbolicToolDefinition) {
 
       // Pre-flight validation on all string args that look like expressions
       for (const [key, value] of Object.entries(args)) {
-        if (typeof value === 'string' && key !== 'operation' && key !== 'domain' && key !== 'direction' && key !== 'type') {
+        if (
+          typeof value === 'string' &&
+          key !== 'operation' &&
+          key !== 'domain' &&
+          key !== 'direction' &&
+          key !== 'type'
+        ) {
           const error = validateExpression(value);
           if (error) {
             return {
-              content: [{ type: 'text' as const, text: `Validation error in '${key}': ${error.message}` }],
+              content: [
+                { type: 'text' as const, text: `Validation error in '${key}': ${error.message}` },
+              ],
               isError: true,
             };
           }
@@ -78,7 +86,10 @@ export function createSymbolicHandler(definition: SymbolicToolDefinition) {
     } catch (error) {
       return {
         content: [
-          { type: 'text' as const, text: `Error: ${error instanceof Error ? error.message : String(error)}` },
+          {
+            type: 'text' as const,
+            text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+          },
         ],
         isError: true,
       };

@@ -30,12 +30,7 @@ export const computeSchema = z.object({
         '  numeric — force numerical methods\n' +
         '  exact — exact symbolic form'
     ),
-  precision: z
-    .number()
-    .min(1)
-    .max(50)
-    .optional()
-    .describe('Decimal precision (default: 10)'),
+  precision: z.number().min(1).max(50).optional().describe('Decimal precision (default: 10)'),
   format: z
     .enum(['text', 'latex', 'json'])
     .optional()

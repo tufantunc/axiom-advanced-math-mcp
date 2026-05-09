@@ -1,6 +1,6 @@
 declare module 'giac' {
   export interface GiacResult {
-    value: any;
+    value: unknown;
     display?: string;
   }
 
@@ -9,7 +9,7 @@ declare module 'giac' {
     memory?: number;
   }
 
-  export function evaluate(expression: string, options?: GiacOptions): any;
+  export function evaluate(expression: string, options?: GiacOptions): unknown;
   export function evaluateLatex(expression: string): string;
-  export function evaluateSteps(expression: string): { result: any; steps: string[] };
+  export function evaluateSteps(expression: string): { result: unknown; steps: string[] };
 }

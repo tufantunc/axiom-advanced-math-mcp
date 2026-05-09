@@ -1,47 +1,7 @@
-import { z } from 'zod';
 import { giacEngine } from '../giac/index.js';
 import { formatToolResponse, formatErrorResponse } from './response-formatter.js';
+import { erf } from './stats-utils.js';
 
-export const probabilityCalcSchema = z.object({
-  distribution: z
-    .enum([
-      'binomial',
-      'normal',
-      'poisson',
-      'geometric',
-      'hypergeometric',
-      'chi_square',
-      'student_t',
-      'f_distribution',
-      'beta',
-      'exponential',
-    ] as const)
-    .describe(
-      'Probability distribution type. ' +
-        'Discrete: binomial, poisson, geometric, hypergeometric. ' +
-        'Continuous: normal, chi_square, student_t, f_distribution, beta, exponential.'
-    ),
-  operation: z
-    .enum(['pmf', 'cdf', 'expected_value', 'variance', 'quantile'] as const)
-    .describe(
-      'What to calculate: pmf/pdf (point probability/density), cdf (cumulative), ' +
-        'expected_value, variance, or quantile (inverse CDF — returns x such that P(X ≤ x) = p).'
-    ),
-  params: z
-    .record(z.string(), z.number())
-    .describe(
-      'Distribution parameters as key-value pairs. ' +
-        'Binomial: {n, k, p}. Normal: {x, mu, sigma}. ' +
-        'Poisson: {k, lambda}. Geometric: {k, p}. Hypergeometric: {N, K, n, k}. ' +
-        'Chi-square: {df, x} or {df, p} for quantile. ' +
-        'Student-t: {df, x} or {df, p} for quantile. ' +
-        'F-distribution: {df1, df2, x} or {df1, df2, p} for quantile. ' +
-        'Beta: {alpha, beta, x} or {alpha, beta, p} for quantile. ' +
-        'Exponential: {lambda, x} or {lambda, p} for quantile.'
-    ),
-});
-
-/** Compute C(n, k) = n! / (k! * (n-k)!) */
 function combinations(n: number, k: number): number {
   if (k < 0 || k > n) return 0;
   if (k === 0 || k === n) return 1;
@@ -53,7 +13,6 @@ function combinations(n: number, k: number): number {
   return result;
 }
 
-/** Compute n! */
 function factorial(n: number): number {
   let result = 1;
   for (let i = 2; i <= n; i++) result *= i;
@@ -62,6 +21,32 @@ function factorial(n: number): number {
 
 interface CalcResult {
   lines: string[];
+}
+
+async function handleGiacDistOps(
+  op: string,
+  params: Record<string, number>,
+  giacPdf: string,
+  giacCdf: string,
+  giacIcdf: string,
+  headerLines: string[]
+): Promise<CalcResult | null> {
+  const { x, p } = params;
+  if (op === 'quantile') {
+    if (p === undefined) return { lines: [...headerLines, 'Error: quantile requires param p'] };
+    const val = await giacEngine.evaluate(giacIcdf.replace('${p}', String(p)));
+    return { lines: [...headerLines, `P(X ≤ x) = ${p} → x = ${val.trim()}`] };
+  }
+  if (x === undefined) return { lines: [...headerLines, 'Error: pmf/cdf requires param x'] };
+  if (op === 'pmf') {
+    const val = await giacEngine.evaluate(giacPdf.replace('${x}', String(x)));
+    return { lines: [...headerLines, `f(${x}) = ${val.trim()}`] };
+  }
+  if (op === 'cdf') {
+    const val = await giacEngine.evaluate(giacCdf.replace('${x}', String(x)));
+    return { lines: [...headerLines, `P(X ≤ ${x}) = ${val.trim()}`] };
+  }
+  return null;
 }
 
 function binomial(op: string, params: Record<string, number>): CalcResult {
@@ -141,20 +126,17 @@ async function normal(op: string, params: Record<string, number>): Promise<CalcR
   }
 
   if (op === 'pmf') {
-    // PDF value
     const coeff = 1 / (sigma * Math.sqrt(2 * Math.PI));
     const exponent = -0.5 * Math.pow((x - mu) / sigma, 2);
     const pdf = coeff * Math.exp(exponent);
     lines.push(`f(${x}) = (1/(σ√(2π))) × exp(-½((x-μ)/σ)²)`);
     lines.push(`f(${x}) = ${pdf}`);
-    // Also show z-score
     const z = (x - mu) / sigma;
     lines.push(`z-score: ${z}`);
     return { lines };
   }
 
   if (op === 'cdf') {
-    // Try Giac for CDF
     try {
       const result = await giacEngine.evaluate(`normald_cdf(${mu},${sigma},${x})`);
       lines.push(`P(X ≤ ${x}) = Φ((${x}-${mu})/${sigma})`);
@@ -162,7 +144,6 @@ async function normal(op: string, params: Record<string, number>): Promise<CalcR
       const z = (x - mu) / sigma;
       lines.push(`z-score: ${z}`);
     } catch {
-      // JS fallback using error function approximation
       const z = (x - mu) / sigma;
       const cdf = 0.5 * (1 + erf(z / Math.sqrt(2)));
       lines.push(`P(X ≤ ${x}) ≈ ${cdf}`);
@@ -172,21 +153,6 @@ async function normal(op: string, params: Record<string, number>): Promise<CalcR
   }
 
   return { lines };
-}
-
-/** Error function approximation (Abramowitz and Stegun) */
-function erf(x: number): number {
-  const sign = x >= 0 ? 1 : -1;
-  x = Math.abs(x);
-  const a1 = 0.254829592;
-  const a2 = -0.284496736;
-  const a3 = 1.421413741;
-  const a4 = -1.453152027;
-  const a5 = 1.061405429;
-  const p = 0.3275911;
-  const t = 1.0 / (1.0 + p * x);
-  const y = 1.0 - ((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
-  return sign * y;
 }
 
 function poisson(op: string, params: Record<string, number>): CalcResult {
@@ -329,7 +295,7 @@ function hypergeometric(op: string, params: Record<string, number>): CalcResult 
 }
 
 async function chiSquare(op: string, params: Record<string, number>): Promise<CalcResult> {
-  const { df, x, p } = params;
+  const { df } = params;
   const lines: string[] = [`Distribution: Chi-square(df=${df})`];
   if (df === undefined)
     return { lines: ['Error: chi_square requires param df (degrees of freedom)'] };
@@ -343,28 +309,20 @@ async function chiSquare(op: string, params: Record<string, number>): Promise<Ca
     lines.push(`Var(X) = 2×df = ${2 * df}`);
     return { lines };
   }
-  if (op === 'quantile') {
-    if (p === undefined) return { lines: ['Error: quantile requires param p'] };
-    const val = await giacEngine.evaluate(`chisquare_icdf(${df},${p})`);
-    lines.push(`P(X ≤ x) = ${p} → x = ${val.trim()}`);
-    return { lines };
-  }
-  if (x === undefined) return { lines: ['Error: pmf/cdf requires param x'] };
-  if (op === 'pmf') {
-    const val = await giacEngine.evaluate(`chisquare(${x},${df})`);
-    lines.push(`f(${x}) = ${val.trim()}`);
-    return { lines };
-  }
-  if (op === 'cdf') {
-    const val = await giacEngine.evaluate(`chisquare_cdf(${df},${x})`);
-    lines.push(`P(X ≤ ${x}) = ${val.trim()}`);
-    return { lines };
-  }
-  return { lines };
+
+  const distResult = await handleGiacDistOps(
+    op,
+    params,
+    `chisquare(\${x},${df})`,
+    `chisquare_cdf(${df},\${x})`,
+    `chisquare_icdf(${df},\${p})`,
+    lines
+  );
+  return distResult ?? { lines };
 }
 
 async function studentT(op: string, params: Record<string, number>): Promise<CalcResult> {
-  const { df, x, p } = params;
+  const { df } = params;
   const lines: string[] = [`Distribution: Student-t(df=${df})`];
   if (df === undefined)
     return { lines: ['Error: student_t requires param df (degrees of freedom)'] };
@@ -378,28 +336,20 @@ async function studentT(op: string, params: Record<string, number>): Promise<Cal
     lines.push(df > 2 ? `Var(X) = df/(df-2) = ${df / (df - 2)}` : `Var(X) = undefined (df ≤ 2)`);
     return { lines };
   }
-  if (op === 'quantile') {
-    if (p === undefined) return { lines: ['Error: quantile requires param p'] };
-    const val = await giacEngine.evaluate(`student_icdf(${df},${p})`);
-    lines.push(`P(X ≤ x) = ${p} → x = ${val.trim()}`);
-    return { lines };
-  }
-  if (x === undefined) return { lines: ['Error: pmf/cdf requires param x'] };
-  if (op === 'pmf') {
-    const val = await giacEngine.evaluate(`studentd(${df},${x})`);
-    lines.push(`f(${x}) = ${val.trim()}`);
-    return { lines };
-  }
-  if (op === 'cdf') {
-    const val = await giacEngine.evaluate(`student_cdf(${df},${x})`);
-    lines.push(`P(X ≤ ${x}) = ${val.trim()}`);
-    return { lines };
-  }
-  return { lines };
+
+  const distResult = await handleGiacDistOps(
+    op,
+    params,
+    `studentd(${df},\${x})`,
+    `student_cdf(${df},\${x})`,
+    `student_icdf(${df},\${p})`,
+    lines
+  );
+  return distResult ?? { lines };
 }
 
 async function fDistribution(op: string, params: Record<string, number>): Promise<CalcResult> {
-  const { df1, df2, x, p } = params;
+  const { df1, df2 } = params;
   const lines: string[] = [`Distribution: F(df1=${df1}, df2=${df2})`];
   if (df1 === undefined || df2 === undefined)
     return { lines: ['Error: f_distribution requires params df1 and df2'] };
@@ -417,30 +367,21 @@ async function fDistribution(op: string, params: Record<string, number>): Promis
     lines.push(`Var(X) = ${v}`);
     return { lines };
   }
-  if (op === 'quantile') {
-    if (p === undefined) return { lines: ['Error: quantile requires param p'] };
-    const val = await giacEngine.evaluate(`fisher_icdf(${df1},${df2},${p})`);
-    lines.push(`P(X ≤ x) = ${p} → x = ${val.trim()}`);
-    return { lines };
-  }
-  if (x === undefined) return { lines: ['Error: pmf/cdf requires param x'] };
-  if (op === 'pmf') {
-    const val = await giacEngine.evaluate(`fisherd(${df1},${df2},${x})`);
-    lines.push(`f(${x}) = ${val.trim()}`);
-    return { lines };
-  }
-  if (op === 'cdf') {
-    const val = await giacEngine.evaluate(`fisher_cdf(${df1},${df2},${x})`);
-    lines.push(`P(X ≤ ${x}) = ${val.trim()}`);
-    return { lines };
-  }
-  return { lines };
+
+  const distResult = await handleGiacDistOps(
+    op,
+    params,
+    `fisherd(${df1},${df2},\${x})`,
+    `fisher_cdf(${df1},${df2},\${x})`,
+    `fisher_icdf(${df1},${df2},\${p})`,
+    lines
+  );
+  return distResult ?? { lines };
 }
 
 async function betaDist(op: string, params: Record<string, number>): Promise<CalcResult> {
   const alpha = params.alpha;
   const betaParam = params.beta;
-  const { x, p } = params;
   const lines: string[] = [`Distribution: Beta(α=${alpha}, β=${betaParam})`];
   if (alpha === undefined || betaParam === undefined)
     return { lines: ['Error: beta requires params alpha and beta'] };
@@ -457,24 +398,16 @@ async function betaDist(op: string, params: Record<string, number>): Promise<Cal
     lines.push(`Var(X) = ${variance}`);
     return { lines };
   }
-  if (op === 'quantile') {
-    if (p === undefined) return { lines: ['Error: quantile requires param p'] };
-    const val = await giacEngine.evaluate(`betad_icdf(${alpha},${betaParam},${p})`);
-    lines.push(`P(X ≤ x) = ${p} → x = ${val.trim()}`);
-    return { lines };
-  }
-  if (x === undefined) return { lines: ['Error: pmf/cdf requires param x'] };
-  if (op === 'pmf') {
-    const val = await giacEngine.evaluate(`betad(${alpha},${betaParam},${x})`);
-    lines.push(`f(${x}) = ${val.trim()}`);
-    return { lines };
-  }
-  if (op === 'cdf') {
-    const val = await giacEngine.evaluate(`betad_cdf(${alpha},${betaParam},${x})`);
-    lines.push(`P(X ≤ ${x}) = ${val.trim()}`);
-    return { lines };
-  }
-  return { lines };
+
+  const distResult = await handleGiacDistOps(
+    op,
+    params,
+    `betad(${alpha},${betaParam},\${x})`,
+    `betad_cdf(${alpha},${betaParam},\${x})`,
+    `betad_icdf(${alpha},${betaParam},\${p})`,
+    lines
+  );
+  return distResult ?? { lines };
 }
 
 function exponentialDist(op: string, params: Record<string, number>): CalcResult {

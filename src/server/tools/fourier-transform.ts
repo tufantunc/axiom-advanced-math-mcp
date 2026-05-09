@@ -1,34 +1,7 @@
-import { z } from 'zod';
 import { giacEngine } from '../giac/index.js';
+import { formatRawResponse, formatRawError } from './response-formatter.js';
 
-export const fourierTransformSchema = z.object({
-  mode: z
-    .enum(['fft', 'ifft'] as const)
-    .describe(
-      'Transform mode: fft (forward Discrete Fourier Transform) or ifft (inverse DFT). ' +
-      'SCOPE: Only use for actual numerical signal/data arrays (engineering, signal processing). ' +
-      'Do NOT use for standard math problems, algebraic expressions, or symbolic computations. ' +
-      'For symbolic Fourier transforms of expressions, use advanced_solve.',
-    ),
-  data: z
-    .array(z.number())
-    .min(2)
-    .describe('Input data array (real-valued numbers). For FFT, best performance with power-of-2 length.'),
-  sample_rate: z
-    .number()
-    .positive()
-    .optional()
-    .describe('Sample rate in Hz. If provided, frequency axis is computed in Hz (default: normalized 0–1).'),
-  output_magnitude: z
-    .boolean()
-    .optional()
-    .default(true)
-    .describe('If true (default), also return magnitude spectrum |X[k]|.'),
-});
-
-/** Parse a Giac list string like "[2.0,0.0,2.0,0.0]" into number pairs [real, imag] */
 function parseGiacComplex(giac: string): { re: number; im: number }[] {
-  // Giac fft returns real-interleaved list: [re0, im0, re1, im1, ...]
   const stripped = giac.replace(/^\[/, '').replace(/\]$/, '');
   if (!stripped) return [];
   const nums = stripped.split(',').map((s) => parseFloat(s.trim()));
@@ -52,13 +25,9 @@ export async function fourierTransformHandler(args: Record<string, unknown>) {
     const fn = mode === 'ifft' ? 'ifft' : 'fft';
     const raw = await giacEngine.evaluate(`${fn}(${giacList})`);
 
-    // Giac returns a flat real-interleaved list
     const complex = parseGiacComplex(raw);
 
-    const lines: string[] = [
-      `${mode.toUpperCase()}: n = ${n} samples`,
-      ``,
-    ];
+    const lines: string[] = [`${mode.toUpperCase()}: n = ${n} samples`, ``];
 
     if (mode === 'fft') {
       lines.push('Frequency spectrum (index, real, imag):');
@@ -85,22 +54,17 @@ export async function fourierTransformHandler(args: Record<string, unknown>) {
         lines.push(`Nyquist frequency: ${(sampleRate / 2).toFixed(4)} Hz`);
       }
     } else {
-      // IFFT
       lines.push('Reconstructed time-domain signal:');
       for (let k = 0; k < complex.length; k++) {
         const { re, im } = complex[k];
-        lines.push(`  [${k}]  ${re.toFixed(8)}${Math.abs(im) > 1e-10 ? ` + ${im.toFixed(8)}i` : ''}`);
+        lines.push(
+          `  [${k}]  ${re.toFixed(8)}${Math.abs(im) > 1e-10 ? ` + ${im.toFixed(8)}i` : ''}`
+        );
       }
     }
 
-    return {
-      content: [{ type: 'text' as const, text: lines.join('\n') }],
-      isError: false,
-    };
+    return formatRawResponse(lines);
   } catch (error) {
-    return {
-      content: [{ type: 'text' as const, text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
-      isError: true,
-    };
+    return formatRawError(error);
   }
 }

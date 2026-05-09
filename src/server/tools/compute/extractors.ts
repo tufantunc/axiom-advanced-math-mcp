@@ -79,6 +79,18 @@ function extractMatrixString(problem: string): string {
   return match ? match[1] : '';
 }
 
+function extractVariables(equations: string[]): string[] {
+  const vars = new Set<string>();
+  for (const eq of equations) {
+    const matches = eq.match(/\b([a-zA-Z])\b/g);
+    if (matches)
+      matches.forEach((v) => {
+        if (v !== 'e' && v !== 'E') vars.add(v);
+      });
+  }
+  return Array.from(vars);
+}
+
 // ---------------------------------------------------------------------------
 // Extractors
 // ---------------------------------------------------------------------------
@@ -111,28 +123,17 @@ export function extractSolveSystem(problem: string): RouteResult {
       .split(';')
       .map((e) => e.trim())
       .filter(Boolean);
-    // Gather variables from all equations
-    const vars = new Set<string>();
-    for (const eq of equations) {
-      const matches = eq.match(/\b([a-zA-Z])\b/g);
-      if (matches) matches.forEach((v) => { if (v !== 'e' && v !== 'E') vars.add(v); });
-    }
     return {
       handler: 'solve_system',
-      args: { equations, variables: Array.from(vars) },
+      args: { equations, variables: extractVariables(equations) },
     };
   }
   // [eq1, eq2] bracket format
   const inner = problem.replace(/^\[|\]$/g, '').trim();
   const equations = splitArgs(inner);
-  const vars = new Set<string>();
-  for (const eq of equations) {
-    const matches = eq.match(/\b([a-zA-Z])\b/g);
-    if (matches) matches.forEach((v) => { if (v !== 'e' && v !== 'E') vars.add(v); });
-  }
   return {
     handler: 'solve_system',
-    args: { equations, variables: Array.from(vars) },
+    args: { equations, variables: extractVariables(equations) },
   };
 }
 
@@ -340,15 +341,27 @@ export function extractNumberTheory(problem: string): RouteResult {
   const inner = extractFnArgs(problem);
 
   if (trimmed.startsWith('ifactor')) {
-    return { handler: 'number_theory', args: { operation: 'prime_factorize', number: parseInt(inner, 10) } };
+    return {
+      handler: 'number_theory',
+      args: { operation: 'prime_factorize', number: parseInt(inner, 10) },
+    };
   }
   if (trimmed.startsWith('isprime')) {
-    return { handler: 'number_theory', args: { operation: 'analyze', number: parseInt(inner, 10) } };
+    return {
+      handler: 'number_theory',
+      args: { operation: 'analyze', number: parseInt(inner, 10) },
+    };
   }
   if (trimmed.startsWith('euler')) {
-    return { handler: 'number_theory', args: { operation: 'analyze', number: parseInt(inner, 10) } };
+    return {
+      handler: 'number_theory',
+      args: { operation: 'analyze', number: parseInt(inner, 10) },
+    };
   }
-  return { handler: 'number_theory', args: { operation: 'prime_factorize', number: parseInt(inner, 10) } };
+  return {
+    handler: 'number_theory',
+    args: { operation: 'prime_factorize', number: parseInt(inner, 10) },
+  };
 }
 
 // --- Combinatorics ---
@@ -361,7 +374,11 @@ export function extractCombinatorics(problem: string): RouteResult {
   if (combMatch) {
     return {
       handler: 'combinatorics',
-      args: { operation: 'combinations', n: parseInt(combMatch[1], 10), k: parseInt(combMatch[2], 10) },
+      args: {
+        operation: 'combinations',
+        n: parseInt(combMatch[1], 10),
+        k: parseInt(combMatch[2], 10),
+      },
     };
   }
 
@@ -370,7 +387,11 @@ export function extractCombinatorics(problem: string): RouteResult {
   if (permMatch) {
     return {
       handler: 'combinatorics',
-      args: { operation: 'permutations', n: parseInt(permMatch[1], 10), k: parseInt(permMatch[2], 10) },
+      args: {
+        operation: 'permutations',
+        n: parseInt(permMatch[1], 10),
+        k: parseInt(permMatch[2], 10),
+      },
     };
   }
 
@@ -417,8 +438,16 @@ export function extractProbability(problem: string): RouteResult {
 
   // Try to detect distribution and operation
   const distributions = [
-    'binomial', 'normal', 'poisson', 'geometric', 'hypergeometric',
-    'chi_square', 'student_t', 'f_distribution', 'beta', 'exponential',
+    'binomial',
+    'normal',
+    'poisson',
+    'geometric',
+    'hypergeometric',
+    'chi_square',
+    'student_t',
+    'f_distribution',
+    'beta',
+    'exponential',
   ];
   let distribution = 'normal';
   for (const d of distributions) {
@@ -463,7 +492,8 @@ export function extractHypothesisTesting(problem: string): RouteResult {
   if (lc.includes('two_sample') || lc.includes('two sample')) test = 'two_sample_t';
   else if (lc.includes('paired')) test = 'paired_t';
   else if (lc.includes('anova')) test = 'one_way_anova';
-  else if (lc.includes('chi_square_test') || lc.includes('chi square test')) test = 'chi_square_independence';
+  else if (lc.includes('chi_square_test') || lc.includes('chi square test'))
+    test = 'chi_square_independence';
 
   // Try to extract JSON-like data
   const inner = extractFnArgs(problem);
@@ -599,7 +629,10 @@ export function extractSequenceIdentify(problem: string): RouteResult {
   try {
     terms = JSON.parse(`[${inner}]`);
   } catch {
-    terms = inner.split(',').map((s) => parseFloat(s.trim())).filter((n) => !isNaN(n));
+    terms = inner
+      .split(',')
+      .map((s) => parseFloat(s.trim()))
+      .filter((n) => !isNaN(n));
   }
   return { handler: 'sequence_identify', args: { terms } };
 }

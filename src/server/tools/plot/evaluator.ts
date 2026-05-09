@@ -26,7 +26,7 @@ export function evaluateFunction(
   variable: string,
   xMin: number,
   xMax: number,
-  numPoints: number = 200,
+  numPoints: number = 200
 ): EvaluationResult {
   const compiled = math.compile(expression);
   const step = (xMax - xMin) / (numPoints - 1);
@@ -54,7 +54,10 @@ export function evaluateFunction(
   }
 
   // Add padding to y range
-  if (yMin === Infinity) { yMin = -10; yMax = 10; }
+  if (yMin === Infinity) {
+    yMin = -10;
+    yMax = 10;
+  }
   const yRange = yMax - yMin;
   if (yRange === 0) {
     yMin -= 1;

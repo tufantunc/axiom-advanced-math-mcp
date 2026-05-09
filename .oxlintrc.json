@@ -12,5 +12,5 @@
     "typescript/no-explicit-any": "warn",
     "typescript/no-non-null-assertion": "warn"
   },
-  "ignorePatterns": ["dist/", "node_modules/"]
+  "ignorePatterns": ["dist/", "node_modules/", "src/server/giac/giac.wasm.js"]
 }

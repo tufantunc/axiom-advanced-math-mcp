@@ -85,9 +85,10 @@ function formatOutput(
     case 'text':
     default:
       if (envelope.warnings && envelope.warnings.length > 0) {
-        const warnLines = envelope.warnings.map(
-          (w) => ({ type: 'text' as const, text: `[Warning: ${w}]` })
-        );
+        const warnLines = envelope.warnings.map((w) => ({
+          type: 'text' as const,
+          text: `[Warning: ${w}]`,
+        }));
         return {
           content: [...warnLines, ...rawResponse.content],
           isError: rawResponse.isError,

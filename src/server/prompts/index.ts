@@ -5,7 +5,13 @@ export function registerPrompts(server: McpServer): void {
   server.prompt(
     'solve-step-by-step',
     'Solve a mathematical expression step by step. Guides the LLM to show intermediate work: parse the expression, simplify, solve, and verify the result.',
-    { expression: z.string().describe('The mathematical expression or equation to solve (e.g., "x^2 - 5x + 6 = 0", "int(x^2*sin(x), x)")') },
+    {
+      expression: z
+        .string()
+        .describe(
+          'The mathematical expression or equation to solve (e.g., "x^2 - 5x + 6 = 0", "int(x^2*sin(x), x)")'
+        ),
+    },
     ({ expression }) => ({
       messages: [
         {
@@ -25,14 +31,16 @@ export function registerPrompts(server: McpServer): void {
           },
         },
       ],
-    }),
+    })
   );
 
   server.prompt(
     'analyze-function',
     'Perform a complete analysis of a mathematical function: domain, derivatives, critical points, inflection points, asymptotes, and integral.',
     {
-      expression: z.string().describe('The function to analyze (e.g., "x^3 - 3*x + 2", "sin(x)/x", "ln(x^2+1)")'),
+      expression: z
+        .string()
+        .describe('The function to analyze (e.g., "x^3 - 3*x + 2", "sin(x)/x", "ln(x^2+1)")'),
       variable: z.string().describe('The variable (e.g., "x")'),
     },
     ({ expression, variable }) => ({
@@ -56,7 +64,7 @@ export function registerPrompts(server: McpServer): void {
           },
         },
       ],
-    }),
+    })
   );
 
   server.prompt(
@@ -85,7 +93,7 @@ export function registerPrompts(server: McpServer): void {
           },
         },
       ],
-    }),
+    })
   );
 
   server.prompt(
@@ -109,17 +117,32 @@ export function registerPrompts(server: McpServer): void {
           },
         },
       ],
-    }),
+    })
   );
 
   server.prompt(
     'analyze-dataset',
     'Guide statistical test selection for a dataset. Uses a decision tree (t-test vs ANOVA vs chi-square) based on data type, group count, and study design.',
     {
-      description: z.string().describe('Brief description of the dataset and research question (e.g., "comparing exam scores between 2 teaching methods")'),
-      groups: z.string().describe('Number of groups or conditions being compared (e.g., "2", "3 or more")'),
-      data_type: z.string().describe('Type of dependent variable: "continuous" (heights, scores), "categorical" (yes/no, categories), or "ordinal" (rankings)'),
-      design: z.string().optional().describe('Study design: "independent" (different subjects per group) or "repeated" (same subjects measured multiple times)'),
+      description: z
+        .string()
+        .describe(
+          'Brief description of the dataset and research question (e.g., "comparing exam scores between 2 teaching methods")'
+        ),
+      groups: z
+        .string()
+        .describe('Number of groups or conditions being compared (e.g., "2", "3 or more")'),
+      data_type: z
+        .string()
+        .describe(
+          'Type of dependent variable: "continuous" (heights, scores), "categorical" (yes/no, categories), or "ordinal" (rankings)'
+        ),
+      design: z
+        .string()
+        .optional()
+        .describe(
+          'Study design: "independent" (different subjects per group) or "repeated" (same subjects measured multiple times)'
+        ),
     },
     ({ description, groups, data_type, design }) => ({
       messages: [
@@ -152,15 +175,22 @@ export function registerPrompts(server: McpServer): void {
           },
         },
       ],
-    }),
+    })
   );
 
   server.prompt(
     'solve-ode-system',
     'Set up and solve a system of ordinary differential equations. Guides through problem formulation, CAS solution, stability analysis, and physical interpretation.',
     {
-      system: z.string().describe('The ODE system (e.g., "x\'=ax+by, y\'=cx+dy" or "prey-predator model with growth rate r=0.5, death rate d=0.2")'),
-      initial_conditions: z.string().optional().describe('Initial conditions (e.g., "x(0)=10, y(0)=5")'),
+      system: z
+        .string()
+        .describe(
+          'The ODE system (e.g., "x\'=ax+by, y\'=cx+dy" or "prey-predator model with growth rate r=0.5, death rate d=0.2")'
+        ),
+      initial_conditions: z
+        .string()
+        .optional()
+        .describe('Initial conditions (e.g., "x(0)=10, y(0)=5")'),
       variable: z.string().optional().describe('Independent variable (default: t for time)'),
     },
     ({ system, initial_conditions, variable }) => ({
@@ -187,14 +217,18 @@ export function registerPrompts(server: McpServer): void {
           },
         },
       ],
-    }),
+    })
   );
 
   server.prompt(
     'regression-workflow',
     'Guide through a complete regression analysis: model selection, fitting, diagnostic checks, and interpretation of results.',
     {
-      description: z.string().describe('Description of the data and what you want to predict (e.g., "plant growth vs. fertilizer concentration, suspect diminishing returns")'),
+      description: z
+        .string()
+        .describe(
+          'Description of the data and what you want to predict (e.g., "plant growth vs. fertilizer concentration, suspect diminishing returns")'
+        ),
       x_description: z.string().describe('Description of the independent variable (predictor)'),
       y_description: z.string().describe('Description of the dependent variable (response)'),
     },
@@ -233,6 +267,6 @@ export function registerPrompts(server: McpServer): void {
           },
         },
       ],
-    }),
+    })
   );
 }

@@ -36,7 +36,9 @@ export function renderSvg(opts: SvgOptions): string {
 
   const lines: string[] = [];
 
-  lines.push(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">`);
+  lines.push(
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">`
+  );
   lines.push(`<rect width="${width}" height="${height}" fill="white"/>`);
 
   // Grid + axis ticks
@@ -75,7 +77,9 @@ export function renderSvg(opts: SvgOptions): string {
   for (let x = xStart; x <= xMax; x += xStep) {
     const sx = toSvgX(x);
     const label = Math.abs(x) < 1e-10 ? '0' : formatNum(x);
-    lines.push(`<text x="${sx}" y="${margin.top + plotH + 16}" text-anchor="middle">${label}</text>`);
+    lines.push(
+      `<text x="${sx}" y="${margin.top + plotH + 16}" text-anchor="middle">${label}</text>`
+    );
   }
   for (let y = yStart; y <= yMax; y += yStep) {
     const sy = toSvgY(y);
@@ -85,10 +89,14 @@ export function renderSvg(opts: SvgOptions): string {
   lines.push(`</g>`);
 
   // Plot border
-  lines.push(`<rect x="${margin.left}" y="${margin.top}" width="${plotW}" height="${plotH}" fill="none" stroke="#ccc" stroke-width="1"/>`);
+  lines.push(
+    `<rect x="${margin.left}" y="${margin.top}" width="${plotW}" height="${plotH}" fill="none" stroke="#ccc" stroke-width="1"/>`
+  );
 
   // Function curve — clip to plot area
-  lines.push(`<defs><clipPath id="plot-area"><rect x="${margin.left}" y="${margin.top}" width="${plotW}" height="${plotH}"/></clipPath></defs>`);
+  lines.push(
+    `<defs><clipPath id="plot-area"><rect x="${margin.left}" y="${margin.top}" width="${plotW}" height="${plotH}"/></clipPath></defs>`
+  );
   lines.push(`<g clip-path="url(#plot-area)">`);
 
   for (const segment of segments) {
@@ -96,13 +104,17 @@ export function renderSvg(opts: SvgOptions): string {
     const d = segment.points
       .map((pt, i) => `${i === 0 ? 'M' : 'L'}${toSvgX(pt.x).toFixed(2)},${toSvgY(pt.y).toFixed(2)}`)
       .join(' ');
-    lines.push(`<path d="${d}" fill="none" stroke="#2563eb" stroke-width="2" stroke-linejoin="round"/>`);
+    lines.push(
+      `<path d="${d}" fill="none" stroke="#2563eb" stroke-width="2" stroke-linejoin="round"/>`
+    );
   }
   lines.push(`</g>`);
 
   // Title
   if (title) {
-    lines.push(`<text x="${width / 2}" y="${24}" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="bold" fill="#333">${escapeXml(title)}</text>`);
+    lines.push(
+      `<text x="${width / 2}" y="${24}" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="bold" fill="#333">${escapeXml(title)}</text>`
+    );
   }
 
   lines.push(`</svg>`);
@@ -115,5 +127,9 @@ function formatNum(n: number): string {
 }
 
 function escapeXml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }

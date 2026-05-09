@@ -1,47 +1,5 @@
-import { z } from 'zod';
 import { giacEngine } from '../giac/index.js';
 import { formatToolResponse, formatErrorResponse } from './response-formatter.js';
-
-export const numericalMethodsSchema = z.object({
-  method: z
-    .enum([
-      'newton_raphson',
-      'bisection',
-      'secant',
-      'romberg_integration',
-      'numerical_integration',
-    ] as const)
-    .describe(
-      'Numerical method to use. ' +
-        'SCOPE: Only use when solve_equation or integrate return undef/error or the expression has no closed form. ' +
-        'Do NOT use when symbolic tools work — prefer solve_equation for root finding, integrate for integration. ' +
-        'Root finding: newton_raphson (fast, needs initial_guess), bisection (guaranteed, needs x0/x1 sign-change bracket), secant (no derivative needed, needs x0/x1). ' +
-        "Integration: romberg_integration (adaptive, highly accurate), numerical_integration (Simpson's rule)."
-    ),
-  expression: z
-    .string()
-    .describe(
-      'Mathematical expression f(x) for root finding, or integrand for integration (e.g., "x^3 - 2", "exp(-x^2)")'
-    ),
-  variable: z.string().default('x').describe('Variable name (default: x)'),
-  initial_guess: z.number().optional().describe('Starting point for Newton-Raphson method'),
-  x0: z.number().optional().describe('First point for bisection (lower bracket) or secant method'),
-  x1: z.number().optional().describe('Second point for bisection (upper bracket) or secant method'),
-  tolerance: z.number().default(1e-10).describe('Convergence tolerance (default: 1e-10)'),
-  max_iterations: z
-    .number()
-    .int()
-    .max(500)
-    .default(100)
-    .describe('Maximum iterations (default: 100)'),
-  lower_bound: z.number().optional().describe('Lower limit for integration'),
-  upper_bound: z.number().optional().describe('Upper limit for integration'),
-  n_points: z
-    .number()
-    .int()
-    .default(1000)
-    .describe("Number of subintervals for Simpson's rule (must be even, default: 1000)"),
-});
 
 /** Evaluate f(x) at a point using Giac */
 async function evalAt(expr: string, variable: string, x: number): Promise<number> {

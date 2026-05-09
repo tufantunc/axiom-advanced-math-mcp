@@ -18,8 +18,11 @@ app.post('/mcp', async (req, res) => {
   const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
   if (sessionId && sessions.has(sessionId)) {
-    await sessions.get(sessionId)!.handleRequest(req, res, req.body);
-    return;
+    const transport = sessions.get(sessionId);
+    if (transport) {
+      await transport.handleRequest(req, res, req.body);
+      return;
+    }
   }
 
   // New session
@@ -49,16 +52,22 @@ app.get('/mcp', async (req, res) => {
     res.status(400).json({ jsonrpc: '2.0', error: { code: -32000, message: 'No valid session' } });
     return;
   }
-  await sessions.get(sessionId)!.handleRequest(req, res);
+  const transport = sessions.get(sessionId);
+  if (!transport) {
+    res.status(400).json({ jsonrpc: '2.0', error: { code: -32000, message: 'No valid session' } });
+    return;
+  }
+  await transport.handleRequest(req, res);
 });
 
 app.delete('/mcp', async (req, res) => {
   const sessionId = req.headers['mcp-session-id'] as string | undefined;
-  if (!sessionId || !sessions.has(sessionId)) {
+  const transportDelete = sessions.get(sessionId ?? '');
+  if (!transportDelete) {
     res.status(400).json({ jsonrpc: '2.0', error: { code: -32000, message: 'No valid session' } });
     return;
   }
-  await sessions.get(sessionId)!.handleRequest(req, res);
+  await transportDelete.handleRequest(req, res);
 });
 
 app.get('/health', (_req, res) => {
@@ -73,7 +82,7 @@ async function start() {
   });
 }
 
-start().catch(err => {
+start().catch((err) => {
   console.error('Failed to start:', err);
   process.exit(1);
 });

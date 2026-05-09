@@ -19,5 +19,5 @@ export const giacEngine: GiacEngine = {
   },
   isReady(): boolean {
     return engine.isReady();
-  }
+  },
 };

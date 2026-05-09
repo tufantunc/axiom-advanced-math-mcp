@@ -32,8 +32,7 @@ async function loadGiacModule(): Promise<any> {
     code = readFileSync(wasmJsPath, 'utf8');
   } catch {
     throw new Error(
-      'Giac WASM file not found.\n\n' +
-      'To build WASM:\n  npm run build:giac:wasm\n'
+      'Giac WASM file not found.\n\n' + 'To build WASM:\n  npm run build:giac:wasm\n'
     );
   }
 
@@ -43,7 +42,7 @@ async function loadGiacModule(): Promise<any> {
   if (start === -1) {
     throw new Error(
       'Could not find embedded WASM binary in giac.wasm.js.\n' +
-      'Make sure the file is a real build output: npm run build:giac:wasm'
+        'Make sure the file is a real build output: npm run build:giac:wasm'
     );
   }
   const base64Start = start + marker.length;
@@ -76,10 +75,7 @@ async function loadGiacModule(): Promise<any> {
 
   // Set up onRuntimeInitialized BEFORE executing the module
   const ready = new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(
-      () => reject(new Error('Giac WASM init timeout (30s)')),
-      30000
-    );
+    const timeout = setTimeout(() => reject(new Error('Giac WASM init timeout (30s)')), 30000);
     giacModule.onRuntimeInitialized = () => {
       clearTimeout(timeout);
       resolve();
@@ -91,19 +87,17 @@ async function loadGiacModule(): Promise<any> {
   // typeof check sees it as defined and keeps our object.
   // We also inject require/module/__dirname for Node.js code paths.
   const wrapper = new Function(
-    '__ggb__giac', 'require', 'module', 'exports', '__dirname', '__filename',
+    '__ggb__giac',
+    'require',
+    'module',
+    'exports',
+    '__dirname',
+    '__filename',
     code
   );
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const moduleExports: any = {};
-  wrapper(
-    giacModule,
-    _require,
-    { exports: moduleExports },
-    moduleExports,
-    _dirname,
-    wasmJsPath
-  );
+  wrapper(giacModule, _require, { exports: moduleExports }, moduleExports, _dirname, wasmJsPath);
 
   await ready;
   return giacModule;
@@ -128,7 +122,7 @@ export class WasmGiacEngine implements GiacEngine {
     } else {
       throw new Error(
         'caseval function not found in Giac WASM module.\n' +
-        'Build flags: -s EXPORTED_FUNCTIONS=[\'_caseval\'] -s EXPORTED_RUNTIME_METHODS=["cwrap"]'
+          'Build flags: -s EXPORTED_FUNCTIONS=[\'_caseval\'] -s EXPORTED_RUNTIME_METHODS=["cwrap"]'
       );
     }
 

@@ -39,7 +39,7 @@ declare namespace WebAssembly {
 
   function instantiate(
     bufferSource: ArrayBuffer | Uint8Array,
-    importObject?: Imports,
+    importObject?: Imports
   ): Promise<WebAssemblyInstantiatedSource>;
 
   function compile(bufferSource: ArrayBuffer | Uint8Array): Promise<Module>;

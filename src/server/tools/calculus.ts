@@ -1,57 +1,6 @@
-import { z } from 'zod';
-import { giacEngine } from '../giac/index.js';
-import { formatToolResponse, formatErrorResponse } from './response-formatter.js';
+import { formatErrorResponse } from './response-formatter.js';
 import { validateExpression } from './symbolic/validator.js';
-import { evaluationCache } from './symbolic/cache.js';
-
-export const calculusSchema = z.object({
-  operation: z
-    .enum(['differentiate', 'integrate', 'limit', 'taylor', 'solve_ode'])
-    .describe(
-      'Calculus operation:\n' +
-        '  differentiate — derivative (any order, partial)\n' +
-        '  integrate — definite or indefinite integral\n' +
-        '  limit — two-sided or one-sided limit\n' +
-        '  taylor — Taylor/Maclaurin series\n' +
-        '  solve_ode — ordinary differential equation'
-    ),
-  expression: z
-    .string()
-    .optional()
-    .describe('Expression (for differentiate, integrate, limit, taylor). e.g., "x^2", "sin(x)"'),
-  equation: z
-    .string()
-    .optional()
-    .describe('ODE equation (for solve_ode). e.g., "y\'=2*x", "y\'\'+y=0"'),
-  variable: z.string().optional().describe('Variable (e.g., "x", "t"). Default: "x"'),
-  order: z
-    .number()
-    .optional()
-    .describe(
-      'Derivative order (differentiate) or series terms (taylor). Default: 1 for diff, 5 for taylor'
-    ),
-  lower_bound: z
-    .string()
-    .optional()
-    .describe('Lower bound for definite integral (e.g., "0", "-inf")'),
-  upper_bound: z
-    .string()
-    .optional()
-    .describe('Upper bound for definite integral (e.g., "1", "inf")'),
-  point: z
-    .string()
-    .optional()
-    .describe('Limit point or taylor expansion point (e.g., "0", "inf"). Default: "0" for taylor'),
-  direction: z
-    .enum(['+', '-'])
-    .optional()
-    .describe('One-sided limit direction: "+" (right) or "-" (left)'),
-  function_name: z.string().optional().describe('Unknown function name for ODE (default: "y")'),
-  initial_conditions: z
-    .string()
-    .optional()
-    .describe('Initial conditions for ODE (e.g., "y(0)=1" or "y(0)=1,y\'(0)=0")'),
-});
+import { evalWithLatex } from './giac-eval.js';
 
 function buildGiacExpression(operation: string, args: Record<string, unknown>): string {
   switch (operation) {
@@ -138,41 +87,7 @@ export async function calculusHandler(args: Record<string, unknown>) {
     if (validationError) return formatErrorResponse(validationError.message);
 
     const giacExpr = buildGiacExpression(operation, args);
-
-    const cached = evaluationCache.get(giacExpr);
-    if (cached) {
-      return formatToolResponse({
-        result: cached.result,
-        latex: cached.latex,
-        giacCommand: giacExpr,
-      });
-    }
-
-    const result = await giacEngine.evaluate(giacExpr);
-    if (!result || result === 'undef') {
-      return formatErrorResponse(`Could not compute ${operation}`);
-    }
-
-    let latex: string | undefined;
-    try {
-      const rawLatex = await giacEngine.evaluate(`latex(${result})`);
-      if (rawLatex && rawLatex !== 'undef' && !rawLatex.startsWith('latex')) {
-        latex = rawLatex
-          .replace(/\\dfrac\b/g, '\\frac')
-          .replace(/\\displaystyle\s*/g, '')
-          .replace(/\\textstyle\s*/g, '');
-      }
-    } catch {
-      /* best effort */
-    }
-
-    evaluationCache.set(giacExpr, { result, latex });
-
-    return formatToolResponse({
-      result,
-      latex,
-      giacCommand: giacExpr,
-    });
+    return evalWithLatex({ giacExpr, operation });
   } catch (error) {
     return formatErrorResponse(error instanceof Error ? error.message : String(error));
   }

@@ -83,7 +83,8 @@ function isPureArithmetic(problem: string): boolean {
   if (isSystemOfEquations(trimmed)) return false;
   // Check for unknown function calls — if there's a word followed by '(' that isn't
   // a known math function, it's likely a CAS command and should go to giac_raw
-  const knownMathFns = /^(sin|cos|tan|asin|acos|atan|atan2|sinh|cosh|tanh|asinh|acosh|atanh|sqrt|cbrt|abs|ceil|floor|round|log|log2|log10|ln|exp|pow|min|max|sign|mod|gcd|lcm|nCr|nPr|factorial|gamma)\s*\(/i;
+  const knownMathFns =
+    /^(sin|cos|tan|asin|acos|atan|atan2|sinh|cosh|tanh|asinh|acosh|atanh|sqrt|cbrt|abs|ceil|floor|round|log|log2|log10|ln|exp|pow|min|max|sign|mod|gcd|lcm|nCr|nPr|factorial|gamma)\s*\(/i;
   const fnCallPattern = /\b([a-zA-Z_]\w*)\s*\(/g;
   let match;
   while ((match = fnCallPattern.exec(trimmed)) !== null) {
@@ -119,23 +120,69 @@ const rules: RouterRule[] = [
         // Exclude ODE patterns: y', y'', dy/dx
         if (/y['']/.test(p) || /dy\s*\/\s*dx/.test(p) || /y''\s*[+=]/.test(p)) return false;
         // Exclude patterns that belong to other handlers
-        if (startsWith(
-          p,
-          'diff', 'int', 'integrate', 'limit', 'taylor', 'desolve',
-          'factor', 'simplify', 'expand', 'partfrac',
-          'det', 'inv', 'eigenvals', 'rref',
-          'binomial', 'normal', 'poisson', 'geometric', 'hypergeometric',
-          'chi_square', 'student_t', 'f_distribution', 'beta_dist', 'exponential',
-          't_test', 'anova', 'newton', 'bisection', 'secant', 'romberg',
-          'to_exact', 'to_decimal', 'simplify_fraction'
-        )) return false;
+        if (
+          startsWith(
+            p,
+            'diff',
+            'int',
+            'integrate',
+            'limit',
+            'taylor',
+            'desolve',
+            'factor',
+            'simplify',
+            'expand',
+            'partfrac',
+            'det',
+            'inv',
+            'eigenvals',
+            'rref',
+            'binomial',
+            'normal',
+            'poisson',
+            'geometric',
+            'hypergeometric',
+            'chi_square',
+            'student_t',
+            'f_distribution',
+            'beta_dist',
+            'exponential',
+            't_test',
+            'anova',
+            'newton',
+            'bisection',
+            'secant',
+            'romberg',
+            'to_exact',
+            'to_decimal',
+            'simplify_fraction'
+          )
+        )
+          return false;
         // Exclude keyword-based patterns with = inside function args (e.g., "normal(mu=0, ...)")
-        if (/^\w+\s*\(.*=/.test(p) && hasKeyword(p,
-          'binomial', 'normal', 'poisson', 'geometric', 'hypergeometric',
-          'chi_square', 'student_t', 'f_distribution', 'beta', 'exponential',
-          't_test', 'anova', 'chi_square_test',
-          'one_sample_t', 'two_sample_t', 'paired_t'
-        )) return false;
+        if (
+          /^\w+\s*\(.*=/.test(p) &&
+          hasKeyword(
+            p,
+            'binomial',
+            'normal',
+            'poisson',
+            'geometric',
+            'hypergeometric',
+            'chi_square',
+            'student_t',
+            'f_distribution',
+            'beta',
+            'exponential',
+            't_test',
+            'anova',
+            'chi_square_test',
+            'one_sample_t',
+            'two_sample_t',
+            'paired_t'
+          )
+        )
+          return false;
         return true;
       }
       return false;
@@ -314,7 +361,15 @@ const rules: RouterRule[] = [
   {
     name: 'hypothesis_testing',
     test: (p) =>
-      hasKeyword(p, 't_test', 'anova', 'chi_square_test', 'one_sample_t', 'two_sample_t', 'paired_t'),
+      hasKeyword(
+        p,
+        't_test',
+        'anova',
+        'chi_square_test',
+        'one_sample_t',
+        'two_sample_t',
+        'paired_t'
+      ),
     extract: extractHypothesisTesting,
   },
 
@@ -340,14 +395,7 @@ const rules: RouterRule[] = [
         'intersection',
         'angle',
         'point_line_distance'
-      ) ||
-      hasKeyword(
-        p,
-        'area_triangle',
-        'area_polygon',
-        'area_circle',
-        'perimeter_polygon'
-      ),
+      ) || hasKeyword(p, 'area_triangle', 'area_polygon', 'area_circle', 'perimeter_polygon'),
     extract: extractGeometry,
   },
 

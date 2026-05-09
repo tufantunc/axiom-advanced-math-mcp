@@ -1,5 +1,3 @@
-import type { z } from 'zod';
-
 export interface SymbolicParamDef {
   name: string;
   type: 'string' | 'number' | 'boolean' | 'string[]';

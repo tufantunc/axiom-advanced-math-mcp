@@ -1,48 +1,5 @@
-import { z } from 'zod';
 import { giacEngine } from '../giac/index.js';
 import { formatToolResponse, formatErrorResponse } from './response-formatter.js';
-
-export const combinatoricsSchema = z.object({
-  operation: z
-    .enum([
-      'combinations',
-      'permutations',
-      'multinomial',
-      'stirling_first',
-      'stirling_second',
-      'bell_number',
-      'catalan_number',
-      'derangements',
-      'partition_count',
-    ] as const)
-    .describe(
-      'Combinatorial operation to compute:\n' +
-        '  combinations — C(n,k), nCr, "n choose k", binomial coefficient n!/(k!(n-k)!). ' +
-        'Use this whenever you see C(n,k), nCr(n,k), or "choose" notation. ' +
-        'NOTE: quick_calc does NOT support C(n,k) or "choose" syntax — always use combinatorics tool.\n' +
-        '  permutations — P(n,k), nPr, ordered arrangements n!/(n-k)!\n' +
-        '  multinomial — n!/(k1!·k2!·...) for multi-group arrangements\n' +
-        '  stirling_first — |s(n,k)|: permutations of n elements with k cycles\n' +
-        '  stirling_second — S(n,k): partition n elements into k non-empty subsets\n' +
-        '  bell_number — B(n): total set partitions of n elements\n' +
-        '  catalan_number — C(n) = C(2n,n)/(n+1): balanced parentheses, BST shapes\n' +
-        '  derangements — D(n): permutations with no fixed points\n' +
-        '  partition_count — p(n): integer partition count'
-    ),
-  n: z.number().int().min(0).max(500).describe('Primary integer argument n'),
-  k: z
-    .number()
-    .int()
-    .min(0)
-    .optional()
-    .describe(
-      'Secondary integer k (required for combinations, permutations, multinomial, stirling numbers)'
-    ),
-  groups: z
-    .array(z.number().int().min(0))
-    .optional()
-    .describe('Group sizes for multinomial coefficient [k1, k2, ..., km] where sum = n'),
-});
 
 // --- Pure-JS helpers ---
 

@@ -1,50 +1,6 @@
-import { z } from 'zod';
 import { giacEngine } from '../giac/index.js';
 import { formatToolResponse, formatErrorResponse } from './response-formatter.js';
-
-export const hypothesisTestingSchema = z.object({
-  test: z
-    .enum([
-      'one_sample_t',
-      'two_sample_t',
-      'paired_t',
-      'chi_square_independence',
-      'one_way_anova',
-    ] as const)
-    .describe(
-      'Statistical test to perform. ' +
-        'one_sample_t: test if population mean equals a hypothesized value (requires sample1, mu0). ' +
-        'two_sample_t: compare means of two independent groups (requires sample1, sample2). ' +
-        'paired_t: before/after paired measurements (requires sample1, sample2 of equal length). ' +
-        'chi_square_independence: test independence in contingency table (requires contingency_table). ' +
-        'one_way_anova: compare means of 3+ groups (requires groups array).'
-    ),
-  data: z
-    .object({
-      sample1: z.array(z.number()).optional().describe('First sample data array'),
-      sample2: z.array(z.number()).optional().describe('Second sample data array'),
-      mu0: z.number().optional().describe('Hypothesized mean for one_sample_t'),
-      significance: z
-        .number()
-        .min(0)
-        .max(1)
-        .default(0.05)
-        .describe('Significance level α (default: 0.05)'),
-      contingency_table: z
-        .array(z.array(z.number()))
-        .optional()
-        .describe('2D contingency table for chi_square_independence'),
-      groups: z
-        .array(z.array(z.number()))
-        .optional()
-        .describe('Array of group data arrays for one_way_anova'),
-    })
-    .describe('Test data and parameters'),
-  alternative: z
-    .enum(['two_sided', 'less', 'greater'] as const)
-    .default('two_sided')
-    .describe('Alternative hypothesis direction (default: two_sided)'),
-});
+import { normalCdf } from './stats-utils.js';
 
 function mean(data: number[]): number {
   return data.reduce((a, b) => a + b, 0) / data.length;
@@ -60,26 +16,16 @@ function std(data: number[], sampleStd = true): number {
   return Math.sqrt(variance(data, sampleStd));
 }
 
-/** Erf approximation (Abramowitz and Stegun) */
-function erf(x: number): number {
-  const sign = x >= 0 ? 1 : -1;
-  x = Math.abs(x);
-  const a1 = 0.254829592,
-    a2 = -0.284496736,
-    a3 = 1.421413741,
-    a4 = -1.453152027,
-    a5 = 1.061405429,
-    p = 0.3275911;
-  const t = 1.0 / (1.0 + p * x);
-  const y = 1.0 - ((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
-  return sign * y;
+function formatTestConclusion(pValue: number, significance: number, detail = ''): string {
+  if (isNaN(pValue)) return 'Could not determine significance';
+  const action = pValue < significance ? '✗ Reject H₀' : '✓ Fail to reject H₀';
+  const comparison =
+    pValue < significance
+      ? `p = ${pValue.toFixed(4)} < α = ${significance}`
+      : `p = ${pValue.toFixed(4)} ≥ α = ${significance}`;
+  return detail ? `${action} — ${detail} (${comparison})` : `${action} (${comparison})`;
 }
 
-function normalCdf(x: number): number {
-  return 0.5 * (1 + erf(x / Math.sqrt(2)));
-}
-
-/** Get p-value from Giac student_cdf; fall back to JS approximation */
 async function tPValue(t: number, df: number, alternative: string): Promise<number> {
   try {
     const rawCdf = await giacEngine.evaluate(`student_cdf(${df},${t})`);
@@ -89,7 +35,6 @@ async function tPValue(t: number, df: number, alternative: string): Promise<numb
     if (alternative === 'greater') return 1 - cdf;
     return 2 * Math.min(cdf, 1 - cdf);
   } catch {
-    // Normal approximation fallback for large df
     const cdf = normalCdf(t);
     if (alternative === 'less') return cdf;
     if (alternative === 'greater') return 1 - cdf;
@@ -112,9 +57,9 @@ async function oneSampleT(
   const t = (xbar - mu0) / (s / Math.sqrt(n));
   const df = n - 1;
   const pValue = await tPValue(t, df, alternative);
-  const ci95Half = (1.96 * s) / Math.sqrt(n); // approx — exact would need t quantile
+  const ci95Half = (1.96 * s) / Math.sqrt(n);
 
-  const lines = [
+  return [
     `Test: One-sample t-test`,
     `H₀: μ = ${mu0}  |  H₁: μ ${alternative === 'two_sided' ? '≠' : alternative === 'less' ? '<' : '>'} ${mu0}`,
     ``,
@@ -127,11 +72,8 @@ async function oneSampleT(
     ``,
     `95% CI (approx): [${(xbar - ci95Half).toFixed(4)}, ${(xbar + ci95Half).toFixed(4)}]`,
     ``,
-    pValue < significance
-      ? `✗ Reject H₀ (p = ${pValue.toFixed(4)} < α = ${significance})`
-      : `✓ Fail to reject H₀ (p = ${pValue.toFixed(4)} ≥ α = ${significance})`,
+    formatTestConclusion(pValue, significance),
   ];
-  return lines;
 }
 
 async function twoSampleT(
@@ -153,11 +95,10 @@ async function twoSampleT(
   const v1 = s1 ** 2 / n1,
     v2 = s2 ** 2 / n2;
   const t = (m1 - m2) / Math.sqrt(v1 + v2);
-  // Welch-Satterthwaite df
   const df = (v1 + v2) ** 2 / (v1 ** 2 / (n1 - 1) + v2 ** 2 / (n2 - 1));
   const pValue = await tPValue(t, df, alternative);
 
-  const lines = [
+  return [
     `Test: Two-sample Welch's t-test`,
     `H₀: μ₁ = μ₂  |  H₁: μ₁ ${alternative === 'two_sided' ? '≠' : alternative === 'less' ? '<' : '>'} μ₂`,
     ``,
@@ -168,11 +109,8 @@ async function twoSampleT(
     `p-value = ${pValue.toFixed(6)}`,
     `α = ${significance}`,
     ``,
-    pValue < significance
-      ? `✗ Reject H₀ (p = ${pValue.toFixed(4)} < α = ${significance})`
-      : `✓ Fail to reject H₀ (p = ${pValue.toFixed(4)} ≥ α = ${significance})`,
+    formatTestConclusion(pValue, significance),
   ];
-  return lines;
 }
 
 async function pairedT(
@@ -223,7 +161,7 @@ async function chiSquareIndependence(data: {
     pValue = NaN;
   }
 
-  const lines = [
+  return [
     `Test: Chi-square test of independence`,
     `H₀: Variables are independent  |  H₁: Variables are NOT independent`,
     `Table: ${rows}×${cols}, N = ${N}`,
@@ -232,13 +170,12 @@ async function chiSquareIndependence(data: {
     `p-value = ${isNaN(pValue) ? 'computation error' : pValue.toFixed(6)}`,
     `α = ${significance}`,
     ``,
-    isNaN(pValue)
-      ? 'Could not determine significance'
-      : pValue < significance
-        ? `✗ Reject H₀ — evidence of dependence (p = ${pValue.toFixed(4)} < α = ${significance})`
-        : `✓ Fail to reject H₀ — no evidence of dependence (p = ${pValue.toFixed(4)} ≥ α = ${significance})`,
+    formatTestConclusion(
+      pValue,
+      significance,
+      pValue < significance ? 'evidence of dependence' : 'no evidence of dependence'
+    ),
   ];
-  return lines;
 }
 
 async function oneWayAnova(data: { groups?: number[][]; significance: number }): Promise<string[]> {
@@ -269,12 +206,10 @@ async function oneWayAnova(data: { groups?: number[][]; significance: number }):
     if (isNaN(cdf)) throw new Error('NaN');
     pValue = 1 - cdf;
   } catch {
-    // Giac fisher_cdf may fail for very large F values.
-    // For F >> 1 in ANOVA context, the p-value is essentially 0.
     pValue = F > 10 ? 0 : NaN;
   }
 
-  const lines = [
+  return [
     `Test: One-way ANOVA`,
     `H₀: all group means equal  |  H₁: at least one mean differs`,
     `Groups: k = ${k}, N = ${N}`,
@@ -290,13 +225,12 @@ async function oneWayAnova(data: { groups?: number[][]; significance: number }):
     `p-value = ${isNaN(pValue) ? 'computation error' : pValue.toFixed(6)}`,
     `α = ${significance}`,
     ``,
-    isNaN(pValue)
-      ? 'Could not determine significance'
-      : pValue < significance
-        ? `✗ Reject H₀ — significant difference between groups (p = ${pValue.toFixed(4)} < α = ${significance})`
-        : `✓ Fail to reject H₀ — no significant difference (p = ${pValue.toFixed(4)} ≥ α = ${significance})`,
+    formatTestConclusion(
+      pValue,
+      significance,
+      pValue < significance ? 'significant difference between groups' : 'no significant difference'
+    ),
   ];
-  return lines;
 }
 
 export async function hypothesisTestingHandler(args: Record<string, unknown>) {

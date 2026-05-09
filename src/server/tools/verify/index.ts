@@ -31,7 +31,10 @@ interface VerifyResult {
 /**
  * Symbolic verification: simplify(LHS - RHS) and check if result is 0.
  */
-async function verifySymbolic(lhs: string, rhs: string): Promise<{
+async function verifySymbolic(
+  lhs: string,
+  rhs: string
+): Promise<{
   verified: boolean;
   detail: string;
 }> {
@@ -64,7 +67,10 @@ async function verifySymbolic(lhs: string, rhs: string): Promise<{
  * Numeric verification: substitute random values for all variables
  * and check if LHS ≈ RHS.
  */
-async function verifyNumeric(lhs: string, rhs: string): Promise<{
+async function verifyNumeric(
+  lhs: string,
+  rhs: string
+): Promise<{
   verified: boolean;
   detail: string;
 }> {
@@ -110,9 +116,7 @@ async function verifyNumeric(lhs: string, rhs: string): Promise<{
         if (Math.abs(numResult) < 1e-6) {
           passCount++;
         } else {
-          failures.push(
-            `At ${vars.map((v) => `${v}=${val}`).join(', ')}: diff = ${numResult}`
-          );
+          failures.push(`At ${vars.map((v) => `${v}=${val}`).join(', ')}: diff = ${numResult}`);
         }
       } catch {
         // Skip points that cause evaluation errors
@@ -186,10 +190,7 @@ function parseVariableList(giacOutput: string): string[] {
   }
   // Parse [x, y, z] or list(x, y, z)
   const inner =
-    giacOutput
-      .match(/^\[(.+)\]$/)?.[1] ||
-    giacOutput.match(/^list\((.+)\)$/)?.[1] ||
-    '';
+    giacOutput.match(/^\[(.+)\]$/)?.[1] || giacOutput.match(/^list\((.+)\)$/)?.[1] || '';
   return inner
     .split(',')
     .map((s) => s.trim())
@@ -305,8 +306,8 @@ async function handleIdentityVerification(
   parsed: ParsedClaim,
   method: string
 ): Promise<VerifyResult> {
-  const lhs = parsed.lhs!;
-  const rhs = parsed.rhs!;
+  const lhs = parsed.lhs ?? '';
+  const rhs = parsed.rhs ?? '';
   const checks: string[] = [];
   let symbolicOk: boolean | null = null;
   let numericOk: boolean | null = null;
@@ -324,9 +325,7 @@ async function handleIdentityVerification(
   }
 
   const verified =
-    symbolicOk === true || numericOk === true
-      ? symbolicOk !== false && numericOk !== false
-      : false;
+    symbolicOk === true || numericOk === true ? symbolicOk !== false && numericOk !== false : false;
 
   let confidence: 'high' | 'medium' | 'low';
   if (symbolicOk === true) confidence = 'high';
@@ -349,14 +348,21 @@ async function handleSolutionVerification(
   method: string
 ): Promise<VerifyResult> {
   const { variable, value, equation } = parsed;
+  if (!variable || !value || !equation) {
+    return {
+      verified: false,
+      confidence: 'low',
+      explanation: 'Missing variable, value, or equation in solution claim.',
+      checks_performed: [],
+    };
+  }
   const checks: string[] = [];
 
-  const solution = await verifySolution(variable!, value!, equation!);
+  const solution = await verifySolution(variable, value, equation);
   checks.push(`Substitution: ${solution.detail}`);
 
-  // Optionally do symbolic check too
-  if ((method === 'symbolic' || method === 'both') && equation!.includes('=')) {
-    const [eqLhs, eqRhs] = equation!.split('=').map((s) => s.trim());
+  if ((method === 'symbolic' || method === 'both') && equation.includes('=')) {
+    const [eqLhs, eqRhs] = equation.split('=').map((s) => s.trim());
     const substLhs = `subst(${eqLhs}, ${variable}=${value})`;
     const substRhs = `subst(${eqRhs}, ${variable}=${value})`;
     const symbolic = await verifySymbolic(substLhs, substRhs);
@@ -373,9 +379,10 @@ async function handleSolutionVerification(
   };
 }
 
-function formatVerifyResponse(
-  result: VerifyResult
-): { content: { type: 'text'; text: string }[]; isError: boolean } {
+function formatVerifyResponse(result: VerifyResult): {
+  content: { type: 'text'; text: string }[];
+  isError: boolean;
+} {
   const lines: string[] = [
     `Verified: ${result.verified ? 'TRUE ✓' : 'FALSE ✗'}`,
     `Confidence: ${result.confidence}`,

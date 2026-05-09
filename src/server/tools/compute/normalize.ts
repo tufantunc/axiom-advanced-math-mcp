@@ -1,9 +1,4 @@
-import type { ComputeEnvelope, ResultType } from './types.js';
-
-type McpResponse = {
-  content: { type: 'text'; text: string }[];
-  isError: boolean;
-};
+import type { ComputeEnvelope, McpResponse, ResultType } from './types.js';
 
 // ---------------------------------------------------------------------------
 // Result type mapping — handler key → result type
@@ -79,9 +74,7 @@ interface ParsedFields {
 }
 
 function parseResponseLines(response: McpResponse): ParsedFields {
-  const lines = response.content
-    .filter((c) => c.type === 'text')
-    .map((c) => c.text);
+  const lines = response.content.filter((c) => c.type === 'text').map((c) => c.text);
 
   const fields: ParsedFields = {
     result: '',
@@ -111,10 +104,7 @@ function parseResponseLines(response: McpResponse): ParsedFields {
 // Build structured data from parsed fields
 // ---------------------------------------------------------------------------
 
-function buildData(
-  resultType: ResultType,
-  fields: ParsedFields
-): Record<string, unknown> {
+function buildData(resultType: ResultType, fields: ParsedFields): Record<string, unknown> {
   switch (resultType) {
     case 'scalar':
       return {
