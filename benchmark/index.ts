@@ -33,7 +33,6 @@ import { voteBaseline, voteToolAugmented } from './runners/self-consistency.js';
 import type { SelfConsistencyData } from './runners/self-consistency.js';
 import { createMCPProxy } from './runners/mcp-proxy.js';
 import { generateReport } from './report/generator.js';
-import { TOOL_PROMPT_OLYMPIAD } from './providers/prompts.js';
 import type { ProblemDetail } from './problem-detail.js';
 import { diagnoseRegression } from './problem-detail.js';
 import type {
@@ -62,7 +61,6 @@ async function flushLog(): Promise<void> {
 
 async function main(): Promise<void> {
   const config = buildConfig();
-  if (config.features.includes('v2')) process.env.AXIOM_GRADER_V2 = '1';
   if (config.features.includes('output-hygiene')) process.env.AXIOM_COMPUTE_HYGIENE = '1';
   if (config.features.includes('grader-v3')) process.env.AXIOM_GRADER_V3 = '1';
 
@@ -81,9 +79,6 @@ async function main(): Promise<void> {
   if (config.features.length > 0) log(`  Features: ${config.features.join(',')}`);
   if (config.selfConsistency) {
     log(`  Self-consistency: N=${config.selfConsistency.N}, temperature=${config.selfConsistency.temperature}`);
-  }
-  if (config.features.includes('olympiad-prompt')) {
-    log(`  Olympiad prompt: enabled (active on Omni-MATH datasets only)`);
   }
   log('');
 
@@ -195,13 +190,6 @@ async function main(): Promise<void> {
       let turns = 0;
       let tr: (ToolAugmentedResult & { selfConsistency?: SelfConsistencyData }) | undefined;
       try {
-        // Phase 4 olympiad prompt routing — only fires when flag is set AND
-        // the active dataset is Omni-MATH. Other datasets and flag-off runs
-        // continue to use the keyword dispatcher in providers/prompts.ts.
-        const useOlympiadPrompt =
-          config.features.includes('olympiad-prompt') &&
-          datasetName.startsWith('Omni-MATH');
-        const systemPrompt = useOlympiadPrompt ? TOOL_PROMPT_OLYMPIAD : undefined;
         tr = config.selfConsistency
           ? await voteToolAugmented(
               problemText,
@@ -211,8 +199,7 @@ async function main(): Promise<void> {
               config.selfConsistency.temperature,
               config.maxTokens,
               config.maxAgentTurns,
-              config.retryOptions,
-              systemPrompt
+              config.retryOptions
             )
           : await runToolAugmented(
               problemText,
@@ -220,9 +207,7 @@ async function main(): Promise<void> {
               proxy,
               config.maxTokens,
               config.maxAgentTurns,
-              config.retryOptions,
-              undefined,           // temperature — no override outside self-consistency
-              systemPrompt
+              config.retryOptions
             );
         totalToolTokens += tr.inputTokens + tr.outputTokens;
         totalDurationMs += tr.durationMs;

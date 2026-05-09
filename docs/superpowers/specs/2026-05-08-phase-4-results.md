@@ -110,6 +110,8 @@ The olympiad prompt addresses none of these — it only addresses the engagement
 
 **`olympiad-prompt`: KEEP, off by default. Document as harmful for production.** Same disposition as Phase 1's `output-v2` and Phase 2's `tokens-8k`. The flag stays in code (it's a single conditional in `benchmark/index.ts`), but production runs should NOT enable it.
 
+**Update (2026-05-08 cleanup):** The `olympiad-prompt` flag, the `TOOL_PROMPT_OLYMPIAD` constant, the `systemPrompt` plumbing, and the routing tests were all physically removed from the codebase in commits `0efd79a` and `da8d585`. Passing `--features=olympiad-prompt` is now a silent no-op.
+
 **Olympiad benchmark dataset: KEEP for completeness.** The `--olympiad` benchmark flag stays so future work can re-evaluate when fundamentally different approaches are tried. But our recommended production benchmark is `--features=v2` on GSM8K, MATH, and CAS — not olympiad.
 
 **Production benchmark recipe (final, unchanged from Phase 3):** `--features=v2`. Optional add: `output-hygiene,grader-v3` for marginal lift on CAS. **Avoid:** `tokens-8k`, `olympiad-prompt`. Optional methodology: `self-consistency` for variance-stable measurement.

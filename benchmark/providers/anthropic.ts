@@ -52,8 +52,7 @@ export class AnthropicProvider implements LLMProvider {
     callTool: (name: string, args: Record<string, unknown>) => Promise<string>,
     maxTokens: number,
     maxTurns: number,
-    temperature?: number,
-    systemPrompt?: string
+    temperature?: number
   ): Promise<ToolAugmentedResult> {
     const start = Date.now();
 
@@ -76,7 +75,7 @@ export class AnthropicProvider implements LLMProvider {
         model: this.model,
         max_tokens: maxTokens,
         temperature: temperature ?? 0,
-        system: systemPrompt ?? getToolPromptForProblem(problem),
+        system: getToolPromptForProblem(problem),
         tools: anthropicTools,
         messages,
       });
@@ -135,7 +134,7 @@ export class AnthropicProvider implements LLMProvider {
           model: this.model,
           max_tokens: maxTokens,
           temperature: temperature ?? 0,
-          system: systemPrompt ?? getToolPromptForProblem(problem),
+          system: getToolPromptForProblem(problem),
           messages,
           // No tools — force a text-only response with the final answer
         });

@@ -12,8 +12,7 @@ export async function runToolAugmented(
   maxTokens: number,
   maxTurns: number,
   retryOptions?: RetryOptions,
-  temperature?: number,
-  systemPrompt?: string
+  temperature?: number
 ): Promise<ToolAugmentedResult> {
   return executeWithRetry(
     () =>
@@ -23,8 +22,7 @@ export async function runToolAugmented(
         (name, args) => proxy.callTool(name, args),
         maxTokens,
         maxTurns,
-        temperature,
-        systemPrompt
+        temperature
       ),
     retryOptions
   );

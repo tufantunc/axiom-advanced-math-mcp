@@ -91,6 +91,8 @@ Combined `tokens-8k+output-hygiene+grader-v3` scored 66.7% — between tokens-8k
 
 1. **`tokens-8k`: REJECTED for production use.** Keep the flag in code (it's a 1-line config conditional), but document this failure and do not use in any production / measurement runs. Same treatment as Phase 1's `output-v2` (kept disabled, results doc the source of truth).
 
+   **Update (2026-05-08 cleanup):** The `tokens-8k` flag was physically removed from the codebase in commit `5f5a201`. Passing `--features=tokens-8k` is now a silent no-op.
+
 2. **`output-hygiene`: KEEP, off by default.** Marginal positive. The Unicode `√→sqrt` fix in the shared module is itself a real grader bug fix that landed independently. The simplify-trigger and silent-failure-warning machinery is in place if Phase 3+ needs it.
 
 3. **`grader-v3`: KEEP, off by default.** Marginal positive. Captures the 2 specific golden-corpus regressions (equation-form #56, bare-list #49) plus a few more. Not strong enough to default-on without more evidence.
