@@ -11,20 +11,38 @@
     "build": "tsc",
     "build:giac:wasm": "bash scripts/build-giac-wasm.sh",
     "start": "node dist/cli.js",
-    "start:stdio": "node dist/cli.js --transport stdio",
     "start:http": "node dist/http.js",
     "dev": "tsx src/cli.ts",
-    "dev:stdio": "tsx src/cli.ts --transport stdio",
     "dev:http": "tsx src/http.ts",
-    "test": "vitest",
-    "test:unit": "vitest run --test.unit",
-    "test:e2e": "vitest run --test.e2e",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "lint": "eslint src --ext .ts",
-    "lint:fix": "eslint src --ext .ts --fix",
+    "test:integration": "vitest run --config vitest.config.integration.ts",
+    "inspect": "npx @modelcontextprotocol/inspector tsx src/cli.ts",
+    "lint": "oxlint src",
+    "lint:fix": "oxlint src --fix",
     "format": "prettier --write \"src/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\"",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+
+    "benchmark": "cd benchmark && npm run quick",
+    "benchmark:zai": "cd benchmark && npm run quick:zai",
+    "benchmark:openrouter": "cd benchmark && npm run quick:openrouter",
+    "benchmark:full": "cd benchmark && npm run full",
+    "benchmark:full:zai": "cd benchmark && npm run full:zai",
+    "benchmark:full:openrouter": "cd benchmark && npm run full:openrouter",
+
+    "benchmark:math:zai": "cd benchmark && npm run math:quick:zai",
+    "benchmark:math:openrouter": "cd benchmark && npm run math:quick:openrouter",
+
+    "benchmark:l3:zai": "cd benchmark && npm run math-l3:quick:zai",
+    "benchmark:l3:openrouter": "cd benchmark && npm run math-l3:quick:openrouter",
+
+    "benchmark:l4:zai": "cd benchmark && npm run math-l4:quick:zai",
+    "benchmark:l4:openrouter": "cd benchmark && npm run math-l4:quick:openrouter",
+
+    "benchmark:l5:zai": "cd benchmark && npm run math-l5:quick:zai",
+    "benchmark:l5:openrouter": "cd benchmark && npm run math-l5:quick:openrouter"
   },
   "keywords": [
     "mcp",
@@ -43,20 +61,19 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.25.3",
     "express": "^4.18.2",
-    "mathjs": "^13.0.0",
+    "mathjs": "15.1.1",
     "zod": "^4.0.0"
   },
   "devDependencies": {
-    "@types/node": "^20.11.0",
+    "@modelcontextprotocol/inspector": "0.21.1",
     "@types/express": "^4.17.21",
-    "typescript": "^5.3.3",
+    "@types/node": "25.3.5",
+    "@vitest/coverage-v8": "4.0.18",
+    "oxlint": "1.51.0",
+    "prettier": "^3.2.4",
     "tsx": "^4.7.0",
-    "vitest": "^1.2.0",
-    "@vitest/coverage-v8": "^1.2.0",
-    "eslint": "^8.56.0",
-    "@typescript-eslint/eslint-plugin": "^6.19.0",
-    "@typescript-eslint/parser": "^6.19.0",
-    "prettier": "^3.2.4"
+    "typescript": "^5.3.3",
+    "vitest": "4.0.18"
   },
   "engines": {
     "node": ">=20.0.0"

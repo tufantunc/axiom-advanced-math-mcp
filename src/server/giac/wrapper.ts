@@ -1,19 +1,23 @@
+import { WasmGiacEngine } from './wasm-wrapper.js';
 import type { GiacEngine } from './interface.js';
-import { NodeGiacEngine } from './node-wrapper.js';
 
-type GiacEngineType = 'native' | 'wasm' | 'auto';
+const engine = new WasmGiacEngine();
+let initPromise: Promise<void> | null = null;
 
-export function createGiacEngine(type: GiacEngineType = 'auto'): GiacEngine {
-  if (type === 'native') {
-    return new NodeGiacEngine();
+function ensureInit(): Promise<void> {
+  if (!initPromise) {
+    initPromise = engine.initialize();
   }
-
-  if (type === 'wasm') {
-    throw new Error('WASM engine not yet implemented. Use GIAC_ENGINE=native or build from source: npm run build:giac:wasm');
-  }
-
-  console.warn('WASM engine not available, falling back to native module');
-  return new NodeGiacEngine();
+  return initPromise;
 }
 
-export const giacEngine = createGiacEngine(process.env.GIAC_ENGINE as GiacEngineType || 'auto');
+export const giacEngine: GiacEngine = {
+  initialize: ensureInit,
+  async evaluate(expression: string): Promise<string> {
+    await ensureInit();
+    return engine.evaluate(expression);
+  },
+  isReady(): boolean {
+    return engine.isReady();
+  }
+};

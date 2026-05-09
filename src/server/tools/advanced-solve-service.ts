@@ -1,5 +1,4 @@
 import { giacEngine } from '../giac/index.js';
-import type { z } from 'zod';
 
 export interface AdvancedSolveOptions {
   expression: string;
@@ -33,8 +32,40 @@ export class AdvancedSolveService {
         result
       };
 
+      // LaTeX output
       if (format === 'latex' || format === 'json') {
-        output.latex = await giacEngine.evaluate(`tex(${result})`);
+        try {
+          output.latex = await giacEngine.evaluate(`latex(${result})`);
+        } catch {
+          // LaTeX is best-effort
+        }
+      }
+
+      // Steps: show original expression and simplified result
+      if (steps) {
+        output.steps = [];
+        output.steps.push(`Input: ${expression}`);
+        if (simplify !== false && giacExpression !== expression) {
+          const rawResult = await giacEngine.evaluate(expression);
+          output.steps.push(`Raw result: ${rawResult}`);
+          output.steps.push(`Simplified: ${result}`);
+        } else {
+          output.steps.push(`Result: ${result}`);
+        }
+      }
+
+      // Extract variables using lname()
+      try {
+        const vars = await giacEngine.evaluate(`lname(${expression})`);
+        if (vars && vars !== '[]' && vars !== 'undef') {
+          // Parse Giac list output: [x,y,z] -> ['x', 'y', 'z']
+          const cleaned = vars.replace(/[\[\]]/g, '').trim();
+          if (cleaned) {
+            output.variables = cleaned.split(',').map(v => v.trim());
+          }
+        }
+      } catch {
+        // Variable extraction is best-effort
       }
 
       return output;
@@ -44,30 +75,5 @@ export class AdvancedSolveService {
       }
       throw new Error(`Giac evaluation error: ${String(error)}`);
     }
-  }
-
-  parseSteps(giacOutput: string): string[] {
-    const steps: string[] = [];
-    const lines = giacOutput.split('\n');
-    for (const line of lines) {
-      if (line.match(/^Step \d+:/)) {
-        steps.push(line);
-      }
-    }
-    return steps;
-  }
-
-  extractVariables(expression: string): string[] {
-    const variables = new Set<string>();
-    const matches = expression.match(/[a-zA-Z][a-zA-Z0-9]*/g);
-    if (matches) {
-      for (const match of matches) {
-        const varName = match.replace(/[0-9]*/g, '');
-        if (varName.length > 0) {
-          variables.add(varName);
-        }
-      }
-    }
-    return Array.from(variables);
   }
 }

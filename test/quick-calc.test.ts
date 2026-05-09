@@ -123,6 +123,55 @@ describe('QuickCalcService', () => {
     });
   });
 
+  describe('Natural Language Rejection', () => {
+    it('should reject "Let S = 3T, then..."', () => {
+      expect(() => {
+        service.evaluate({ expression: 'Let S = 3T, then G = S - 2T = T' });
+      }).toThrow('natural language');
+    });
+
+    it('should reject "If S = 3T, then..."', () => {
+      expect(() => {
+        service.evaluate({ expression: 'If S = 3T, then G = S - 2T = T' });
+      }).toThrow('natural language');
+    });
+
+    it('should reject "Given that x > 0..."', () => {
+      expect(() => {
+        service.evaluate({ expression: 'Given that x > 0, find the minimum value' });
+      }).toThrow('natural language');
+    });
+
+    it('should reject expressions with "let" keyword', () => {
+      expect(() => {
+        service.evaluate({ expression: 'let x = 5, then y = x + 3' });
+      }).toThrow('natural language');
+    });
+
+    it('should reject expressions with "since"', () => {
+      expect(() => {
+        service.evaluate({ expression: 'since x^2 is always non-negative, therefore...' });
+      }).toThrow('natural language');
+    });
+
+    it('should allow valid single-letter variable expressions', () => {
+      // 'a' as a variable should NOT be rejected (no natural language trigger)
+      const result = service.evaluate({ expression: '3 * 5 + 2' });
+      expect(result.result).toBe(17);
+    });
+
+    it('should allow normal math expressions', () => {
+      const result = service.evaluate({ expression: 'sin(pi/4)^2 + cos(pi/4)^2' });
+      expect(result.result).toBeCloseTo(1, 8);
+    });
+
+    it('should allow expressions with "or" as logical operator context', () => {
+      // 'or' alone doesn't trigger — only sentence-starting words do
+      const result = service.evaluate({ expression: '2^10' });
+      expect(result.result).toBe(1024);
+    });
+  });
+
   describe('Constants', () => {
     it('should handle pi', () => {
       const result = service.evaluate({ expression: 'pi' });

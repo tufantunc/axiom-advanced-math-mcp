@@ -1,0 +1,60 @@
+{
+  "$schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json",
+  "entry": [
+    "src/cli.ts",
+    "src/http.ts",
+    "scripts/build-giac-wasm.sh"
+  ],
+  "ignorePatterns": [
+    "dist/**",
+    "benchmark/**",
+    "docs/**",
+    "**/*.d.ts",
+    "**/*.generated.ts",
+    "src/server/giac/giac.wasm.js"
+  ],
+  "ignoreDependencies": [
+    "@types/node",
+    "@types/express",
+    "@vitest/coverage-v8",
+    "oxlint",
+    "prettier",
+    "tsx",
+    "vitest",
+    "@modelcontextprotocol/inspector"
+  ],
+  "ignoreExportsUsedInFile": true,
+  "duplicates": {
+    "mode": "mild",
+    "minTokens": 50,
+    "minLines": 5,
+    "ignore": [
+      "test/**",
+      "benchmark/**"
+    ]
+  },
+  "health": {
+    "maxCyclomatic": 20,
+    "maxCognitive": 15,
+    "ignore": [
+      "test/**"
+    ]
+  },
+  "rules": {
+    "unused-files": "error",
+    "unused-exports": "warn",
+    "unused-types": "off",
+    "unused-dependencies": "warn",
+    "private-type-leaks": "warn",
+    "unresolved-imports": "error"
+  },
+  "overrides": [
+    {
+      "files": ["test/**/*.test.ts"],
+      "rules": {
+        "unused-exports": "off",
+        "private-type-leaks": "off"
+      }
+    }
+  ]
+}

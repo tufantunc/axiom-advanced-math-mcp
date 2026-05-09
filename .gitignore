@@ -140,4 +140,4 @@ vite.config.ts.timestamp-*
 
 # Build directories and files
 /tmp/giac-build
-scripts/build-giac-wasm.sh
+.fallow/

@@ -1,0 +1,65 @@
+services:
+  benchmark:
+    build:
+      context: ..
+      dockerfile: benchmark/Dockerfile
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - MCP_SERVER_CMD=tsx /app/src/cli.ts
+    volumes:
+      - ./cache:/app/benchmark/cache
+      - ./results:/app/benchmark/results
+    profiles: [quick]
+    command: ["npm", "run", "quick"]
+
+  benchmark-full:
+    build:
+      context: ..
+      dockerfile: benchmark/Dockerfile
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - MCP_SERVER_CMD=tsx /app/src/cli.ts
+    volumes:
+      - ./cache:/app/benchmark/cache
+      - ./results:/app/benchmark/results
+    profiles: [full]
+    command: ["npm", "run", "full"]
+
+  benchmark-gsm8k:
+    build:
+      context: ..
+      dockerfile: benchmark/Dockerfile
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - MCP_SERVER_CMD=tsx /app/src/cli.ts
+    volumes:
+      - ./cache:/app/benchmark/cache
+      - ./results:/app/benchmark/results
+    profiles: [gsm8k]
+    command: ["npm", "run", "gsm8k"]
+
+  benchmark-math:
+    build:
+      context: ..
+      dockerfile: benchmark/Dockerfile
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - MCP_SERVER_CMD=tsx /app/src/cli.ts
+    volumes:
+      - ./cache:/app/benchmark/cache
+      - ./results:/app/benchmark/results
+    profiles: [math]
+    command: ["npm", "run", "math"]
+
+  benchmark-olympiad:
+    build:
+      context: ..
+      dockerfile: benchmark/Dockerfile
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - MCP_SERVER_CMD=tsx /app/src/cli.ts
+    volumes:
+      - ./cache:/app/benchmark/cache
+      - ./results:/app/benchmark/results
+    profiles: [olympiad]
+    command: ["npm", "run", "olympiad"]

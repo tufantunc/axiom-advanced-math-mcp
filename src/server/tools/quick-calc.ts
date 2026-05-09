@@ -1,87 +1,38 @@
-import type { Tool } from '@modelcontextprotocol/sdk';
-import { quickCalcToolSchema } from './quick-calc-schema.js';
 import { QuickCalcService } from './quick-calc-service.js';
+import { preprocessExpression } from './quick-calc-preprocessor.js';
+import { tryExactResult } from './exact-arithmetic.js';
+import { formatToolResponse, formatErrorResponse } from './response-formatter.js';
 
-export const quickCalcTool: Tool = {
-  name: 'quick_calc',
-  title: 'Quick Calculator',
-  description:
-    'Fast numerical calculations using math.js. Supports arithmetic, unit conversions, trigonometry, matrices, and complex numbers.',
-  inputSchema: quickCalcToolSchema,
-  outputSchema: {
-    type: 'object',
-    properties: {
-      result: {
-        type: ['number', 'string'],
-        description: 'The calculated result'
-      },
-      latex: {
-        type: 'string',
-        description: 'LaTeX formatted output (when format=latex)'
-      },
-      units: {
-        type: 'string',
-        description: 'Unit information (when units conversion is performed)'
-      },
-      steps: {
-        type: 'array',
-        items: { type: 'string' },
-        description: 'Step-by-step calculation steps (if available)'
+export async function quickCalcHandler(args: Record<string, unknown>) {
+  try {
+    const rawExpr = args.expression as string;
+
+    const { expression } = preprocessExpression(rawExpr);
+
+    const service = new QuickCalcService();
+    const result = service.evaluate({ ...(args as any), expression });
+
+    const numericResult =
+      typeof result.result === 'number' ? result.result : parseFloat(String(result.result));
+
+    if (!isNaN(numericResult)) {
+      const exact = await tryExactResult(rawExpr, numericResult);
+      if (exact) {
+        return formatToolResponse({
+          result: exact.exact,
+          decimal: String(numericResult),
+          latex: exact.latex,
+          notes: result.units ? [`Units: ${result.units}`] : undefined,
+        });
       }
     }
-  } as any,
-  annotations: {
-    execution: {
-      taskSupport: 'optional',
-      timeout: 10000
-    }
-  }
-};
 
-export async function quickCalcHandler(
-  args: Record<string, unknown>
-) {
-  const service = new QuickCalcService();
-  const result = service.evaluate(args as any);
-
-  const content = [];
-
-  if (typeof result.result === 'number' || typeof result.result === 'string') {
-    content.push({
-      type: 'text',
-      text: result.result.toString()
+    return formatToolResponse({
+      result: String(result.result),
+      latex: result.latex,
+      notes: result.units ? [`Units: ${result.units}`] : undefined,
     });
+  } catch (error) {
+    return formatErrorResponse(error instanceof Error ? error.message : String(error));
   }
-
-  if (result.latex) {
-    content.push({
-      type: 'text',
-      text: `LaTeX: ${result.latex}`
-    });
-  }
-
-  if (result.units) {
-    content.push({
-      type: 'text',
-      text: `Units: ${result.units}`
-    });
-  }
-
-  if (result.steps && result.steps.length > 0) {
-    content.push({
-      type: 'text',
-      text: 'Steps:'
-    });
-    content.push(
-      ...result.steps.map(step => ({
-        type: 'text',
-        text: step
-      }))
-    );
-  }
-
-  return {
-    content,
-    isError: false
-  };
 }

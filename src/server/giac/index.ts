@@ -1,1 +1,1 @@
-export { giacEngine, createGiacEngine } from './wrapper.js';
+export { giacEngine } from './wrapper.js';
