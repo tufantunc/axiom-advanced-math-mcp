@@ -9,14 +9,15 @@ import { readFile, writeFile } from 'fs/promises';
 import path from 'path';
 import { gradeV2Async } from './graders/grader-v2.js';
 import { getDefaultGiacBridge } from './graders/giac-bridge.js';
+import { answerToGrade } from './regrade-extract.js';
 
 interface Detail {
   dataset: string;
   index: number;
   question: string;
   groundTruth: string;
-  baseline: { extractedAnswer: string; correct: boolean };
-  toolAugmented: { extractedAnswer: string; correct: boolean };
+  baseline: { extractedAnswer: string; correct: boolean; response?: string };
+  toolAugmented: { extractedAnswer: string; correct: boolean; response?: string };
 }
 
 async function main(): Promise<void> {
@@ -53,10 +54,10 @@ async function main(): Promise<void> {
     if (d.baseline.correct) ds.v1Base++;
     if (d.toolAugmented.correct) ds.v1Tool++;
 
-    const baseR = await gradeV2Async(d.baseline.extractedAnswer, d.groundTruth, {
+    const baseR = await gradeV2Async(answerToGrade(d.baseline), d.groundTruth, {
       giacEval: bridge.evaluate,
     });
-    const toolR = await gradeV2Async(d.toolAugmented.extractedAnswer, d.groundTruth, {
+    const toolR = await gradeV2Async(answerToGrade(d.toolAugmented), d.groundTruth, {
       giacEval: bridge.evaluate,
     });
     if (baseR.match) {
