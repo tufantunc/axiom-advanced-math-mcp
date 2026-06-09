@@ -51,16 +51,10 @@ describe('multivariable operators', () => {
     expect(r.isError).toBe(true);
   });
 
-  it('jacobian of [x*y, x+y] wrt [x,y]', async () => {
+  it('jacobian of [x*y, x+y] wrt [x,y] is [[y,x],[1,1]]', async () => {
     const r = await operatorHandler({ operation: 'jacobian', functions: ['x*y', 'x+y'], variables: ['x', 'y'] });
     expect(r.isError).toBe(false);
-    // Giac returns the unevaluated jacobian call; the LaTeX renders the matrix
-    // with entries [x*y, x+y; x, y] (i.e. rows [[y,x],[1,1]] after differentiation).
-    // Assert on the stable output form that Giac actually produces.
-    const t = text(r);
-    expect(t).toContain('jacobian');
-    expect(t).toContain('x*y');
-    expect(t).toContain('x+y');
+    expect(text(r).replace(/\s/g, '')).toContain('[[y,x],[1,1]]');
   });
 
   it('errors when functions missing for jacobian', async () => {

@@ -22,7 +22,17 @@ export async function operatorHandler(args: Record<string, unknown>) {
       const vec = `[${functions.join(',')}]`;
       const validation = validateExpression(functions.join(','));
       if (validation) return formatErrorResponse(validation.message);
-      giacExpr = `${operation}(${vec},${varList})`;
+      if (operation === 'jacobian') {
+        // Giac's built-in jacobian() returns unevaluated in this WASM build.
+        // Build the Jacobian matrix explicitly from diff(): each row i is the
+        // gradient of functions[i] with respect to each variable.
+        const rows = functions.map(
+          (fn) => `[${variables.map((v) => `diff(${fn},${v})`).join(',')}]`
+        );
+        giacExpr = `[${rows.join(',')}]`;
+      } else {
+        giacExpr = `${operation}(${vec},${varList})`;
+      }
     } else {
       const expression = args.expression as string;
       if (!expression) return formatErrorResponse(`'expression' is required for ${operation}`);
