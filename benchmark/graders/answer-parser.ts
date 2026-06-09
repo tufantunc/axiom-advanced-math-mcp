@@ -238,11 +238,12 @@ export function isSymbolic(s: string): boolean {
  */
 function cleanExtracted(s: string): string {
   return s
+    .replace(/\\[()[\]]/g, '')   // inline-math delimiters \( \) \[ \]
     .replace(/\*\*/g, '')        // markdown bold
     .replace(/^\\\$/g, '')       // LaTeX dollar \$
     .replace(/^\$/g, '')         // plain dollar $
     .replace(/^[€£¥₹₽]/u, '')   // other currency
-    .replace(/[.,;:!?)}\]]+$/, '') // trailing punctuation (keep leading minus)
+    .replace(/[.,;:!?)\]]+$/, '') // trailing punctuation (keep leading minus; } kept for LaTeX)
     .trim();
 }
 
@@ -292,6 +293,21 @@ export function extractModelAnswer(text: string): string {
   const gsm8kMatches = [...text.matchAll(/####\s*([\d,.-]+)/g)];
   if (gsm8kMatches.length > 0) {
     return gsm8kMatches[gsm8kMatches.length - 1][1].replace(/,/g, '');
+  }
+
+  // 2.5. \[...\] or \(...\) display/inline-math blocks at end of text
+  //      e.g. "The result: \[x^2+1\]" → "x^2+1"
+  {
+    const displayMath = [...text.matchAll(/\\\[(.+?)\\\]/gs)];
+    if (displayMath.length > 0) {
+      const inner = displayMath[displayMath.length - 1][1].trim();
+      if (inner) return cleanExtracted(inner);
+    }
+    const inlineMath = [...text.matchAll(/\\\((.+?)\\\)/gs)];
+    if (inlineMath.length > 0) {
+      const inner = inlineMath[inlineMath.length - 1][1].trim();
+      if (inner) return cleanExtracted(inner);
+    }
   }
 
   // 3. "The answer is N" — broadened patterns (case-insensitive)
