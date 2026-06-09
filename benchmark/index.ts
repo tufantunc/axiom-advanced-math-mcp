@@ -4,7 +4,7 @@ import 'dotenv/config';
  * Axiom MCP Benchmark CLI
  *
  * Usage:
- *   tsx index.ts [--quick|--full|--gsm8k|--math|--olympiad|--cas]
+ *   tsx index.ts [--quick|--full|--gsm8k|--math|--olympiad|--cas|--multivar]
  *                [--provider anthropic|zai|openrouter|local] [--model <name>]
  *                [--zai]         shorthand for --provider zai
  *                [--openrouter]  shorthand for --provider openrouter
@@ -28,6 +28,7 @@ import { loadGSM8K } from './datasets/gsm8k.js';
 import { loadMATH, activeMathLevels } from './datasets/math.js';
 import { loadOmniMATH } from './datasets/omni-math.js';
 import { loadCAS } from './datasets/cas-problems.js';
+import { loadMultivar } from './datasets/multivariable-problems.js';
 import { gradeNumeric, grade } from './graders/grader.js';
 import { runBaseline } from './runners/baseline.js';
 import type { BaselineResult } from './runners/baseline.js';
@@ -111,9 +112,10 @@ async function main(): Promise<void> {
     loadOmniMATH(config.limits.omniMath, config.cacheDir),
   ]);
   const casProblems = loadCAS(config.limits.cas);
+  const multivarProblems = loadMultivar(config.limits.multivar);
 
   log(
-    `  GSM8K: ${gsm8kProblems.length}, MATH L3-5: ${mathProblems.length}, Omni-MATH: ${omniProblems.length}, CAS: ${casProblems.length}`
+    `  GSM8K: ${gsm8kProblems.length}, MATH L3-5: ${mathProblems.length}, Omni-MATH: ${omniProblems.length}, CAS: ${casProblems.length}, Multivar: ${multivarProblems.length}`
   );
 
   // ── Create MCP proxy ───────────────────────────────────────────
@@ -381,6 +383,15 @@ async function main(): Promise<void> {
   await runDataset(
     casProblems,
     `CAS (${casProblems.length})`,
+    (p) => p.answer,
+    (p) => p.problem,
+    (p) => p.category
+  );
+
+  // Multivariable calculus (M1) + 3D geometry (M2)
+  await runDataset(
+    multivarProblems,
+    `Multivar (${multivarProblems.length})`,
     (p) => p.answer,
     (p) => p.problem,
     (p) => p.category

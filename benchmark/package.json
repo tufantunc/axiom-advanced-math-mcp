@@ -45,7 +45,13 @@
     "cas:openrouter": "tsx index.ts --cas --openrouter",
     "cas:quick": "tsx index.ts --cas --quick",
     "cas:quick:zai": "tsx index.ts --cas --quick --zai",
-    "cas:quick:openrouter": "tsx index.ts --cas --quick --openrouter"
+    "cas:quick:openrouter": "tsx index.ts --cas --quick --openrouter",
+    "multivar": "tsx index.ts --multivar",
+    "multivar:zai": "tsx index.ts --multivar --zai",
+    "multivar:openrouter": "tsx index.ts --multivar --openrouter",
+    "multivar:quick": "tsx index.ts --multivar --quick",
+    "multivar:quick:zai": "tsx index.ts --multivar --quick --zai",
+    "multivar:quick:openrouter": "tsx index.ts --multivar --quick --openrouter"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.14.0",
