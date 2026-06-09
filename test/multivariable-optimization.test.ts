@@ -34,7 +34,18 @@ describe('multivariable optimization — tangent_plane & directional_derivative'
       direction: ['1', '0'],
     });
     expect(r.isError).toBe(false);
-    expect(text(r)).toContain('2');
+    expect(text(r)).toMatch(/Result:\s*2\b/);
+  });
+
+  it('errors on zero direction vector', async () => {
+    const r = await optimizationHandler({
+      operation: 'directional_derivative',
+      expression: 'x^2+y^2',
+      variables: ['x', 'y'],
+      point: ['1', '1'],
+      direction: ['0', '0'],
+    });
+    expect(r.isError).toBe(true);
   });
 
   it('errors when point length != variables length', async () => {
