@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { giacEngine } from '../../giac/index.js';
+import { unicodeToAscii } from '../unicode-normalize.js';
 
 export const verifySchema = z.object({
   claim: z
@@ -268,7 +269,7 @@ function findMainEquals(expr: string): number {
 export async function verifyHandler(
   args: Record<string, unknown>
 ): Promise<{ content: { type: 'text'; text: string }[]; isError: boolean }> {
-  const claim = args.claim as string;
+  const claim = unicodeToAscii(String(args.claim ?? ''));
   const method = (args.method as string) || 'both';
 
   try {
