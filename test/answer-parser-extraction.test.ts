@@ -10,3 +10,12 @@ describe('extraction — inline-math delimiters', () => {
     expect(extractModelAnswer('The result: \\[x^2+1\\]')).toBe('x^2+1');
   });
 });
+
+describe('extraction — inline-math does not hijack explicit answers', () => {
+  it('prefers an explicit "answer is N" over an intermediate \\[...\\]', () => {
+    expect(extractModelAnswer('From \\[x=3\\] we get the answer is 9')).toBe('9');
+  });
+  it('still extracts a bare \\[...\\] answer when there is no prose', () => {
+    expect(extractModelAnswer('The result: \\[x^2+1\\]')).toBe('x^2+1');
+  });
+});

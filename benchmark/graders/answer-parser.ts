@@ -295,21 +295,6 @@ export function extractModelAnswer(text: string): string {
     return gsm8kMatches[gsm8kMatches.length - 1][1].replace(/,/g, '');
   }
 
-  // 2.5. \[...\] or \(...\) display/inline-math blocks at end of text
-  //      e.g. "The result: \[x^2+1\]" → "x^2+1"
-  {
-    const displayMath = [...text.matchAll(/\\\[(.+?)\\\]/gs)];
-    if (displayMath.length > 0) {
-      const inner = displayMath[displayMath.length - 1][1].trim();
-      if (inner) return cleanExtracted(inner);
-    }
-    const inlineMath = [...text.matchAll(/\\\((.+?)\\\)/gs)];
-    if (inlineMath.length > 0) {
-      const inner = inlineMath[inlineMath.length - 1][1].trim();
-      if (inner) return cleanExtracted(inner);
-    }
-  }
-
   // 3. "The answer is N" — broadened patterns (case-insensitive)
   //    Uses matchAll + takes LAST match to handle multi-turn text where
   //    earlier turns may contain intermediate "answer is" statements.
@@ -326,6 +311,22 @@ export function extractModelAnswer(text: string): string {
     if (matches.length > 0) {
       const extracted = cleanExtracted(matches[matches.length - 1][1]);
       if (extracted && /[\da-zA-Z]/.test(extracted)) return extracted;
+    }
+  }
+
+  // 3a. \[...\] or \(...\) display/inline-math blocks at end of text
+  //      e.g. "The result: \[x^2+1\]" → "x^2+1". Runs AFTER the explicit-answer
+  //      prose patterns above so it only catches bare inline-math answers.
+  {
+    const displayMath = [...text.matchAll(/\\\[(.+?)\\\]/gs)];
+    if (displayMath.length > 0) {
+      const inner = displayMath[displayMath.length - 1][1].trim();
+      if (inner) return cleanExtracted(inner);
+    }
+    const inlineMath = [...text.matchAll(/\\\((.+?)\\\)/gs)];
+    if (inlineMath.length > 0) {
+      const inner = inlineMath[inlineMath.length - 1][1].trim();
+      if (inner) return cleanExtracted(inner);
     }
   }
 
