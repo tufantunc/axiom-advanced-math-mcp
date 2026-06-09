@@ -60,4 +60,12 @@ describe('geometry3d planes', () => {
     const r = await planeHandler({ operation: 'plane_plane_angle', lists: [[0, 0, 0, 5], [0, 1, 0, 0]] });
     expect(r.isError).toBe(true);
   });
+
+  it('line_line_distance for intersecting lines = 0 (note says intersect)', async () => {
+    const r = await planeHandler({ operation: 'line_line_distance', lists: [[0, 0, 0], [1, 0, 0], [0, 0, 0], [0, 1, 0]] });
+    expect(r.isError).toBe(false);
+    const t = r.content.map((c) => c.text).join('\n');
+    expect(t).toContain('0');
+    expect(t.toLowerCase()).toContain('intersect');
+  });
 });

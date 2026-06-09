@@ -13,7 +13,7 @@ describe('geometry3d volumes', () => {
   it('volume_parallelepiped (unit cube) = 1', async () => {
     const r = await volumeHandler({ operation: 'volume_parallelepiped', lists: [[1, 0, 0], [0, 1, 0], [0, 0, 1]] });
     expect(r.isError).toBe(false);
-    expect(text(r)).toContain('1');
+    expect(r.content.map((c) => c.text).join('\n')).toMatch(/Result:\s*1\b/);
   });
 
   it('volume_sphere(r=1) ≈ 4.18879', async () => {
@@ -29,6 +29,11 @@ describe('geometry3d volumes', () => {
 
   it('volume_tetrahedron errors when a vertex lacks 3 coords', async () => {
     const r = await volumeHandler({ operation: 'volume_tetrahedron', lists: [[0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]] });
+    expect(r.isError).toBe(true);
+  });
+
+  it('volume_sphere errors on negative radius', async () => {
+    const r = await volumeHandler({ operation: 'volume_sphere', scalar: -1 });
     expect(r.isError).toBe(true);
   });
 });
