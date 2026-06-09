@@ -249,6 +249,7 @@ async function main(): Promise<void> {
           correct: baselineOk,
           method: baselineMethod,
           error: baselineError,
+          response: br?.text,
           ...(br && 'selfConsistency' in br && br.selfConsistency ? { selfConsistency: br.selfConsistency } : {}),
         },
         toolAugmented: {
@@ -258,6 +259,7 @@ async function main(): Promise<void> {
           toolCalls,
           turns,
           error: toolError,
+          response: tr?.text,
           ...(tr && 'selfConsistency' in tr && tr.selfConsistency ? { selfConsistency: tr.selfConsistency } : {}),
         },
         regression: baselineOk && !toolOk,

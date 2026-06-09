@@ -28,6 +28,7 @@ export interface ProblemDetail {
     correct: boolean;
     method: string; // 'numeric' | 'string' | 'fallback'
     error?: string; // if API call threw
+    response?: string; // raw model response text (for offline re-extraction)
     selfConsistency?: SelfConsistencyData;
   };
 
@@ -43,6 +44,7 @@ export interface ProblemDetail {
     }[];
     turns: number;
     error?: string;
+    response?: string; // raw model response text (for offline re-extraction)
     selfConsistency?: SelfConsistencyData;
   };
 
