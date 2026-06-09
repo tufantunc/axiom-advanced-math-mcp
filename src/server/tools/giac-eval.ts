@@ -14,7 +14,11 @@ export interface EvalOptions {
 export async function evalWithLatex(options: EvalOptions) {
   const { giacExpr, operation, errorMessage, resultTransform } = options;
 
-  const cached = evaluationCache.get(giacExpr);
+  // Transformed results are cached under a separate key so a transformed call
+  // and a raw call for the same giacExpr never return each other's result.
+  const cacheKey = resultTransform ? `${giacExpr} transformed` : giacExpr;
+
+  const cached = evaluationCache.get(cacheKey);
   if (cached) {
     return formatToolResponse({
       result: cached.result,
@@ -45,7 +49,7 @@ export async function evalWithLatex(options: EvalOptions) {
     /* best effort */
   }
 
-  evaluationCache.set(giacExpr, { result, latex });
+  evaluationCache.set(cacheKey, { result, latex });
 
   return formatToolResponse({
     result,

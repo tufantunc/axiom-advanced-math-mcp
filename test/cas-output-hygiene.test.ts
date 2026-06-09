@@ -33,4 +33,15 @@ describe('evalWithLatex — generic output hygiene', () => {
     });
     expect(allText(r)).toContain('Result: TRANSFORMED');
   });
+
+  it('does not cross-contaminate cache between raw and transformed calls', async () => {
+    const raw = await evalWithLatex({ giacExpr: 'solve(x^2-9,x)', operation: 'solve' });
+    const transformed = await evalWithLatex({
+      giacExpr: 'solve(x^2-9,x)',
+      operation: 'solve',
+      resultTransform: () => 'XFORM',
+    });
+    expect(allText(raw)).toContain('Result: list[-3,3]');
+    expect(allText(transformed)).toContain('Result: XFORM');
+  });
 });
