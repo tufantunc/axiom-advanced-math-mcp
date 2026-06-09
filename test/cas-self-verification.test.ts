@@ -2,6 +2,8 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { giacEngine } from '../src/server/giac/index.js';
 import { evalWithLatex } from '../src/server/tools/giac-eval.js';
 import type { VerificationResult } from '../src/server/tools/self-verify.js';
+import { algebraHandler } from '../src/server/tools/algebra.js';
+import { calculusHandler } from '../src/server/tools/calculus.js';
 
 beforeAll(async () => {
   await giacEngine.initialize();
@@ -38,5 +40,30 @@ describe('evalWithLatex — verify callback + methodNote', () => {
     await evalWithLatex({ giacExpr: 'simplify(2*x+3*x)', operation: 'simplify', verify: verifyFn });
     await evalWithLatex({ giacExpr: 'simplify(2*x+3*x)', operation: 'simplify', verify: verifyFn });
     expect(calls).toBe(1);
+  });
+});
+
+describe('factor / integrate annotation', () => {
+  it('factor: shows a verified line', async () => {
+    const r = await algebraHandler({ operation: 'factor', expression: 'x^2-4' });
+    expect(allText(r)).toContain('Verified: ✓ (expand:');
+  });
+  it('indefinite integrate: shows a verified line', async () => {
+    const r = await calculusHandler({ operation: 'integrate', expression: '2*x', variable: 'x' });
+    expect(allText(r)).toContain('Verified: ✓ (differentiation:');
+  });
+  it('definite integrate: no verification line', async () => {
+    const r = await calculusHandler({
+      operation: 'integrate',
+      expression: 'x',
+      variable: 'x',
+      lower_bound: '0',
+      upper_bound: '1',
+    });
+    expect(allText(r)).not.toContain('Verified:');
+  });
+  it('simplify: no verification line (not in scope)', async () => {
+    const r = await algebraHandler({ operation: 'simplify', expression: 'x+x' });
+    expect(allText(r)).not.toContain('Verified:');
   });
 });

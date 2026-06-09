@@ -1,6 +1,7 @@
 import { formatErrorResponse } from './response-formatter.js';
 import { validateExpression } from './symbolic/validator.js';
 import { evalWithLatex } from './giac-eval.js';
+import { verifyFactor } from './self-verify.js';
 
 function buildGiacExpression(operation: string, args: Record<string, unknown>): string {
   const expr = args.expression as string;
@@ -35,7 +36,11 @@ export async function algebraHandler(args: Record<string, unknown>) {
     if (validationError) return formatErrorResponse(validationError.message);
 
     const giacExpr = buildGiacExpression(operation, args);
-    return evalWithLatex({ giacExpr, operation });
+    const verify =
+      operation === 'factor'
+        ? (result: string) => verifyFactor(args.expression as string, result)
+        : undefined;
+    return evalWithLatex({ giacExpr, operation, verify });
   } catch (error) {
     return formatErrorResponse(error instanceof Error ? error.message : String(error));
   }

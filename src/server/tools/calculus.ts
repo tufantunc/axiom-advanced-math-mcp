@@ -1,6 +1,7 @@
 import { formatErrorResponse } from './response-formatter.js';
 import { validateExpression } from './symbolic/validator.js';
 import { evalWithLatex } from './giac-eval.js';
+import { verifyIntegrate } from './self-verify.js';
 
 function buildGiacExpression(operation: string, args: Record<string, unknown>): string {
   switch (operation) {
@@ -87,7 +88,14 @@ export async function calculusHandler(args: Record<string, unknown>) {
     if (validationError) return formatErrorResponse(validationError.message);
 
     const giacExpr = buildGiacExpression(operation, args);
-    return evalWithLatex({ giacExpr, operation });
+    const isIndefiniteIntegral =
+      operation === 'integrate' &&
+      args.lower_bound === undefined &&
+      args.upper_bound === undefined;
+    const verify = isIndefiniteIntegral
+      ? (result: string) => verifyIntegrate(args.expression as string, args.variable as string, result)
+      : undefined;
+    return evalWithLatex({ giacExpr, operation, verify });
   } catch (error) {
     return formatErrorResponse(error instanceof Error ? error.message : String(error));
   }
