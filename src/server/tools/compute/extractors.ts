@@ -788,9 +788,9 @@ const GEOMETRY3D_OPS = [
   'volume_parallelepiped',
 ];
 
-/** Parse a bracket list "[a, b, c]" into a number array (paren/comma-aware via splitArgs). */
+/** Parse a bracket list "[a, b, c]" into a number array (reuses parseBracketList). */
 function parseNumberList(s: string): number[] {
-  return splitArgs(s.trim().replace(/^\[/, '').replace(/\]$/, '')).map((x) => Number(x));
+  return parseBracketList(s).map(Number);
 }
 
 export function extractGeometry3d(problem: string): RouteResult {
@@ -798,6 +798,8 @@ export function extractGeometry3d(problem: string): RouteResult {
   const inner = extractFnArgs(problem);
   const parts = splitArgs(inner);
 
+  // Router already guarantees the input starts with exactly `<name>(`, and no op name
+  // is a prefix of another, so a bare startsWith is unambiguous here.
   const operation = GEOMETRY3D_OPS.find((name) => lc.startsWith(name)) ?? '';
 
   const lists: number[][] = [];
