@@ -8,6 +8,7 @@ export function unicodeToAscii(s: string): string {
     .replace(/√/g, 'sqrt')
     .replace(/π/g, 'pi')
     .replace(/×/g, '*')
+    .replace(/·/g, '*')
     .replace(/÷/g, '/')
     .replace(/²/g, '^2')
     .replace(/³/g, '^3')
