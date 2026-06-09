@@ -134,6 +134,18 @@ describe('multivariable optimization', () => {
     expect(text(r).replace(/\s/g, '')).toContain('(1,1,1)');
   });
 
+  it('critical_points of x^3-3*x+y^2 finds (1,0) min and (-1,0) saddle', async () => {
+    const r = await optimizationHandler({
+      operation: 'critical_points',
+      expression: 'x^3-3*x+y^2',
+      variables: ['x', 'y'],
+    });
+    expect(r.isError).toBe(false);
+    const t = text(r).toLowerCase();
+    expect(t).toContain('minimum');
+    expect(t).toContain('saddle');
+  });
+
   it('lagrange errors when constraint missing', async () => {
     const r = await optimizationHandler({
       operation: 'lagrange',

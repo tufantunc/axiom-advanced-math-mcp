@@ -123,6 +123,8 @@ export async function optimizationHandler(args: Record<string, unknown>) {
       });
     }
 
+    // Classification via the second-derivative test is supported for exactly 2 variables by design:
+    // D = f_xx*f_yy - f_xy^2 is the standard 2-variable discriminant; the n-variable case would require full Hessian analysis.
     if (operation === 'critical_points') {
       if (variables.length !== 2) {
         return formatErrorResponse('critical_points classification is supported for exactly 2 variables');
