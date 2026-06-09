@@ -39,4 +39,15 @@ describe('multivariable operators', () => {
     const r = await operatorHandler({ operation: 'gradient', expression: 'x^2+y^2' });
     expect(r.isError).toBe(true);
   });
+
+  it('hessian of x^2+y^2 is [[2,0],[0,2]]', async () => {
+    const r = await operatorHandler({ operation: 'hessian', expression: 'x^2+y^2', variables: ['x', 'y'] });
+    expect(r.isError).toBe(false);
+    expect(text(r).replace(/\s/g, '')).toContain('[[2,0],[0,2]]');
+  });
+
+  it('errors on unknown operation', async () => {
+    const r = await operatorHandler({ operation: 'bogus', expression: 'x', variables: ['x'] });
+    expect(r.isError).toBe(true);
+  });
 });

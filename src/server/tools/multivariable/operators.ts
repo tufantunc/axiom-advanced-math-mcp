@@ -30,6 +30,8 @@ export async function operatorHandler(args: Record<string, unknown>) {
       if (validation) return formatErrorResponse(validation.message);
       if (operation === 'gradient') giacExpr = `grad(${expression},${varList})`;
       else if (operation === 'hessian') giacExpr = `hessian(${expression},${varList})`;
+      // Giac diff(f, x, y) performs successive differentiation, so passing multiple variables
+      // computes mixed/higher-order partials, e.g. diff(f,x,y) = ∂²f/∂x∂y.
       else if (operation === 'partial') giacExpr = `diff(${expression},${variables.join(',')})`;
       else return formatErrorResponse(`Unknown operator: ${operation}`);
     }
