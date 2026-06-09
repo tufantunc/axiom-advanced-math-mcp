@@ -238,11 +238,12 @@ export function isSymbolic(s: string): boolean {
  */
 function cleanExtracted(s: string): string {
   return s
+    .replace(/\\[()[\]]/g, '')   // inline-math delimiters \( \) \[ \]
     .replace(/\*\*/g, '')        // markdown bold
     .replace(/^\\\$/g, '')       // LaTeX dollar \$
     .replace(/^\$/g, '')         // plain dollar $
     .replace(/^[€£¥₹₽]/u, '')   // other currency
-    .replace(/[.,;:!?)}\]]+$/, '') // trailing punctuation (keep leading minus)
+    .replace(/[.,;:!?)\]]+$/, '') // trailing punctuation (keep leading minus; } kept for LaTeX)
     .trim();
 }
 
@@ -313,10 +314,36 @@ export function extractModelAnswer(text: string): string {
     }
   }
 
+  // 3a. \[...\] or \(...\) display/inline-math blocks at end of text
+  //      e.g. "The result: \[x^2+1\]" → "x^2+1". Runs AFTER the explicit-answer
+  //      prose patterns above so it only catches bare inline-math answers.
+  {
+    const displayMath = [...text.matchAll(/\\\[(.+?)\\\]/gs)];
+    if (displayMath.length > 0) {
+      const inner = displayMath[displayMath.length - 1][1].trim();
+      if (inner) return cleanExtracted(inner);
+    }
+    const inlineMath = [...text.matchAll(/\\\((.+?)\\\)/gs)];
+    if (inlineMath.length > 0) {
+      const inner = inlineMath[inlineMath.length - 1][1].trim();
+      if (inner) return cleanExtracted(inner);
+    }
+  }
+
   // 3b. If the entire trimmed input looks like a simple fraction (e.g. "-82/27"),
   //     return it verbatim so the numeric grader can evaluate it correctly.
   const simpleFrac = text.trim().match(/^(-?\d+\/\d+)$/);
   if (simpleFrac) return simpleFrac[1];
+
+  // 3c. Bare comma-list of values at the very end (e.g. eigenvalues "3, 1").
+  //     Requires >=2 numeric members contiguous at the tail, so it does not fire
+  //     on prose like "Step 1, we get 5" (the tail "we get 5" is not a number list).
+  const listMatch = text
+    .trim()
+    .match(/(-?\d+(?:\.\d+)?(?:\s*,\s*-?\d+(?:\.\d+)?)+)\s*[.)\]]?\s*$/);
+  if (listMatch) {
+    return listMatch[1].replace(/\s*,\s*/g, ', ').trim();
+  }
 
   // 4. Markdown-bold number near end of text: **460**, **$460**, **\$460**
   //    Only look in the last 300 characters to avoid picking up intermediate results

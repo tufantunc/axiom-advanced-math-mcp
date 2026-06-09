@@ -176,7 +176,7 @@ async function main(): Promise<void> {
         const result =
           typeof groundTruth === 'number'
             ? gradeNumeric(br.text, groundTruth)
-            : grade(br.text, groundTruthStr);
+            : await grade(br.text, groundTruthStr);
         baselineOk = result.correct;
         baselineExtracted = result.predicted;
         baselineMethod = result.method;
@@ -228,7 +228,7 @@ async function main(): Promise<void> {
         const result =
           typeof groundTruth === 'number'
             ? gradeNumeric(tr.text, groundTruth)
-            : grade(tr.text, groundTruthStr);
+            : await grade(tr.text, groundTruthStr);
         toolOk = result.correct;
         toolExtracted = result.predicted;
         toolMethod = result.method;
