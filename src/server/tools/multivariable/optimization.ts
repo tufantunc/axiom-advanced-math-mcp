@@ -29,6 +29,40 @@ async function toLatex(result: string): Promise<string | undefined> {
   }
 }
 
+/**
+ * Parse a Giac solve()-with-variable-list result into coordinate tuples.
+ * Giac returns "[[0,0]]" (list of solution vectors). Strips one outer bracket
+ * layer and splits each inner vector on top-level commas.
+ */
+function parseSolutionPoints(raw: string): string[][] {
+  const trimmed = raw.replace(/^list/, '').trim();
+  const inner = trimmed.replace(/^\[/, '').replace(/\]$/, '').trim();
+  if (!inner) return [];
+  const points: string[][] = [];
+  let depth = 0;
+  let current = '';
+  const flush = () => {
+    const coords = current.replace(/^\[/, '').replace(/\]$/, '').split(',').map((s) => s.trim()).filter(Boolean);
+    if (coords.length) points.push(coords);
+    current = '';
+  };
+  for (const ch of inner) {
+    if (ch === '[') {
+      depth++;
+      current += ch;
+    } else if (ch === ']') {
+      depth--;
+      current += ch;
+    } else if (ch === ',' && depth === 0) {
+      flush();
+    } else {
+      current += ch;
+    }
+  }
+  if (current.trim()) flush();
+  return points;
+}
+
 export async function optimizationHandler(args: Record<string, unknown>) {
   try {
     const operation = args.operation as string;
@@ -86,6 +120,49 @@ export async function optimizationHandler(args: Record<string, unknown>) {
         result: dv,
         latex,
         notes: [`Point: (${point.join(', ')})`, `Direction: [${direction.join(', ')}]`, `‖direction‖ = ${norm}`],
+      });
+    }
+
+    if (operation === 'critical_points') {
+      if (variables.length !== 2) {
+        return formatErrorResponse('critical_points classification is supported for exactly 2 variables');
+      }
+      const [x, y] = variables;
+      const stationary = `[diff(${expression},${x}),diff(${expression},${y})]`;
+      const grad = await giac(stationary);
+      const raw = await giac(`solve(${stationary},[${x},${y}])`);
+      const points = parseSolutionPoints(raw);
+      if (points.length === 0) {
+        return formatToolResponse({
+          result: 'No critical points in the real domain',
+          notes: [`Gradient: ${grad}`, `solve returned: ${raw}`],
+        });
+      }
+
+      // Second-derivative test symbols.
+      const fxx = `diff(${expression},${x},2)`;
+      const fyy = `diff(${expression},${y},2)`;
+      const fxy = `diff(diff(${expression},${x}),${y})`;
+      const discriminant = `(${fxx})*(${fyy})-(${fxy})^2`;
+
+      const classified: string[] = [];
+      for (const pt of points) {
+        const sub = substList(variables, pt);
+        const D = await giac(`subst(${discriminant},${sub})`);
+        const fxxAt = await giac(`subst(${fxx},${sub})`);
+        const dNum = Number(D);
+        const fxxNum = Number(fxxAt);
+        let kind: string;
+        if (!Number.isFinite(dNum) || dNum === 0) kind = 'inconclusive (second-derivative test fails, D=0)';
+        else if (dNum < 0) kind = 'saddle point';
+        else if (fxxNum > 0) kind = 'local minimum';
+        else kind = 'local maximum';
+        classified.push(`(${pt.join(', ')}): ${kind} [D=${D}, f_xx=${fxxAt}]`);
+      }
+
+      return formatToolResponse({
+        result: classified.join('; '),
+        notes: [`Gradient: ${grad}`, `Discriminant D = f_xx*f_yy - f_xy^2`, ...classified],
       });
     }
 

@@ -57,4 +57,25 @@ describe('multivariable optimization — tangent_plane & directional_derivative'
     });
     expect(r.isError).toBe(true);
   });
+
+  it('critical point of x^2+y^2 is a local minimum at (0,0)', async () => {
+    const r = await optimizationHandler({
+      operation: 'critical_points',
+      expression: 'x^2+y^2',
+      variables: ['x', 'y'],
+    });
+    expect(r.isError).toBe(false);
+    const t = text(r).toLowerCase();
+    expect(t).toContain('minimum');
+  });
+
+  it('critical point of x^2-y^2 is a saddle at (0,0)', async () => {
+    const r = await optimizationHandler({
+      operation: 'critical_points',
+      expression: 'x^2-y^2',
+      variables: ['x', 'y'],
+    });
+    expect(r.isError).toBe(false);
+    expect(text(r).toLowerCase()).toContain('saddle');
+  });
 });
