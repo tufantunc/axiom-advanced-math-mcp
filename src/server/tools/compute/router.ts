@@ -25,6 +25,7 @@ import {
   extractNumberProperties,
   extractQuickCalc,
   extractFourier,
+  extractMultivariable,
 } from './extractors.js';
 
 // ---------------------------------------------------------------------------
@@ -197,6 +198,14 @@ const rules: RouterRule[] = [
     extract: extractDiff,
   },
 
+  // Multiple integrals — MUST precede single integrate (nested int starts with "int(").
+  {
+    name: 'multivariable:multiple_integral',
+    test: (p) =>
+      startsWith(p, 'iint', 'iiint') || /int\s*\(\s*int\s*\(/i.test(p),
+    extract: extractMultivariable,
+  },
+
   // 4. Integration
   {
     name: 'calculus:integrate',
@@ -271,11 +280,26 @@ const rules: RouterRule[] = [
     extract: extractGiacRaw,
   },
 
-  // 14. Vector calculus
+  // 14. Vector / differential operators + multivariable optimization.
   {
-    name: 'giac_raw:vector_calculus',
-    test: (p) => startsWith(p, 'grad', 'curl', 'divergence', 'hessian', 'jacobian'),
-    extract: extractGiacRaw,
+    name: 'multivariable:operators',
+    test: (p) =>
+      startsWith(
+        p,
+        'gradient',
+        'grad',
+        'curl',
+        'divergence',
+        'div',
+        'hessian',
+        'jacobian',
+        'partial',
+        'critical_points',
+        'lagrange',
+        'tangent_plane',
+        'directional_derivative'
+      ),
+    extract: extractMultivariable,
   },
 
   // 15. Matrix operations (primary)

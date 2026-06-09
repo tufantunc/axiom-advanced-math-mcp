@@ -679,3 +679,98 @@ export function extractFourier(problem: string): RouteResult {
 export function extractGiacRaw(problem: string): RouteResult {
   return { handler: 'giac_raw', args: { expression: problem.trim() } };
 }
+
+// --- Multivariable ---
+
+/** Parse a "[a, b, c]" bracket list into trimmed string elements. */
+function parseBracketList(s: string): string[] {
+  return s
+    .trim()
+    .replace(/^\[/, '')
+    .replace(/\]$/, '')
+    .split(',')
+    .map((e) => e.trim())
+    .filter(Boolean);
+}
+
+export function extractMultivariable(problem: string): RouteResult {
+  const trimmed = problem.trim();
+  const lc = trimmed.toLowerCase();
+  const inner = extractFnArgs(problem);
+  const parts = splitArgs(inner);
+
+  // Multiple integrals.
+  if (lc.startsWith('iint') || lc.startsWith('iiint')) {
+    const expression = parts[0] || '';
+    const bounds: { variable: string; lower: string; upper: string }[] = [];
+    for (let i = 1; i + 2 < parts.length; i += 3) {
+      bounds.push({ variable: parts[i], lower: parts[i + 1], upper: parts[i + 2] });
+    }
+    return { handler: 'multivariable', args: { operation: 'multiple_integral', expression, bounds } };
+  }
+  if (/int\s*\(\s*int\s*\(/i.test(trimmed)) {
+    return { handler: 'multivariable', args: { operation: 'multiple_integral', raw: trimmed } };
+  }
+
+  // Vector / differential operators.
+  if (lc.startsWith('gradient') || lc.startsWith('grad')) {
+    return { handler: 'multivariable', args: { operation: 'gradient', expression: parts[0] || '', variables: parseBracketList(parts[1] || '') } };
+  }
+  if (lc.startsWith('hessian')) {
+    return { handler: 'multivariable', args: { operation: 'hessian', expression: parts[0] || '', variables: parseBracketList(parts[1] || '') } };
+  }
+  if (lc.startsWith('jacobian')) {
+    return { handler: 'multivariable', args: { operation: 'jacobian', functions: parseBracketList(parts[0] || ''), variables: parseBracketList(parts[1] || '') } };
+  }
+  if (lc.startsWith('divergence') || lc.startsWith('div')) {
+    return { handler: 'multivariable', args: { operation: 'divergence', functions: parseBracketList(parts[0] || ''), variables: parseBracketList(parts[1] || '') } };
+  }
+  if (lc.startsWith('curl')) {
+    return { handler: 'multivariable', args: { operation: 'curl', functions: parseBracketList(parts[0] || ''), variables: parseBracketList(parts[1] || '') } };
+  }
+  if (lc.startsWith('partial')) {
+    return { handler: 'multivariable', args: { operation: 'partial', expression: parts[0] || '', variables: parts.slice(1) } };
+  }
+
+  // Optimization.
+  if (lc.startsWith('critical_points')) {
+    return { handler: 'multivariable', args: { operation: 'critical_points', expression: parts[0] || '', variables: parseBracketList(parts[1] || '') } };
+  }
+  if (lc.startsWith('lagrange')) {
+    return {
+      handler: 'multivariable',
+      args: {
+        operation: 'lagrange',
+        expression: parts[0] || '',
+        constraint: parts[1] || '',
+        value: parts[2] || '0',
+        variables: parseBracketList(parts[3] || ''),
+      },
+    };
+  }
+  if (lc.startsWith('tangent_plane')) {
+    return {
+      handler: 'multivariable',
+      args: {
+        operation: 'tangent_plane',
+        expression: parts[0] || '',
+        variables: parseBracketList(parts[1] || ''),
+        point: parseBracketList(parts[2] || ''),
+      },
+    };
+  }
+  if (lc.startsWith('directional_derivative')) {
+    return {
+      handler: 'multivariable',
+      args: {
+        operation: 'directional_derivative',
+        expression: parts[0] || '',
+        variables: parseBracketList(parts[1] || ''),
+        point: parseBracketList(parts[2] || ''),
+        direction: parseBracketList(parts[3] || ''),
+      },
+    };
+  }
+
+  return { handler: 'giac_raw', args: { expression: trimmed } };
+}

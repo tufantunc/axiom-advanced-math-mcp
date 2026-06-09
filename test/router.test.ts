@@ -191,9 +191,9 @@ describe('Router', () => {
   });
 
   describe('Vector calculus (rule 14)', () => {
-    it('should route grad() to giac_raw', () => {
+    it('should route grad() to multivariable', () => {
       const result = route('grad(x^2+y^2, [x,y])');
-      expect(result.handler).toBe('giac_raw');
+      expect(result.handler).toBe('multivariable');
     });
   });
 

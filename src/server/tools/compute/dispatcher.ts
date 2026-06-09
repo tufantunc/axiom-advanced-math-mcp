@@ -17,6 +17,7 @@ import { fourierTransformHandler } from '../fourier-transform.js';
 import { linearRegressionHandler } from '../linear-regression.js';
 import { numberPropertiesHandler } from '../number-properties.js';
 import { sequenceIdentifyHandler } from '../sequence-identify.js';
+import { multivariableHandler } from '../multivariable/index.js';
 
 /**
  * Dispatch to an existing handler by key.
@@ -77,6 +78,9 @@ export async function dispatch(
 
     case 'sequence_identify':
       return (await sequenceIdentifyHandler(args)) as McpResponse;
+
+    case 'multivariable':
+      return (await multivariableHandler(args)) as McpResponse;
 
     case 'giac_raw':
     default:
