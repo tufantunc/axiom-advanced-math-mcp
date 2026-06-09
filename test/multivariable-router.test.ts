@@ -1,5 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import { route } from '../src/server/tools/compute/router.js';
+import { computeHandler } from '../src/server/tools/compute/index.js';
+import { giacEngine } from '../src/server/giac/index.js';
 
 describe('Router — multivariable', () => {
   it('routes gradient() to multivariable', () => {
@@ -101,5 +103,24 @@ describe('Router — multivariable', () => {
       { variable: 'y', lower: '0', upper: '1' },
       { variable: 'z', lower: '0', upper: '1' },
     ]);
+  });
+});
+
+beforeAll(async () => {
+  await giacEngine.initialize();
+}, 60000);
+
+describe('compute gateway — multivariable end-to-end', () => {
+  it('gradient through compute()', async () => {
+    const r = await computeHandler({ problem: 'gradient(x^2+y^2, [x, y])' });
+    expect(r.isError).toBe(false);
+    const flat = r.content.map((c: { text: string }) => c.text).join('\n').replace(/\s/g, '');
+    expect(flat).toContain('2*x');
+  });
+
+  it('double integral through compute()', async () => {
+    const r = await computeHandler({ problem: 'iint(x*y, x, 0, 1, y, 0, 2)' });
+    expect(r.isError).toBe(false);
+    expect(r.content.map((c: { text: string }) => c.text).join('\n')).toContain('1');
   });
 });
