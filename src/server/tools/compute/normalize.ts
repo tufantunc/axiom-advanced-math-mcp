@@ -1,4 +1,4 @@
-import type { ComputeEnvelope, McpResponse, ResultType } from './types.js';
+import type { ComputeEnvelope, McpResponse, ResultType, VerificationInfo } from './types.js';
 import { splitTopLevel } from '../output-cleanup.js';
 
 // ---------------------------------------------------------------------------
@@ -72,6 +72,7 @@ interface ParsedFields {
   latex?: string;
   giacCommand?: string;
   notes: string[];
+  verification?: VerificationInfo;
 }
 
 function parseResponseLines(response: McpResponse): ParsedFields {
@@ -91,6 +92,14 @@ function parseResponseLines(response: McpResponse): ParsedFields {
       fields.latex = line.slice('LaTeX: '.length);
     } else if (line.startsWith('Command: ')) {
       fields.giacCommand = line.slice('Command: '.length);
+    } else if (line.startsWith('Verified: ')) {
+      const rest = line.slice('Verified: '.length).trim();
+      fields.verification = {
+        status: rest.startsWith('✓') ? 'verified' : 'failed',
+        check: rest.replace(/^[✓✗]\s*/, ''),
+      };
+    } else if (line.startsWith('Method: ')) {
+      // Informational model-facing note — not surfaced in the envelope.
     } else if (line.startsWith('The answer is ')) {
       // Summary line — skip (we use structured fields)
     } else if (line.trim() !== '') {
@@ -193,5 +202,6 @@ export function normalize(
     data,
     method: handler,
     ...(fields.giacCommand ? { giac_command: fields.giacCommand } : {}),
+    ...(fields.verification ? { verification: fields.verification } : {}),
   };
 }

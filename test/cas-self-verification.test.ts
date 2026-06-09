@@ -5,6 +5,7 @@ import type { VerificationResult } from '../src/server/tools/self-verify.js';
 import { algebraHandler } from '../src/server/tools/algebra.js';
 import { calculusHandler } from '../src/server/tools/calculus.js';
 import { solveEquationHandler, solveSystemHandler, parseSolutions, parseTuple } from '../src/server/tools/solve.js';
+import { computeHandler } from '../src/server/tools/compute/index.js';
 
 beforeAll(async () => {
   await giacEngine.initialize();
@@ -105,5 +106,14 @@ describe('solve parse helpers', () => {
   it('parseTuple parses a single tuple and rejects non-tuples', () => {
     expect(parseTuple('(2, 1)')).toEqual(['2', '1']);
     expect(parseTuple('{-2, 2}')).toEqual([]);
+  });
+});
+
+describe('compute json envelope — verification field', () => {
+  it('carries a verified status for a solved equation', async () => {
+    const r = await computeHandler({ problem: 'solve(x^2-4,x)', format: 'json' });
+    const env = JSON.parse(allText(r));
+    expect(env.verification).toBeDefined();
+    expect(env.verification.status).toBe('verified');
   });
 });
