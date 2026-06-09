@@ -29,6 +29,14 @@ describe('symbolic equivalence — guardrail (must NOT match)', () => {
   it('rejects non-equal abs vs bare (ln|x| vs ln x)', async () => {
     expect((await gradeV2Async('ln(abs(x))', 'ln(x)', { giacEval })).match).toBe(false);
   });
+  it('rejects a constant-offset difference (+C ambiguity)', async () => {
+    expect((await gradeV2Async('x^2+1', 'x^2', { giacEval })).match).toBe(false);
+  });
+  it('degrades gracefully when giacEval returns null (timeout)', async () => {
+    const nullEval = async () => null;
+    const r = await gradeV2Async('1/(1+x^2)', '1/(x^2+1)', { giacEval: nullEval });
+    expect(r.match).toBe(false); // falls back to sync no-match; must not throw
+  });
 });
 
 describe('async grade() end-to-end', () => {
