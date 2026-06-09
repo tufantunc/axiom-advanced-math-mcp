@@ -67,10 +67,17 @@ re-running the LLM benchmark.
   delimiters and was truncated.
 - **Multi-value answers:** when the answer region is a bare, top-level
   comma-separated list of values (e.g. `3,1`), preserve it whole rather than
-  collapsing to the last/first number. grader-v2's existing set / `bareCommaList`
-  matching then compares it order-insensitively against the ground truth (e.g.
-  `1,3`). Guard: only treat it as a value-list when the members are
-  number/expression-like, to avoid swallowing prose.
+  collapsing to the last/first number. Guard: only treat it as a value-list when
+  the members are number/expression-like, to avoid swallowing prose.
+  - **Note (matching is conditional):** preserving the list is strictly better
+    than the old single-token collapse. The order-insensitive *match* of a bare
+    comma-list against the ground truth runs via grader-v2's `bareCommaList`
+    stage, which is **gated behind `AXIOM_GRADER_V3=1`** (i.e. the
+    `--features=grader-v3` benchmark recipe). Without that flag the preserved
+    list does not auto-match a reordered ground truth. This is intentional:
+    making bare-comma-list order-insensitive matching unconditional risks
+    false-positives on ordered/sequence answers, which the binding guardrail
+    forbids. So a benchmark that wants this recovery must enable grader-v3.
 
 ### 3. Method enum
 
