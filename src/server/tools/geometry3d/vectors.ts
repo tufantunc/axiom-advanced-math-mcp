@@ -1,5 +1,5 @@
 import { formatToolResponse, formatErrorResponse } from '../response-formatter.js';
-import { need, vsub, vdot, vcross, vnorm, formatNumber, vfmt } from './vec.js';
+import { need, vsub, vdot, vcross, vnorm, formatNumber, vfmt, isZero } from './vec.js';
 
 export async function vectorHandler(args: Record<string, unknown>) {
   try {
@@ -38,7 +38,7 @@ export async function vectorHandler(args: Record<string, unknown>) {
         const v = need(lists[1], 3, 'second vector');
         const nu = vnorm(u);
         const nv = vnorm(v);
-        if (nu === 0 || nv === 0) return formatErrorResponse('angle_vectors: vectors must be non-zero');
+        if (isZero(nu) || isZero(nv)) return formatErrorResponse('angle_vectors: vectors must be non-zero');
         const cos = Math.max(-1, Math.min(1, vdot(u, v) / (nu * nv)));
         const deg = (Math.acos(cos) * 180) / Math.PI;
         return formatToolResponse({ result: `${formatNumber(deg)}°`, notes: [`Angle between ${vfmt(u)} and ${vfmt(v)}`] });

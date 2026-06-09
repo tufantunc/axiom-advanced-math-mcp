@@ -1,5 +1,5 @@
 import { formatToolResponse, formatErrorResponse } from '../response-formatter.js';
-import { need, vsub, vdot, vcross, vnorm, formatNumber, vfmt } from './vec.js';
+import { need, vsub, vdot, vcross, vnorm, formatNumber, vfmt, isZero } from './vec.js';
 
 export async function planeHandler(args: Record<string, unknown>) {
   try {
@@ -12,7 +12,7 @@ export async function planeHandler(args: Record<string, unknown>) {
         const p2 = need(lists[1], 3, 'P2');
         const p3 = need(lists[2], 3, 'P3');
         const n = vcross(vsub(p2, p1), vsub(p3, p1));
-        if (vnorm(n) === 0) return formatErrorResponse('plane_from_points: the three points are collinear');
+        if (isZero(vnorm(n))) return formatErrorResponse('plane_from_points: the three points are collinear');
         const d = -vdot(n, p1);
         const plane = [...n, d];
         return formatToolResponse({
@@ -20,6 +20,7 @@ export async function planeHandler(args: Record<string, unknown>) {
           notes: [
             `Plane ax+by+cz+d=0 through ${vfmt(p1)}, ${vfmt(p2)}, ${vfmt(p3)}`,
             `${formatNumber(n[0])}x + ${formatNumber(n[1])}y + ${formatNumber(n[2])}z + ${formatNumber(d)} = 0`,
+            'Coefficients use the raw cross-product normal (not unit-normalized).',
           ],
         });
       }
@@ -28,7 +29,7 @@ export async function planeHandler(args: Record<string, unknown>) {
         const pl = need(lists[1], 4, 'plane');
         const n = pl.slice(0, 3);
         const nn = vnorm(n);
-        if (nn === 0) return formatErrorResponse('point_plane_distance: degenerate plane (zero normal)');
+        if (isZero(nn)) return formatErrorResponse('point_plane_distance: degenerate plane (zero normal)');
         const dist = Math.abs(vdot(n, p) + pl[3]) / nn;
         return formatToolResponse({ result: formatNumber(dist), notes: [`Distance from ${vfmt(p)} to plane ${vfmt(pl)}`] });
       }
@@ -38,7 +39,7 @@ export async function planeHandler(args: Record<string, unknown>) {
         const pl = need(lists[2], 4, 'plane');
         const n = pl.slice(0, 3);
         const denom = vdot(n, dir);
-        if (denom === 0) return formatErrorResponse('line_plane_intersection: line is parallel to the plane');
+        if (isZero(denom)) return formatErrorResponse('line_plane_intersection: line is parallel to the plane');
         const t = -(vdot(n, p) + pl[3]) / denom;
         const pt = p.map((x, i) => x + t * dir[i]);
         return formatToolResponse({
@@ -53,7 +54,7 @@ export async function planeHandler(args: Record<string, unknown>) {
         const nb = b.slice(0, 3);
         const da = vnorm(na);
         const db = vnorm(nb);
-        if (da === 0 || db === 0) return formatErrorResponse('plane_plane_angle: degenerate plane (zero normal)');
+        if (isZero(da) || isZero(db)) return formatErrorResponse('plane_plane_angle: degenerate plane (zero normal)');
         const cos = Math.max(-1, Math.min(1, Math.abs(vdot(na, nb)) / (da * db)));
         const deg = (Math.acos(cos) * 180) / Math.PI;
         return formatToolResponse({ result: `${formatNumber(deg)}°`, notes: [`Angle between planes ${vfmt(a)} and ${vfmt(b)}`] });
@@ -65,14 +66,15 @@ export async function planeHandler(args: Record<string, unknown>) {
         const d2 = need(lists[3], 3, 'line2 direction');
         const w = vsub(p2, p1);
         const cr = vcross(d1, d2);
-        if (vnorm(cr) === 0) {
+        if (isZero(vnorm(cr))) {
           const nd1 = vnorm(d1);
-          if (nd1 === 0) return formatErrorResponse('line_line_distance: line1 direction is the zero vector');
+          if (isZero(nd1)) return formatErrorResponse('line_line_distance: line1 direction is the zero vector');
           const dist = vnorm(vcross(w, d1)) / nd1;
           return formatToolResponse({ result: formatNumber(dist), notes: ['Lines are parallel'] });
         }
         const dist = Math.abs(vdot(w, cr)) / vnorm(cr);
-        return formatToolResponse({ result: formatNumber(dist), notes: ['Distance between skew (or intersecting) lines'] });
+        const note = isZero(dist) ? 'Lines intersect (distance = 0)' : 'Distance between skew lines';
+        return formatToolResponse({ result: formatNumber(dist), notes: [note] });
       }
       default:
         return formatErrorResponse(`Unknown plane operation: ${op}`);

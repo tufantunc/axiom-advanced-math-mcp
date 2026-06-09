@@ -30,3 +30,6 @@ export const vcross = (a: number[], b: number[]): number[] => [
   a[0] * b[1] - a[1] * b[0],
 ];
 export const vnorm = (a: number[]): number => Math.sqrt(vdot(a, a));
+
+/** True if |x| is below a small epsilon — for robust degeneracy checks on float results. */
+export const isZero = (x: number): boolean => Math.abs(x) < 1e-12;

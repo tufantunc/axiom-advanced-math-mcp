@@ -50,4 +50,14 @@ describe('geometry3d planes', () => {
     const r = await planeHandler({ operation: 'line_plane_intersection', lists: [[0, 0, 5], [1, 0, 0], [0, 0, 1, 0]] });
     expect(r.isError).toBe(true);
   });
+
+  it('errors on zero direction vector for line_line_distance (parallel branch)', async () => {
+    const r = await planeHandler({ operation: 'line_line_distance', lists: [[0, 0, 0], [0, 0, 0], [0, 1, 0], [0, 0, 0]] });
+    expect(r.isError).toBe(true);
+  });
+
+  it('errors on degenerate (zero-normal) plane for plane_plane_angle', async () => {
+    const r = await planeHandler({ operation: 'plane_plane_angle', lists: [[0, 0, 0, 5], [0, 1, 0, 0]] });
+    expect(r.isError).toBe(true);
+  });
 });
