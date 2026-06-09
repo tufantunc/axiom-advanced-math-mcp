@@ -51,3 +51,41 @@ export function stripOrderTerm(expr: string): string {
   const stripped = expr.slice(0, cut).trim();
   return stripped || expr;
 }
+
+/**
+ * Normalize Giac's `solve` list output into clean set/tuple notation.
+ *   list[-2,2]    -> {-2, 2}
+ *   list[3]       -> 3
+ *   list[[2,1]]   -> (2, 1)
+ *   list[i,-i]    -> {i, -i}
+ *   []            -> {}
+ * Any unparseable input is returned unchanged (never throws).
+ */
+export function listToSet(raw: string): string {
+  const trimmed = raw.trim();
+  let inner = trimmed.startsWith('list') ? trimmed.slice(4).trim() : trimmed;
+  if (!inner.startsWith('[') || !inner.endsWith(']')) return raw;
+  inner = inner.slice(1, -1).trim();
+  if (inner === '') return '{}';
+
+  const members = splitTopLevel(inner, ',')
+    .map((m) => m.trim())
+    .filter((m) => m.length > 0);
+  if (members.length === 0) return '{}';
+
+  // System solutions: each member is itself a [a,b,...] tuple.
+  const tuples = members.map((m) => {
+    if (m.startsWith('[') && m.endsWith(']')) {
+      const elems = splitTopLevel(m.slice(1, -1), ',').map((e) => e.trim());
+      return `(${elems.join(', ')})`;
+    }
+    return null;
+  });
+  if (tuples.every((t) => t !== null)) {
+    return tuples.length === 1 ? (tuples[0] as string) : `{${tuples.join(', ')}}`;
+  }
+
+  // Scalars.
+  if (members.length === 1) return members[0];
+  return `{${members.join(', ')}}`;
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { splitTopLevel, stripQuotes, stripOrderTerm } from '../src/server/tools/output-cleanup.js';
+import { splitTopLevel, stripQuotes, stripOrderTerm, listToSet } from '../src/server/tools/output-cleanup.js';
 
 describe('splitTopLevel', () => {
   it('splits at top-level separator only', () => {
@@ -41,5 +41,29 @@ describe('stripOrderTerm', () => {
   it('leaves order-free expressions unchanged', () => {
     expect(stripOrderTerm('x^3/3')).toBe('x^3/3');
     expect(stripOrderTerm('(x-2)*(x+2)')).toBe('(x-2)*(x+2)');
+  });
+});
+
+describe('listToSet', () => {
+  it('converts a two-root list to a set', () => {
+    expect(listToSet('list[-2,2]')).toBe('{-2, 2}');
+  });
+  it('returns a single root bare (not a set)', () => {
+    expect(listToSet('list[3]')).toBe('3');
+  });
+  it('converts a system solution to a tuple', () => {
+    expect(listToSet('list[[2,1]]')).toBe('(2, 1)');
+  });
+  it('converts complex roots to a set', () => {
+    expect(listToSet('list[i,-i]')).toBe('{i, -i}');
+  });
+  it('maps an empty result to the empty set', () => {
+    expect(listToSet('[]')).toBe('{}');
+  });
+  it('wraps multiple tuples in a set', () => {
+    expect(listToSet('list[[2,1],[3,4]]')).toBe('{(2, 1), (3, 4)}');
+  });
+  it('returns the raw string when not a list', () => {
+    expect(listToSet('x^2+1')).toBe('x^2+1');
   });
 });
