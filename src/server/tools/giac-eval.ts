@@ -3,6 +3,7 @@ import { formatToolResponse, formatErrorResponse } from './response-formatter.js
 import { evaluationCache } from './symbolic/cache.js';
 import { stripQuotes, stripOrderTerm } from './output-cleanup.js';
 import type { VerificationResult } from './self-verify.js';
+import { unicodeToAscii } from './unicode-normalize.js';
 
 export interface EvalOptions {
   giacExpr: string;
@@ -22,7 +23,10 @@ export interface EvalOptions {
 }
 
 export async function evalWithLatex(options: EvalOptions) {
-  const { giacExpr, operation, errorMessage, resultTransform, verify, methodNote } = options;
+  const { operation, errorMessage, resultTransform, verify, methodNote } = options;
+  // Normalize unicode math glyphs in the input before anything else (cacheKey,
+  // evaluation, latex) so e.g. factor(x²-4) is not parsed as factor(xmicro-4).
+  const giacExpr = unicodeToAscii(options.giacExpr);
 
   // Transformed results are cached under a separate key so a transformed call
   // and a raw call for the same giacExpr never return each other's result.

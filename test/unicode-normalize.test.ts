@@ -28,4 +28,14 @@ describe('unicodeToAscii', () => {
   it('handles multiple Unicode chars in one string', () => {
     expect(unicodeToAscii('√(π × x²)')).toBe('sqrt(pi * x^2)');
   });
+
+  it('maps the middot · to multiplication', () => {
+    expect(unicodeToAscii('2·x')).toBe('2*x');
+  });
+  it('still maps superscript ² to ^2 (regression)', () => {
+    expect(unicodeToAscii('x²-4')).toBe('x^2-4');
+  });
+  it('leaves ASCII input unchanged', () => {
+    expect(unicodeToAscii('factor(x^2-4)')).toBe('factor(x^2-4)');
+  });
 });
