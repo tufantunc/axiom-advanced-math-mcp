@@ -1,6 +1,7 @@
 export interface CacheEntry {
   result: string;
   latex?: string;
+  verification?: { verified: boolean; method: 'substitution' | 'expand' | 'differentiation'; detail: string };
 }
 
 const MAX_ENTRIES = 100;
