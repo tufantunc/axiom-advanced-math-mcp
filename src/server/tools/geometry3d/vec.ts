@@ -17,6 +17,11 @@ export function need(list: number[] | undefined, n: number, label: string): numb
   return list;
 }
 
+/**
+ * Vector primitives below assume callers pass validated, equal-length numeric
+ * vectors (use `need(...)` first). They do NOT guard lengths — mismatched or
+ * non-finite inputs propagate NaN silently rather than throwing.
+ */
 export const vsub = (a: number[], b: number[]): number[] => a.map((x, i) => x - b[i]);
 export const vdot = (a: number[], b: number[]): number => a.reduce((s, x, i) => s + x * b[i], 0);
 export const vcross = (a: number[], b: number[]): number[] => [
