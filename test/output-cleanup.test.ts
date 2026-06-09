@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { splitTopLevel, stripQuotes } from '../src/server/tools/output-cleanup.js';
+import { splitTopLevel, stripQuotes, stripOrderTerm } from '../src/server/tools/output-cleanup.js';
 
 describe('splitTopLevel', () => {
   it('splits at top-level separator only', () => {
@@ -24,5 +24,22 @@ describe('stripQuotes', () => {
   it('does not strip a single leading or trailing quote', () => {
     expect(stripQuotes('"hello')).toBe('"hello');
     expect(stripQuotes('hello"')).toBe('hello"');
+  });
+});
+
+describe('stripOrderTerm', () => {
+  it('drops the trailing order_size term at center 0', () => {
+    expect(stripOrderTerm('1+x+1/2*x^2+1/6*x^3+1/24*x^4+x^5*order_size(x)')).toBe(
+      '1+x+1/2*x^2+1/6*x^3+1/24*x^4'
+    );
+  });
+  it('drops the trailing order_size term at a non-zero center', () => {
+    expect(stripOrderTerm('x-1-1/2*(x-1)^2+1/3*(x-1)^3+(x-1)^4*order_size(x-1)')).toBe(
+      'x-1-1/2*(x-1)^2+1/3*(x-1)^3'
+    );
+  });
+  it('leaves order-free expressions unchanged', () => {
+    expect(stripOrderTerm('x^3/3')).toBe('x^3/3');
+    expect(stripOrderTerm('(x-2)*(x+2)')).toBe('(x-2)*(x+2)');
   });
 });
