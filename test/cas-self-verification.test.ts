@@ -4,6 +4,7 @@ import { evalWithLatex } from '../src/server/tools/giac-eval.js';
 import type { VerificationResult } from '../src/server/tools/self-verify.js';
 import { algebraHandler } from '../src/server/tools/algebra.js';
 import { calculusHandler } from '../src/server/tools/calculus.js';
+import { solveEquationHandler, solveSystemHandler } from '../src/server/tools/solve.js';
 
 beforeAll(async () => {
   await giacEngine.initialize();
@@ -65,5 +66,28 @@ describe('factor / integrate annotation', () => {
   it('simplify: no verification line (not in scope)', async () => {
     const r = await algebraHandler({ operation: 'simplify', expression: 'x+x' });
     expect(allText(r)).not.toContain('Verified:');
+  });
+});
+
+describe('solve escalation + verification (D + C)', () => {
+  it('real roots verify with no escalation note', async () => {
+    const r = await solveEquationHandler({ equation: 'x^2-4', variable: 'x' });
+    const t = allText(r);
+    expect(t).toContain('Result: {-2, 2}');
+    expect(t).toContain('Verified: ✓ (substitution: 2/2 roots satisfy the equation)');
+    expect(t).not.toContain('Method:');
+  });
+  it('escalates to csolve for complex-only roots', async () => {
+    const r = await solveEquationHandler({ equation: 'x^2+1', variable: 'x' });
+    const t = allText(r);
+    expect(t).toContain('Result: {i, -i}');
+    expect(t).toContain('Method: csolve');
+    expect(t).toContain('Verified: ✓');
+  });
+  it('verifies a system solution tuple', async () => {
+    const r = await solveSystemHandler({ equations: ['x+y=3', 'x-y=1'], variables: ['x', 'y'] });
+    const t = allText(r);
+    expect(t).toContain('Result: (2, 1)');
+    expect(t).toContain('Verified: ✓');
   });
 });
