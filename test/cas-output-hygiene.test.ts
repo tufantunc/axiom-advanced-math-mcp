@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { giacEngine } from '../src/server/giac/index.js';
 import { evalWithLatex } from '../src/server/tools/giac-eval.js';
-import { evaluationCache } from '../src/server/tools/symbolic/cache.js';
 import { solveEquationHandler, solveSystemHandler } from '../src/server/tools/solve.js';
 import { computeHandler } from '../src/server/tools/compute/index.js';
 
@@ -30,7 +29,7 @@ describe('evalWithLatex — generic output hygiene', () => {
 
   it('applies an optional resultTransform before formatting', async () => {
     const r = await evalWithLatex({
-      giacExpr: 'solve(x^2-4,x)',
+      giacExpr: 'solve(x^4-16,x)',
       operation: 'solve',
       resultTransform: () => 'TRANSFORMED',
     });
@@ -50,9 +49,6 @@ describe('evalWithLatex — generic output hygiene', () => {
 });
 
 describe('solve handlers — list→set normalization (D)', () => {
-  beforeAll(() => {
-    evaluationCache.clear();
-  });
   it('renders two roots as a set', async () => {
     const r = await solveEquationHandler({ equation: 'x^2-4', variable: 'x' });
     expect(allText(r)).toContain('Result: {-2, 2}');

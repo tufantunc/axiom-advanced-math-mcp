@@ -37,10 +37,6 @@ class LruCache {
   get size(): number {
     return this.cache.size;
   }
-
-  clear(): void {
-    this.cache.clear();
-  }
 }
 
 export const evaluationCache = new LruCache();

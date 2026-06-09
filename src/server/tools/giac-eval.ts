@@ -16,6 +16,8 @@ export async function evalWithLatex(options: EvalOptions) {
 
   // Transformed results are cached under a separate key so a transformed call
   // and a raw call for the same giacExpr never return each other's result.
+  // Assumes at most one transform variant per giacExpr (production uses only
+  // listToSet, applied solely to solve expressions).
   const cacheKey = resultTransform ? `${giacExpr} transformed` : giacExpr;
   const cached = evaluationCache.get(cacheKey);
   if (cached) {
