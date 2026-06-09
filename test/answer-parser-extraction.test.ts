@@ -19,3 +19,15 @@ describe('extraction — inline-math does not hijack explicit answers', () => {
     expect(extractModelAnswer('The result: \\[x^2+1\\]')).toBe('x^2+1');
   });
 });
+
+describe('extraction — bare multi-value lists', () => {
+  it('keeps a trailing comma-list of values whole', () => {
+    expect(extractModelAnswer('The eigenvalues are 3, 1.')).toBe('3, 1');
+  });
+  it('keeps a 3-value list whole', () => {
+    expect(extractModelAnswer('The roots are -2, 0, 2')).toBe('-2, 0, 2');
+  });
+  it('does NOT treat prose with a stray comma as a list', () => {
+    expect(extractModelAnswer('Step 1, we get 5')).toBe('5');
+  });
+});

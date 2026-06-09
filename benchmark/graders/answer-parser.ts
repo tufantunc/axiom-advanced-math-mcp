@@ -335,6 +335,16 @@ export function extractModelAnswer(text: string): string {
   const simpleFrac = text.trim().match(/^(-?\d+\/\d+)$/);
   if (simpleFrac) return simpleFrac[1];
 
+  // 3c. Bare comma-list of values at the very end (e.g. eigenvalues "3, 1").
+  //     Requires >=2 numeric members contiguous at the tail, so it does not fire
+  //     on prose like "Step 1, we get 5" (the tail "we get 5" is not a number list).
+  const listMatch = text
+    .trim()
+    .match(/(-?\d+(?:\.\d+)?(?:\s*,\s*-?\d+(?:\.\d+)?)+)\s*[.)\]]?\s*$/);
+  if (listMatch) {
+    return listMatch[1].replace(/\s*,\s*/g, ', ').trim();
+  }
+
   // 4. Markdown-bold number near end of text: **460**, **$460**, **\$460**
   //    Only look in the last 300 characters to avoid picking up intermediate results
   const tail = text.slice(-300);
