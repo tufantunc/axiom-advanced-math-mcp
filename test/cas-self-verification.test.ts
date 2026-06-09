@@ -4,7 +4,7 @@ import { evalWithLatex } from '../src/server/tools/giac-eval.js';
 import type { VerificationResult } from '../src/server/tools/self-verify.js';
 import { algebraHandler } from '../src/server/tools/algebra.js';
 import { calculusHandler } from '../src/server/tools/calculus.js';
-import { solveEquationHandler, solveSystemHandler, parseSolutions, parseTuple } from '../src/server/tools/solve.js';
+import { solveEquationHandler, solveSystemHandler, parseSolutions, parseTuple, parseTuples } from '../src/server/tools/solve.js';
 import { computeHandler } from '../src/server/tools/compute/index.js';
 
 beforeAll(async () => {
@@ -91,6 +91,12 @@ describe('solve escalation + verification (D + C)', () => {
     expect(t).toContain('Result: (2, 1)');
     expect(t).toContain('Verified: ✓');
   });
+  it('verifies a multi-solution system (all tuples)', async () => {
+    const r = await solveSystemHandler({ equations: ['x^2-y', 'y-4'], variables: ['x', 'y'] });
+    const t = allText(r);
+    expect(t).toContain('Result: {(2, 4), (-2, 4)}');
+    expect(t).toContain('Verified: ✓');
+  });
 });
 
 describe('solve parse helpers', () => {
@@ -106,6 +112,11 @@ describe('solve parse helpers', () => {
   it('parseTuple parses a single tuple and rejects non-tuples', () => {
     expect(parseTuple('(2, 1)')).toEqual(['2', '1']);
     expect(parseTuple('{-2, 2}')).toEqual([]);
+  });
+  it('parseTuples handles a single tuple and a set of tuples', () => {
+    expect(parseTuples('(2, 1)')).toEqual([['2', '1']]);
+    expect(parseTuples('{(2, 4), (-2, 4)}')).toEqual([['2', '4'], ['-2', '4']]);
+    expect(parseTuples('{}')).toEqual([]);
   });
 });
 

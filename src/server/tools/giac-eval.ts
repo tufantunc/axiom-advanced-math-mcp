@@ -12,10 +12,11 @@ export interface EvalOptions {
   resultTransform?: (raw: string) => string;
   /**
    * Optional round-trip verification run on the (final) result. Never throws.
-   * The first result for a given giacExpr is cached and reused — callers must
-   * use a consistent verify strategy per expression.
+   * Returns undefined to skip (no Verified line). The first result for a given
+   * giacExpr is cached and reused — callers must use a consistent verify
+   * strategy per expression.
    */
-  verify?: (result: string) => Promise<VerificationResult>;
+  verify?: (result: string) => Promise<VerificationResult | undefined>;
   /** Optional note about which method produced the result (e.g. escalation). */
   methodNote?: string;
 }

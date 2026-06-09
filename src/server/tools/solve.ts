@@ -27,6 +27,24 @@ export function parseTuple(s: string): string[] {
   return [];
 }
 
+/** Parse all solution tuples from a normalized system result.
+ *  "(a, b)" -> [['a','b']]; "{(a,b), (c,d)}" -> [['a','b'],['c','d']]; else []. */
+export function parseTuples(result: string): string[][] {
+  const t = result.trim();
+  if (t.startsWith('(') && t.endsWith(')')) {
+    const tup = parseTuple(t);
+    return tup.length > 0 ? [tup] : [];
+  }
+  if (t.startsWith('{') && t.endsWith('}')) {
+    const body = t.slice(1, -1).trim();
+    if (body === '') return [];
+    return splitTopLevel(body, ',')
+      .map((x) => parseTuple(x.trim()))
+      .filter((x) => x.length > 0);
+  }
+  return [];
+}
+
 interface Candidate {
   fn: string;
   note?: string;
@@ -114,7 +132,25 @@ export async function solveSystemHandler(args: Record<string, unknown>) {
     }
 
     const giacExpr = `solve([${equations.join(',')}],[${variables.join(',')}])`;
-    const verify = (result: string) => verifySystem(equations, variables, parseTuple(result));
+    const verify = async (result: string): Promise<VerificationResult | undefined> => {
+      const tuples = parseTuples(result);
+      if (tuples.length === 0) return undefined; // unparseable / no solution → skip
+      for (const tup of tuples) {
+        const v = await verifySystem(equations, variables, tup);
+        if (!v.verified) {
+          return {
+            verified: false,
+            method: 'substitution',
+            detail: `${tuples.length} solution(s); at least one did not satisfy all equations`,
+          };
+        }
+      }
+      return {
+        verified: true,
+        method: 'substitution',
+        detail: `${tuples.length} solution(s) satisfy all equations`,
+      };
+    };
     return evalWithLatex({
       giacExpr,
       operation: 'solve_system',
