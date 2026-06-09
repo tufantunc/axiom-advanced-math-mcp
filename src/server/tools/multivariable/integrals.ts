@@ -20,8 +20,8 @@ export async function integralHandler(args: Record<string, unknown>) {
     }
 
     const expression = args.expression as string;
-    const bounds = (args.bounds as Bound[]) ?? [];
     if (!expression) return formatErrorResponse("'expression' is required for multiple_integral");
+    const bounds = (args.bounds as Bound[]) ?? [];
     if (bounds.length < 2) {
       return formatErrorResponse(
         "multiple_integral requires at least 2 integration bounds (use 'int' for a single integral)",
@@ -33,7 +33,7 @@ export async function integralHandler(args: Record<string, unknown>) {
     // Build nested int(): the first bound is the innermost integral.
     let giacExpr = expression;
     for (const b of bounds) {
-      if (!b.variable || b.lower === undefined || b.upper === undefined) {
+      if (!b.variable || !b.lower || !b.upper) {
         return formatErrorResponse('each bound needs variable, lower, and upper');
       }
       giacExpr = `int(${giacExpr},${b.variable},${b.lower},${b.upper})`;

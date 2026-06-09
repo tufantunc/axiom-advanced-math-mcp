@@ -46,8 +46,19 @@ describe('multivariable integrals', () => {
     expect(text(r)).toContain('1');
   });
 
-  it('errors when neither bounds nor raw provided', async () => {
+  it('errors when fewer than 2 bounds provided', async () => {
     const r = await integralHandler({ operation: 'multiple_integral', expression: 'x*y' });
+    expect(r.isError).toBe(true);
+  });
+
+  it('errors when expression missing but bounds provided', async () => {
+    const r = await integralHandler({
+      operation: 'multiple_integral',
+      bounds: [
+        { variable: 'x', lower: '0', upper: '1' },
+        { variable: 'y', lower: '0', upper: '2' },
+      ],
+    });
     expect(r.isError).toBe(true);
   });
 });
