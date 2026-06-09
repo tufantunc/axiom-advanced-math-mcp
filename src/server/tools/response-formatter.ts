@@ -4,6 +4,8 @@ export interface MathToolResponse {
   latex?: string;
   giacCommand?: string;
   notes?: string[];
+  methodNote?: string;
+  verification?: { verified: boolean; method: string; detail: string };
 }
 
 export function formatToolResponse(data: MathToolResponse): {
@@ -15,6 +17,11 @@ export function formatToolResponse(data: MathToolResponse): {
   if (data.decimal && data.decimal !== data.result) lines.push(`Decimal: ${data.decimal}`);
   if (data.latex) lines.push(`LaTeX: ${data.latex}`);
   if (data.giacCommand) lines.push(`Command: ${data.giacCommand}`);
+  if (data.methodNote) lines.push(`Method: ${data.methodNote}`);
+  if (data.verification) {
+    const mark = data.verification.verified ? '✓' : '✗';
+    lines.push(`Verified: ${mark} (${data.verification.method}: ${data.verification.detail})`);
+  }
   if (data.notes && data.notes.length > 0) lines.push(...data.notes);
   lines.push('');
   if (data.decimal && data.decimal !== data.result) {
