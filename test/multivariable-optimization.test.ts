@@ -9,7 +9,7 @@ beforeAll(async () => {
 
 const text = (r: { content: { text: string }[] }) => r.content.map((c) => c.text).join('\n');
 
-describe('multivariable optimization — tangent_plane & directional_derivative', () => {
+describe('multivariable optimization', () => {
   it('tangent plane of x^2+y^2 at (1,1)', async () => {
     // z = 2 + 2(x-1) + 2(y-1) = 2x + 2y - 2
     const r = await optimizationHandler({
@@ -77,5 +77,35 @@ describe('multivariable optimization — tangent_plane & directional_derivative'
     });
     expect(r.isError).toBe(false);
     expect(text(r).toLowerCase()).toContain('saddle');
+  });
+
+  it('critical point of -(x^2+y^2) is a local maximum at (0,0)', async () => {
+    const r = await optimizationHandler({
+      operation: 'critical_points',
+      expression: '-(x^2+y^2)',
+      variables: ['x', 'y'],
+    });
+    expect(r.isError).toBe(false);
+    const t = text(r).toLowerCase();
+    expect(t).toContain('maximum');
+  });
+
+  it('fractional discriminant: critical point of x^2/3+y^2 is a local minimum (evalf fix)', async () => {
+    const r = await optimizationHandler({
+      operation: 'critical_points',
+      expression: 'x^2/3+y^2',
+      variables: ['x', 'y'],
+    });
+    expect(r.isError).toBe(false);
+    expect(text(r).toLowerCase()).toContain('minimum');
+  });
+
+  it('errors for 1-variable critical_points', async () => {
+    const r = await optimizationHandler({
+      operation: 'critical_points',
+      expression: 'x^2',
+      variables: ['x'],
+    });
+    expect(r.isError).toBe(true);
   });
 });

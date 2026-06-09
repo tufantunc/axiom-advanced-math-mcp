@@ -36,7 +36,7 @@ async function toLatex(result: string): Promise<string | undefined> {
  */
 function parseSolutionPoints(raw: string): string[][] {
   const trimmed = raw.replace(/^list/, '').trim();
-  const inner = trimmed.replace(/^\[/, '').replace(/\]$/, '').trim();
+  const inner = trimmed.replace(/^[[(]/, '').replace(/[\])]$/, '').trim();
   if (!inner) return [];
   const points: string[][] = [];
   let depth = 0;
@@ -131,6 +131,9 @@ export async function optimizationHandler(args: Record<string, unknown>) {
       const stationary = `[diff(${expression},${x}),diff(${expression},${y})]`;
       const grad = await giac(stationary);
       const raw = await giac(`solve(${stationary},[${x},${y}])`);
+      if (!/^\s*(list)?\s*[[(]/.test(raw)) {
+        return formatErrorResponse(`Could not parse solve output: ${raw}`);
+      }
       const points = parseSolutionPoints(raw);
       if (points.length === 0) {
         return formatToolResponse({
@@ -148,16 +151,18 @@ export async function optimizationHandler(args: Record<string, unknown>) {
       const classified: string[] = [];
       for (const pt of points) {
         const sub = substList(variables, pt);
-        const D = await giac(`subst(${discriminant},${sub})`);
-        const fxxAt = await giac(`subst(${fxx},${sub})`);
-        const dNum = Number(D);
-        const fxxNum = Number(fxxAt);
+        const Dexact = await giac(`subst(${discriminant},${sub})`);
+        const fxxExact = await giac(`subst(${fxx},${sub})`);
+        const dNum = Number(await giac(`evalf(${Dexact})`));
+        const fxxNum = Number(await giac(`evalf(${fxxExact})`));
         let kind: string;
-        if (!Number.isFinite(dNum) || dNum === 0) kind = 'inconclusive (second-derivative test fails, D=0)';
+        if (!Number.isFinite(dNum)) kind = 'inconclusive (could not evaluate discriminant)';
+        else if (dNum === 0) kind = 'inconclusive (second-derivative test fails, D=0)';
         else if (dNum < 0) kind = 'saddle point';
+        else if (!Number.isFinite(fxxNum)) kind = 'inconclusive (could not evaluate f_xx)';
         else if (fxxNum > 0) kind = 'local minimum';
         else kind = 'local maximum';
-        classified.push(`(${pt.join(', ')}): ${kind} [D=${D}, f_xx=${fxxAt}]`);
+        classified.push(`(${pt.join(', ')}): ${kind} [D=${Dexact}, f_xx=${fxxExact}]`);
       }
 
       return formatToolResponse({
