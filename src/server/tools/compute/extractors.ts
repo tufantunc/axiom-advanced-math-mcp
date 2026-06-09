@@ -682,15 +682,9 @@ export function extractGiacRaw(problem: string): RouteResult {
 
 // --- Multivariable ---
 
-/** Parse a "[a, b, c]" bracket list into trimmed string elements. */
+/** Parse a "[a, b, c]" bracket list into trimmed elements (paren/bracket-aware via splitArgs). */
 function parseBracketList(s: string): string[] {
-  return s
-    .trim()
-    .replace(/^\[/, '')
-    .replace(/\]$/, '')
-    .split(',')
-    .map((e) => e.trim())
-    .filter(Boolean);
+  return splitArgs(s.trim().replace(/^\[/, '').replace(/\]$/, ''));
 }
 
 export function extractMultivariable(problem: string): RouteResult {

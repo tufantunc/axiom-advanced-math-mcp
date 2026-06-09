@@ -290,7 +290,7 @@ const rules: RouterRule[] = [
         'grad',
         'curl',
         'divergence',
-        'div',
+        'div', // 'div' is the short alias for divergence, NOT arithmetic division
         'hessian',
         'jacobian',
         'partial',

@@ -83,4 +83,23 @@ describe('Router — multivariable', () => {
     expect(r.args.operation).toBe('differentiate');
     expect(r.args.order).toBe(3);
   });
+
+  it('parses vector components containing multi-arg functions (curl)', () => {
+    const r = route('curl([atan2(y,x), -x, 0], [x, y, z])');
+    expect(r.handler).toBe('multivariable');
+    expect(r.args.operation).toBe('curl');
+    expect(r.args.functions).toEqual(['atan2(y,x)', '-x', '0']);
+    expect(r.args.variables).toEqual(['x', 'y', 'z']);
+  });
+
+  it('routes iiint() triple integral to multivariable', () => {
+    const r = route('iiint(1, x, 0, 1, y, 0, 1, z, 0, 1)');
+    expect(r.handler).toBe('multivariable');
+    expect(r.args.operation).toBe('multiple_integral');
+    expect(r.args.bounds).toEqual([
+      { variable: 'x', lower: '0', upper: '1' },
+      { variable: 'y', lower: '0', upper: '1' },
+      { variable: 'z', lower: '0', upper: '1' },
+    ]);
+  });
 });
