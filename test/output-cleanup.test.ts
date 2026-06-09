@@ -42,6 +42,10 @@ describe('stripOrderTerm', () => {
     expect(stripOrderTerm('x^3/3')).toBe('x^3/3');
     expect(stripOrderTerm('(x-2)*(x+2)')).toBe('(x-2)*(x+2)');
   });
+  it('returns input unchanged when order_size has no preceding additive term', () => {
+    expect(stripOrderTerm('order_size(x)')).toBe('order_size(x)');
+    expect(stripOrderTerm('x*order_size(x)')).toBe('x*order_size(x)');
+  });
 });
 
 describe('listToSet', () => {

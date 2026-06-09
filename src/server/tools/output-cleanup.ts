@@ -3,7 +3,10 @@
  * model or the structured envelope. No I/O, no Giac calls — easy to unit-test.
  */
 
-/** Split `s` at top-level (depth-0) occurrences of `sep`, respecting (), [], {}. */
+/**
+ * Split `s` at top-level (depth-0) occurrences of `sep`, respecting (), [], {}.
+ * @param sep a single-character separator.
+ */
 export function splitTopLevel(s: string, sep: string): string[] {
   const parts: string[] = [];
   let depth = 0;
@@ -45,6 +48,7 @@ export function stripOrderTerm(expr: string): string {
     const ch = expr[i];
     if (ch === '(' || ch === '[' || ch === '{') depth++;
     else if (ch === ')' || ch === ']' || ch === '}') depth--;
+    // Assumes exact (fraction) terms — Giac series output is exact, never floating/scientific notation. A '-' in a hypothetical '1e-5' literal is therefore out of scope.
     else if (depth === 0 && (ch === '+' || ch === '-') && i > 0) cut = i;
   }
   if (cut === -1) return expr;
@@ -85,6 +89,7 @@ export function listToSet(raw: string): string {
     return tuples.length === 1 ? (tuples[0] as string) : `{${tuples.join(', ')}}`;
   }
 
+  // Mixed tuple/scalar lists (unusual Giac output) fall through here as-is.
   // Scalars.
   if (members.length === 1) return members[0];
   return `{${members.join(', ')}}`;
