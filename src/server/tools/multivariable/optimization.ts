@@ -171,6 +171,44 @@ export async function optimizationHandler(args: Record<string, unknown>) {
       });
     }
 
+    if (operation === 'lagrange') {
+      const constraint = args.constraint as string;
+      const value = (args.value as string) ?? '0';
+      if (!constraint) return formatErrorResponse("'constraint' is required for lagrange");
+      const cValidation = validateExpression(constraint);
+      if (cValidation) return formatErrorResponse(cValidation.message);
+
+      // Stationarity: grad(f) = L*grad(g) componentwise, plus constraint g = value.
+      const stationarity = variables.map(
+        (v) => `diff(${expression},${v})=L*diff(${constraint},${v})`
+      );
+      const system = `[${stationarity.join(',')},${constraint}=${value}]`;
+      const unknowns = `[${variables.join(',')},L]`;
+      const raw = await giac(`solve(${system},${unknowns})`);
+
+      const candidates = parseSolutionPoints(raw);
+      if (candidates.length === 0) {
+        return formatToolResponse({
+          result: 'No stationary points found in the real domain',
+          notes: [`System: ${system}`, `solve returned: ${raw}`],
+        });
+      }
+
+      // Report each candidate point (dropping the trailing lambda) and the objective value there.
+      const reported: string[] = [];
+      for (const cand of candidates) {
+        const coords = cand.slice(0, variables.length);
+        const sub = substList(variables, coords);
+        const fVal = await giac(`subst(${expression},${sub})`);
+        reported.push(`(${coords.join(', ')}): f = ${fVal}`);
+      }
+
+      return formatToolResponse({
+        result: reported.join('; '),
+        notes: [`Constraint: ${constraint} = ${value}`, `Candidates (Lagrange):`, ...reported],
+      });
+    }
+
     return formatErrorResponse(`Unknown optimization operation: ${operation}`);
   } catch (error) {
     return formatErrorResponse(error instanceof Error ? error.message : String(error));

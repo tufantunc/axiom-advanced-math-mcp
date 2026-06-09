@@ -108,4 +108,17 @@ describe('multivariable optimization', () => {
     });
     expect(r.isError).toBe(true);
   });
+
+  it('lagrange: max xy s.t. x+y=1 yields (1/2, 1/2)', async () => {
+    const r = await optimizationHandler({
+      operation: 'lagrange',
+      expression: 'x*y',
+      constraint: 'x+y',
+      value: '1',
+      variables: ['x', 'y'],
+    });
+    expect(r.isError).toBe(false);
+    const flat = text(r).replace(/\s/g, '');
+    expect(flat).toContain('1/2');
+  });
 });
