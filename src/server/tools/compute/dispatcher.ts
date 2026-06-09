@@ -18,6 +18,7 @@ import { linearRegressionHandler } from '../linear-regression.js';
 import { numberPropertiesHandler } from '../number-properties.js';
 import { sequenceIdentifyHandler } from '../sequence-identify.js';
 import { multivariableHandler } from '../multivariable/index.js';
+import { geometry3dHandler } from '../geometry3d/index.js';
 
 /**
  * Dispatch to an existing handler by key.
@@ -81,6 +82,9 @@ export async function dispatch(
 
     case 'multivariable':
       return (await multivariableHandler(args)) as McpResponse;
+
+    case 'geometry3d':
+      return (await geometry3dHandler(args)) as McpResponse;
 
     case 'giac_raw':
     default:

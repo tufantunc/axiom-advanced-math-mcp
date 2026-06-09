@@ -26,6 +26,7 @@ import {
   extractQuickCalc,
   extractFourier,
   extractMultivariable,
+  extractGeometry3d,
 } from './extractors.js';
 
 // ---------------------------------------------------------------------------
@@ -404,7 +405,33 @@ const rules: RouterRule[] = [
     extract: extractFourier,
   },
 
-  // 22. Geometry
+  // 22. 3D geometry — explicit 3D-named verbs. Placed before the 2D geometry rule.
+  // 'vector_norm' (not 'norm') avoids the matrix-norm rule; all names are distinct
+  // from 2D geometry verbs, so routing is unambiguous.
+  {
+    name: 'geometry3d',
+    test: (p) =>
+      startsWith(
+        p,
+        'distance3d',
+        'midpoint3d',
+        'dot',
+        'cross',
+        'vector_norm',
+        'angle_vectors',
+        'plane_from_points',
+        'point_plane_distance',
+        'line_plane_intersection',
+        'plane_plane_angle',
+        'line_line_distance',
+        'volume_tetrahedron',
+        'volume_sphere',
+        'volume_parallelepiped'
+      ),
+    extract: extractGeometry3d,
+  },
+
+  // 23. Geometry
   {
     name: 'geometry',
     test: (p) =>

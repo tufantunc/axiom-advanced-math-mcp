@@ -768,3 +768,47 @@ export function extractMultivariable(problem: string): RouteResult {
 
   return { handler: 'giac_raw', args: { expression: trimmed } };
 }
+
+// --- 3D geometry ---
+
+const GEOMETRY3D_OPS = [
+  'distance3d',
+  'midpoint3d',
+  'dot',
+  'cross',
+  'vector_norm',
+  'angle_vectors',
+  'plane_from_points',
+  'point_plane_distance',
+  'line_plane_intersection',
+  'plane_plane_angle',
+  'line_line_distance',
+  'volume_tetrahedron',
+  'volume_sphere',
+  'volume_parallelepiped',
+];
+
+/** Parse a bracket list "[a, b, c]" into a number array (paren/comma-aware via splitArgs). */
+function parseNumberList(s: string): number[] {
+  return splitArgs(s.trim().replace(/^\[/, '').replace(/\]$/, '')).map((x) => Number(x));
+}
+
+export function extractGeometry3d(problem: string): RouteResult {
+  const lc = problem.trim().toLowerCase();
+  const inner = extractFnArgs(problem);
+  const parts = splitArgs(inner);
+
+  const operation = GEOMETRY3D_OPS.find((name) => lc.startsWith(name)) ?? '';
+
+  const lists: number[][] = [];
+  let scalar: number | undefined;
+  for (const part of parts) {
+    if (part.trim().startsWith('[')) lists.push(parseNumberList(part));
+    else if (scalar === undefined && part.trim() !== '') scalar = Number(part);
+  }
+
+  return {
+    handler: 'geometry3d',
+    args: { operation, lists, ...(scalar !== undefined ? { scalar } : {}) },
+  };
+}
