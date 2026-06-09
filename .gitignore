@@ -141,3 +141,6 @@ vite.config.ts.timestamp-*
 # Build directories and files
 /tmp/giac-build
 .fallow/
+
+# git worktrees for isolated feature work
+.claude/worktrees/
