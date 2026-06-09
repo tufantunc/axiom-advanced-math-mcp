@@ -1,5 +1,6 @@
 import { toNumber, extractModelAnswer } from './answer-parser.js';
-import { gradeV2 } from './grader-v2.js';
+import { gradeV2Async } from './grader-v2.js';
+import { getDefaultGiacBridge } from './giac-bridge.js';
 
 const NUMERIC_TOLERANCE = 1e-6;
 
@@ -22,13 +23,18 @@ export interface GradeResult {
  * extractor sometimes strips useful structure (e.g., set expressions like
  * "\{1, 2\}" extracted to just "2"); the raw response retains it.
  */
-export function grade(modelResponse: string, groundTruth: string): GradeResult {
+export async function grade(modelResponse: string, groundTruth: string): Promise<GradeResult> {
   const predicted = extractModelAnswer(modelResponse);
   const ground = groundTruth.trim();
 
-  const v2Extracted = gradeV2(predicted, ground);
+  const bridge = await getDefaultGiacBridge();
+  const giacEval = (expr: string) => bridge.evaluate(expr);
+
+  const v2Extracted = await gradeV2Async(predicted, ground, { giacEval });
   const v2Raw =
-    predicted === modelResponse.trim() ? v2Extracted : gradeV2(modelResponse.trim(), ground);
+    predicted === modelResponse.trim()
+      ? v2Extracted
+      : await gradeV2Async(modelResponse.trim(), ground, { giacEval });
   const v2 = v2Extracted.match ? v2Extracted : v2Raw;
 
   return {
