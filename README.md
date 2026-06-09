@@ -3,7 +3,7 @@
 [![MIT License](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Node.js >=20](https://img.shields.io/badge/Node.js->=20-green.svg)](https://nodejs.org/)
 [![MCP](https://img.shields.io/badge/MCP-1.25.3-blue)](https://modelcontextprotocol.io/)
-[![Tests](https://img.shields.io/badge/Tests-137%20passed-green.svg)](https://github.com/anomalyco/axiom-advanced-math-mcp)
+[![Tests](https://img.shields.io/badge/Tests-510%20passed-green.svg)](https://github.com/anomalyco/axiom-advanced-math-mcp)
 
 Advanced mathematical computation engine for LLMs powered by the Model Context Protocol.
 
@@ -37,25 +37,36 @@ Full results: [`benchmark/results/`](benchmark/results/) and [`docs/superpowers/
 
 ## Features
 
-### 15 Tools with 76 Operations
+Axiom exposes **3 MCP tools**. Almost everything flows through `compute`, a single gateway that parses a CAS-style problem string and routes it to the right internal engine — so callers learn one tool, not dozens.
 
-| Tool                 | Operations       | Use Case                                                                  |
-| -------------------- | ---------------- | ------------------------------------------------------------------------- |
-| `quick_calc`         | 1                | Fast numeric evaluation (arithmetic, trig, matrices, units)               |
-| `calculus`           | 5                | Derivatives, integrals, limits, Taylor series, ODEs                       |
-| `algebra`            | 4                | Factor, simplify, expand, partial fractions                               |
-| `solve_equation`     | 1                | Single equation solving (real/complex domain)                             |
-| `solve_system`       | 1                | System of equations (linear/nonlinear)                                    |
-| `matrix`             | 16               | Determinant, inverse, eigenvalues, RREF, decompositions                   |
-| `number_theory`      | 3                | Prime factorization, number analysis, sequence identification             |
-| `combinatorics`      | 9                | C(n,k), P(n,k), Stirling, Bell, Catalan, derangements                     |
-| `probability_calc`   | 10 distributions | Binomial, normal, Poisson, geometric, chi-square, t, F, beta, exponential |
-| `hypothesis_testing` | 5 tests          | One/two/paired t-tests, chi-square independence, ANOVA                    |
-| `numerical_methods`  | 5                | Newton-Raphson, bisection, secant, Romberg, Simpson                       |
-| `advanced_solve`     | Raw CAS          | Giac/Xcas escape hatch (Laplace, vector calculus, etc.)                   |
-| `geometry`           | 11               | Distance, area, angle, line intersection, point-line distance             |
-| `exact_value`        | 3                | Decimal ↔ exact fraction/sqrt/pi conversion                               |
-| `plot_function`      | 1                | SVG function plotting                                                     |
+| Tool      | Purpose                                                                                                                                |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `compute` | Solve any math problem. Pass a CAS-style string (`solve(...)`, `diff(...)`, `det([[...]])`, `C(10,3)`, `2+3*sin(pi/4)`) or any Giac/Xcas expression. |
+| `verify`  | Independently check a mathematical claim (identity, solution, or computation) via symbolic and/or numeric methods.                    |
+| `plot`    | Render a 2D function graph as an SVG image.                                                                                            |
+
+### What `compute` covers
+
+`compute` recognizes CAS-style verbs and dispatches across these domains. Anything it doesn't recognize falls through to raw Giac/Xcas evaluation.
+
+| Domain                  | Verbs / examples                                                                                                                                              |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Arithmetic & units      | `2+3*sin(pi/4)`, `100 km/h to m/s`                                                                                                                             |
+| Equation solving        | `solve(x^2-4=0, x)`, `csolve(...)` (complex), `solve_system([x+y=5, x-y=1], [x,y])`                                                                            |
+| Calculus                | `diff`, `int`, `limit`, `taylor`, `desolve` (ODE)                                                                                                              |
+| Multivariable calculus  | `gradient`, `hessian`, `jacobian`, `divergence`, `curl`, `partial`, `iint`/`iiint` (multiple integrals), `critical_points`, `lagrange`, `tangent_plane`, `directional_derivative` |
+| Algebra                 | `factor`, `simplify`, `expand`, `partfrac`                                                                                                                     |
+| Linear algebra          | `det`, `inv`, `eigenvals`, `eigenvects`, `rref`, `rank`, `tran`, `ker`, `qr`, `lu`, `cholesky`, `svd`, `norm`, `cond`                                          |
+| Number theory           | `ifactor`, `isprime`, `euler`, `analyze`                                                                                                                       |
+| Combinatorics           | `C(n,k)`, `P(n,k)`, `stirling`, `bell`, `catalan`, `derangements`, `multinomial`                                                                               |
+| Probability             | `binomial`, `normal`, `poisson`, `geometric`, `hypergeometric`, `chi_square`, `student_t`, `f_distribution`, `beta`, `exponential`                            |
+| Hypothesis testing      | `t_test` (one/two/paired), `anova`, `chi_square_test`                                                                                                          |
+| Numerical methods       | `newton`, `bisection`, `secant`, `romberg`, `simpson`                                                                                                          |
+| 2D geometry             | `distance`, `midpoint`, `slope`, `area_*`, `perimeter`, `circumference`, `line_intersection`, `point_line_distance`, `angle_between_lines`                     |
+| 3D geometry             | `distance3d`, `midpoint3d`, `dot`, `cross`, `vector_norm`, `angle_vectors`, `plane_from_points`, `point_plane_distance`, `line_plane_intersection`, `plane_plane_angle`, `line_line_distance`, `volume_tetrahedron`, `volume_sphere`, `volume_parallelepiped` |
+| Transforms & series     | `laplace`, `ilaplace`, `fourier`/`fft`/`ifft`, `sum`, `product`                                                                                                |
+| Exact values            | `to_exact`, `to_decimal`, `simplify_fraction`                                                                                                                  |
+| Regression & sequences  | `linear_regression`/`fit`, `polynomial_regression`, `sequence` (pattern identification)                                                                       |
 
 ---
 
@@ -140,6 +151,61 @@ npm run inspect
 
 ---
 
+## Tool Reference
+
+### compute
+
+The single gateway for all math. Pass a CAS-style problem string; the router parses it and dispatches to the right engine.
+
+| Parameter   | Type                                       | Description                                                                                                   |
+| ----------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| `problem`   | string (**required**)                      | CAS-style problem, e.g. `solve(x^2-4=0, x)`, `diff(x^3, x)`, `det([[1,2],[3,4]])`, `gradient(x^2+y^2, [x,y])`. |
+| `domain`    | `real` \| `complex` \| `numeric` \| `exact` | Domain hint (default `real`). `complex` → complex solutions; `numeric` → force numerical methods; `exact` → exact symbolic form. |
+| `precision` | integer 1–50                               | Decimal places (default 10).                                                                                  |
+| `format`    | `text` \| `latex` \| `json`                | Output format (default `text`). `json` returns a structured envelope.                                         |
+
+**Examples:**
+
+```json
+{ "problem": "solve(x^2 - 5*x + 6 = 0, x)" }
+{ "problem": "int(x^2*sin(x), x)", "format": "latex" }
+{ "problem": "lagrange(x*y, x+y, 1, [x, y])" }
+{ "problem": "volume_tetrahedron([0,0,0],[1,0,0],[0,1,0],[0,0,1])" }
+{ "problem": "binomial cdf n=10 k=3 p=0.5", "format": "json" }
+```
+
+### verify
+
+Independently check a mathematical claim. Useful as a second, tool-grounded opinion on a result the model produced.
+
+| Parameter | Type                               | Description                                                                                                          |
+| --------- | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `claim`   | string (**required**)              | The claim, e.g. `"sin(x)^2 + cos(x)^2 = 1"` (identity), `"x=2 satisfies x^2-4=0"` (solution), `"diff(x^3, x) = 3*x^2"` (computation). |
+| `method`  | `numeric` \| `symbolic` \| `both`  | Verification method (default `both`).                                                                                |
+
+Returns whether the claim is verified, a confidence level, and the checks performed.
+
+### plot
+
+Render a 2D function as an SVG image.
+
+| Parameter        | Type                  | Description                                  |
+| ---------------- | --------------------- | -------------------------------------------- |
+| `expression`     | string (**required**) | Function to plot, e.g. `"sin(x)"`, `"x^2 - 3*x + 1"`. |
+| `variable`       | string                | Variable name (default `x`).                 |
+| `x_min`, `x_max` | number                | X range (default −10 … 10).                  |
+| `y_min`, `y_max` | number                | Y range (auto-detected if omitted).          |
+| `width`, `height`| number                | Image size in px (default 600 × 400).        |
+| `title`          | string                | Optional chart title.                        |
+
+Returns a base64-encoded SVG image (axes, grid, labels, asymptote detection) plus a text caption.
+
+### Prompts
+
+The server also registers guided MCP **prompts** that chain `compute`/`verify` for multi-step workflows: `solve-step-by-step`, `analyze-function`, `verify-identity`, `convert-units`, `analyze-dataset`, `solve-ode-system`, and `regression-workflow`.
+
+---
+
 ## Run Benchmarks
 
 Default production recipe (grader-v2 included automatically):
@@ -186,391 +252,40 @@ Each phase's per-problem analysis is in `docs/superpowers/specs/2026-05-*-result
 
 ---
 
-## Tool Reference
-
-### quick_calc
-
-Fast numerical calculations with exact-value detection.
-
-```json
-{
-  "expression": "2 * sin(30deg) + 5",
-  "units": "auto",
-  "precision": 10,
-  "format": "text"
-}
-```
-
-**Features:**
-
-- Arithmetic, trigonometry, logarithms, complex numbers
-- Unit conversions (km/h, inches, pounds, etc.)
-- Natural language detection (rejects non-math input)
-- Automatic exact form: `400/11` → `36.36...`
-
----
-
-### calculus
-
-Symbolic calculus operations.
-
-```json
-{
-  "operation": "differentiate",
-  "expression": "x^2 + sin(x)",
-  "variable": "x",
-  "order": 2
-}
-```
-
-**Operations:**
-
-| Operation       | Example                                                                            | Description                     |
-| --------------- | ---------------------------------------------------------------------------------- | ------------------------------- |
-| `differentiate` | `{"operation":"differentiate","expression":"x^3","order":2}`                       | Derivative (any order, partial) |
-| `integrate`     | `{"operation":"integrate","expression":"x^2","lower_bound":"0","upper_bound":"1"}` | Definite/indefinite integral    |
-| `limit`         | `{"operation":"limit","expression":"sin(x)/x","point":"0","direction":"+"}`        | Two-sided/one-sided limit       |
-| `taylor`        | `{"operation":"taylor","expression":"exp(x)","point":"0","order":5}`               | Taylor/Maclaurin series         |
-| `solve_ode`     | `{"operation":"solve_ode","equation":"y'=2*x","initial_conditions":"y(0)=1"}`      | ODE solver                      |
-
----
-
-### algebra
-
-Algebraic manipulation.
-
-```json
-{
-  "operation": "factor",
-  "expression": "x^2 - 4",
-  "complex": false
-}
-```
-
-**Operations:**
-
-| Operation           | Example                                                                     | Description                     |
-| ------------------- | --------------------------------------------------------------------------- | ------------------------------- |
-| `factor`            | `{"operation":"factor","expression":"x^4-1"}`                               | Factor into irreducible factors |
-| `simplify`          | `{"operation":"simplify","expression":"sin(x)^2+cos(x)^2"}`                 | Simplify to simplest form       |
-| `expand`            | `{"operation":"expand","expression":"(x+1)^3"}`                             | Expand products and powers      |
-| `partial_fractions` | `{"operation":"partial_fractions","expression":"1/(x^2-1)","variable":"x"}` | Partial fraction decomposition  |
-
----
-
-### solve_equation
-
-Single equation solving.
-
-```json
-{
-  "equation": "x^2 - 4 = 0",
-  "variable": "x",
-  "domain": "real"
-}
-```
-
-**Features:**
-
-- Real or complex domain (`solve` vs `csolve`)
-- Symbolic, exact solutions
-- Supports trigonometric, exponential, logarithmic equations
-
----
-
-### solve_system
-
-System of equations.
-
-```json
-{
-  "equations": ["x + y = 5", "x - y = 1"],
-  "variables": ["x", "y"]
-}
-```
-
-**Features:**
-
-- Linear and nonlinear systems
-- Returns all solutions
-
----
-
-### matrix
-
-Linear algebra operations (16 total).
-
-```json
-{
-  "operation": "determinant",
-  "matrix": "[[1,2],[3,4]]"
-}
-```
-
-**Operations:**
-
-| Operation                              | Description              |
-| -------------------------------------- | ------------------------ |
-| `determinant`                          | Matrix determinant       |
-| `inverse`                              | Matrix inverse           |
-| `eigenvalues`                          | Eigenvalues              |
-| `eigenvectors`                         | Eigenvectors             |
-| `rref`                                 | Reduced row echelon form |
-| `rank`                                 | Matrix rank              |
-| `transpose`                            | Matrix transpose         |
-| `nullspace`                            | Nullspace (kernel)       |
-| `qr`, `lu`, `cholesky`, `svd`          | Matrix decompositions    |
-| `norm_frobenius`, `norm_1`, `norm_inf` | Matrix norms             |
-| `condition_number`                     | Condition number         |
-
----
-
-### number_theory
-
-Integer analysis and sequence identification.
-
-```json
-{
-  "operation": "analyze",
-  "number": 2024
-}
-```
-
-**Operations:**
-
-| Operation           | Example                                                      | Description                                       |
-| ------------------- | ------------------------------------------------------------ | ------------------------------------------------- |
-| `prime_factorize`   | `{"operation":"prime_factorize","number":2024}`              | Prime factorization                               |
-| `analyze`           | `{"operation":"analyze","number":28}`                        | Primality, divisors, totient, perfect square/cube |
-| `sequence_identify` | `{"operation":"sequence_identify","sequence":[1,1,2,3,5,8]}` | Identify pattern (Fibonacci, arithmetic, etc.)    |
-
----
-
-### combinatorics
-
-Exact combinatorial calculations.
-
-```json
-{
-  "operation": "combinations",
-  "n": 10,
-  "k": 3
-}
-```
-
-**Operations:**
-
-| Operation                           | Example                                               | Description            |
-| ----------------------------------- | ----------------------------------------------------- | ---------------------- |
-| `combinations`                      | `{"operation":"combinations","n":10,"k":3}`           | C(n,k) = n!/(k!(n-k)!) |
-| `permutations`                      | `{"operation":"permutations","n":10,"k":3}`           | P(n,k) = n!/(n-k)!     |
-| `multinomial`                       | `{"operation":"multinomial","n":10,"groups":[3,3,4]}` | n!/(k1!_k2!_...)       |
-| `stirling_first`, `stirling_second` | Stirling numbers                                      |
-| `bell_number`, `catalan_number`     | Special sequences                                     |
-| `derangements`, `partition_count`   | Advanced combinatorics                                |
-
----
-
-### probability_calc
-
-Probability distributions.
-
-```json
-{
-  "distribution": "binomial",
-  "operation": "cdf",
-  "params": { "n": 10, "k": 3, "p": 0.5 }
-}
-```
-
-**Distributions:**
-
-| Distribution                                | Parameters                          | Operations                         |
-| ------------------------------------------- | ----------------------------------- | ---------------------------------- |
-| `binomial`                                  | `{n, k, p}`                         | pmf, cdf, expected_value, variance |
-| `normal`                                    | `{x, mu, sigma}`                    | pmf, cdf, quantile                 |
-| `poisson`                                   | `{k, lambda}`                       | pmf, cdf, quantile                 |
-| `geometric`                                 | `{k, p}`                            | pmf, cdf, quantile                 |
-| `hypergeometric`                            | `{N, K, n, k}`                      | pmf, cdf                           |
-| `chi_square`, `student_t`, `f_distribution` | `{df, x}` or `{df, p}`              | cdf, quantile                      |
-| `beta`, `exponential`                       | `{alpha, beta, x}` or `{lambda, x}` | cdf, quantile                      |
-
----
-
-### hypothesis_testing
-
-Statistical hypothesis tests.
-
-```json
-{
-  "test": "one_sample_t",
-  "data": { "sample1": [1, 2, 3, 4, 5], "mu0": 3 },
-  "significance": 0.05
-}
-```
-
-**Tests:**
-
-| Test                      | Required Data        | Description                            |
-| ------------------------- | -------------------- | -------------------------------------- |
-| `one_sample_t`            | `sample1`, `mu0`     | Test if mean = hypothesized value      |
-| `two_sample_t`            | `sample1`, `sample2` | Welch's t-test (unequal variance)      |
-| `paired_t`                | `sample1`, `sample2` | Before/after paired measurements       |
-| `chi_square_independence` | `contingency_table`  | Test independence in contingency table |
-| `one_way_anova`           | `groups`             | Compare means of 3+ groups             |
-
----
-
-### numerical_methods
-
-Numerical fallback methods.
-
-```json
-{
-  "method": "newton_raphson",
-  "expression": "x^2 - 2",
-  "initial_guess": 1.0,
-  "tolerance": 1e-10
-}
-```
-
-**Methods:**
-
-| Method                  | Type         | Description                                       |
-| ----------------------- | ------------ | ------------------------------------------------- |
-| `newton_raphson`        | Root finding | Fast, needs derivative and initial guess          |
-| `bisection`             | Root finding | Guaranteed convergence, needs sign-change bracket |
-| `secant`                | Root finding | No derivative needed, needs two starting points   |
-| `romberg_integration`   | Integration  | Adaptive, highly accurate                         |
-| `numerical_integration` | Integration  | Simpson's rule with configurable subintervals     |
-
----
-
-### advanced_solve
-
-Raw Giac/Xcas CAS access.
-
-```json
-{
-  "expression": "laplace(t^2*exp(3*t), t, s)",
-  "format": "latex",
-  "steps": false
-}
-```
-
-**Use cases:**
-
-- Laplace transforms
-- Vector calculus (div, grad, curl)
-- Polynomial operations
-- Summation/products
-- Any operation not covered by specialized tools
-
----
-
-### geometry
-
-2D geometry calculations.
-
-```json
-{
-  "operation": "distance",
-  "points": [
-    [0, 0],
-    [3, 4]
-  ]
-}
-```
-
-**Operations:**
-
-| Operation             | Parameters                                             | Description                         |
-| --------------------- | ------------------------------------------------------ | ----------------------------------- |
-| `distance`            | `points: [[x1,y1],[x2,y2]]`                            | Distance between two points         |
-| `midpoint`            | `points: [[x1,y1],[x2,y2]]`                            | Midpoint of segment                 |
-| `slope`               | `points: [[x1,y1],[x2,y2]]`                            | Slope of line                       |
-| `area_triangle`       | `points: [[x1,y1],[x2,y2],[x3,y3]]` or `base`+`height` | Area from vertices or base/height   |
-| `area_polygon`        | `points: [[x1,y1],...]` (ordered)                      | Area via shoelace formula           |
-| `area_circle`         | `radius` or `diameter`                                 | Area from radius/diameter           |
-| `perimeter_polygon`   | `points: [[x1,y1],...]`                                | Perimeter from vertices             |
-| `circumference`       | `radius` or `diameter`                                 | Circumference from radius/diameter  |
-| `line_intersection`   | `line1: [a,b,c]`, `line2: [a,b,c]`                     | Intersection of two lines ax+by+c=0 |
-| `point_line_distance` | `points[0]`, `line1`                                   | Distance from point to line         |
-| `angle_between_lines` | `line1`, `line2`                                       | Angle (degrees) between two lines   |
-
----
-
-### exact_value
-
-Exact/decimal conversion.
-
-```json
-{
-  "operation": "to_exact",
-  "value": "0.3333333333"
-}
-```
-
-**Operations:**
-
-| Operation           | Example                                             | Description                             |
-| ------------------- | --------------------------------------------------- | --------------------------------------- |
-| `to_exact`          | `{"operation":"to_exact","value":"0.3333333333"}`   | Convert decimal to fraction/sqrt/pi     |
-| `to_decimal`        | `{"operation":"to_decimal","value":"sqrt(2)/2"}`    | Evaluate symbolic expression to decimal |
-| `simplify_fraction` | `{"operation":"simplify_fraction","value":"12/18"}` | Reduce fraction to lowest terms         |
-
----
-
-### plot_function
-
-SVG function plotting.
-
-```json
-{
-  "expression": "sin(x)",
-  "x_min": -10,
-  "x_max": 10,
-  "width": 600,
-  "height": 400
-}
-```
-
-**Features:**
-
-- Returns base64-encoded SVG image
-- Auto-detects y-axis range
-- Handles discontinuities (asymptote detection)
-- Axes, grid, and labels included
-
----
-
 ## Architecture
 
-### Two-Layer Computation Engine
+### Compute gateway → router → domain handlers
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    MCP Protocol Layer                        │
-│  (stdio / HTTP / SSE)                                       │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    Tool Handlers (15 tools)                  │
-│  - quick_calc, calculus, algebra, solve_*, matrix, etc.     │
+│              MCP Protocol Layer (stdio / HTTP)               │
 └─────────────────────────────────────────────────────────────┘
                               │
         ┌─────────────────────┼─────────────────────┐
         ▼                     ▼                     ▼
-┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐
-│   math.js        │  │   Giac/Xcas      │  │   Exact Engine   │
-│   (numerical)    │  │   (symbolic)     │  │   (fractions)    │
-└──────────────────┘  └──────────────────┘  └──────────────────┘
+   ┌─────────┐          ┌──────────┐          ┌─────────┐
+   │ compute │          │  verify  │          │  plot   │
+   └────┬────┘          └──────────┘          └─────────┘
+        │  route() → extract args → dispatch
+        ▼
+┌─────────────────────────────────────────────────────────────┐
+│  Domain handlers: calculus, algebra, matrix, multivariable,  │
+│  geometry / geometry3d, combinatorics, probability,          │
+│  hypothesis testing, number theory, numerical methods, …     │
+└─────────────────────────────────────────────────────────────┘
+        │                     │                     │
+        ▼                     ▼                     ▼
+┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+│   math.js    │     │  Giac/Xcas   │     │ Exact engine │
+│ (numerical)  │     │  (symbolic)  │     │ (fractions)  │
+└──────────────┘     └──────────────┘     └──────────────┘
 ```
+
+`compute` never asks the caller to pick a handler. The router matches the problem string against ordered rules, the matching extractor parses arguments, and the dispatcher calls the corresponding domain handler. Unmatched input falls through to raw Giac/Xcas.
 
 ### Response Format
 
-All tools return standardized responses:
+Text-format responses are line-structured so LLMs (and the benchmark grader) can extract answers reliably:
 
 ```json
 {
@@ -584,8 +299,6 @@ All tools return standardized responses:
   "isError": false
 }
 ```
-
-This format helps LLMs extract answers reliably via the grader.
 
 ---
 
@@ -641,7 +354,7 @@ npm run benchmark:openrouter
 | `npm run dev`           | Run in development mode (tsx)  |
 | `npm run start:http`    | Run HTTP server                |
 | `npm run dev:http`      | Run HTTP server in dev mode    |
-| `npm test`              | Run all tests (137 tests)      |
+| `npm test`              | Run all tests                  |
 | `npm run test:coverage` | Run tests with coverage report |
 | `npm run lint`          | Lint with oxlint               |
 | `npm run lint:fix`      | Auto-fix linting issues        |
@@ -660,7 +373,7 @@ npm run test:watch
 npm run test:coverage
 ```
 
-**Test coverage:** 137 tests, 100% pass rate.
+**Test coverage:** 510 tests, 100% pass rate.
 
 ### WASM Build (Giac)
 
