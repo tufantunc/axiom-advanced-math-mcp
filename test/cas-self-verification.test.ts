@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { giacEngine } from '../src/server/giac/index.js';
 import { evalWithLatex } from '../src/server/tools/giac-eval.js';
+import type { VerificationResult } from '../src/server/tools/self-verify.js';
 
 beforeAll(async () => {
   await giacEngine.initialize();
@@ -27,5 +28,15 @@ describe('evalWithLatex — verify callback + methodNote', () => {
       verify: async () => ({ verified: true, method: 'substitution', detail: '2/2' }),
     });
     expect(allText(r)).toContain('Method: csolve (escalated)');
+  });
+  it('does not re-invoke verify on a cache hit', async () => {
+    let calls = 0;
+    const verifyFn = async (): Promise<VerificationResult> => {
+      calls++;
+      return { verified: true, method: 'expand', detail: 'x' };
+    };
+    await evalWithLatex({ giacExpr: 'simplify(2*x+3*x)', operation: 'simplify', verify: verifyFn });
+    await evalWithLatex({ giacExpr: 'simplify(2*x+3*x)', operation: 'simplify', verify: verifyFn });
+    expect(calls).toBe(1);
   });
 });

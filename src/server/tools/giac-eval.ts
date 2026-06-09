@@ -10,7 +10,11 @@ export interface EvalOptions {
   errorMessage?: string;
   /** Optional caller-supplied cleanup applied to the raw result (e.g. solve's list→set). */
   resultTransform?: (raw: string) => string;
-  /** Optional round-trip verification run on the (final) result. Never throws. */
+  /**
+   * Optional round-trip verification run on the (final) result. Never throws.
+   * The first result for a given giacExpr is cached and reused — callers must
+   * use a consistent verify strategy per expression.
+   */
   verify?: (result: string) => Promise<VerificationResult>;
   /** Optional note about which method produced the result (e.g. escalation). */
   methodNote?: string;
