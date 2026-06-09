@@ -256,21 +256,36 @@ function cleanExtracted(s: string): string {
  * 5. Last number in the text
  */
 export function extractModelAnswer(text: string): string {
-  // 1. \boxed{...}
-  const boxedIdx = text.lastIndexOf('\\boxed{');
-  if (boxedIdx !== -1) {
-    let depth = 0;
-    const start = boxedIdx + 7;
-    let i = start;
-    for (; i < text.length; i++) {
-      if (text[i] === '{') depth++;
-      else if (text[i] === '}') {
-        if (depth === 0) break;
-        depth--;
+  // 1. \boxed{...} — prefer the LAST fully-balanced box. A model that copies a
+  //    long expression sometimes emits a complete box followed by a truncated
+  //    one; fall back past the incomplete trailing box to the last complete one.
+  {
+    let searchFrom = 0;
+    let lastComplete: string | null = null;
+    for (;;) {
+      const boxedIdx = text.indexOf('\\boxed{', searchFrom);
+      if (boxedIdx === -1) break;
+      const start = boxedIdx + 7;
+      let depth = 0;
+      let i = start;
+      let closed = false;
+      for (; i < text.length; i++) {
+        if (text[i] === '{') depth++;
+        else if (text[i] === '}') {
+          if (depth === 0) {
+            closed = true;
+            break;
+          }
+          depth--;
+        }
       }
+      if (closed) {
+        const inner = text.slice(start, i).trim();
+        if (inner) lastComplete = inner;
+      }
+      searchFrom = start;
     }
-    const boxed = text.slice(start, i).trim();
-    if (boxed) return cleanExtracted(boxed);
+    if (lastComplete !== null) return cleanExtracted(lastComplete);
   }
 
   // 2. #### N (GSM8K)

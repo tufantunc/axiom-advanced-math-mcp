@@ -89,7 +89,8 @@ export function listToSet(raw: string): string {
     return tuples.length === 1 ? (tuples[0] as string) : `{${tuples.join(', ')}}`;
   }
 
-  // Mixed tuple/scalar lists (unusual Giac output) fall through here as-is.
+  // Mixed tuple/scalar lists (non-existent in real solve output) are joined as
+  // a set without unwrapping the tuple member — best-effort only.
   // Scalars.
   if (members.length === 1) return members[0];
   return `{${members.join(', ')}}`;
