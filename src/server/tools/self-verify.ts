@@ -2,11 +2,14 @@ import { giacEngine } from '../giac/index.js';
 
 export interface VerificationResult {
   verified: boolean;
-  method: string; // 'substitution' | 'expand' | 'differentiation'
+  method: 'substitution' | 'expand' | 'differentiation';
   detail: string;
 }
 
-/** Normalize "lhs=rhs" to "(lhs)-(rhs)"; wrap in parens if no '='. */
+/**
+ * Normalize "lhs=rhs" to "(lhs)-(rhs)"; wrap in parens if no '='.
+ * Assumes a single '=' (a well-formed equation); only the first '=' is used.
+ */
 function toZeroForm(equation: string): string {
   const idx = equation.indexOf('=');
   if (idx !== -1) {
@@ -17,12 +20,15 @@ function toZeroForm(equation: string): string {
   return `(${equation})`;
 }
 
-/** True iff evalf(subst(zeroForm, substs)) is numerically ~0. Never throws. */
+/** True iff evalf(subst(zeroForm, substs)) is ~0, with a symbolic fallback. Never throws. */
 async function isZeroAfterSubst(zeroForm: string, substs: string): Promise<boolean> {
   try {
     const r = await giacEngine.evaluate(`evalf(subst(${zeroForm},${substs}))`);
     const n = parseFloat(r);
-    return !isNaN(n) && Math.abs(n) < 1e-8;
+    if (!isNaN(n)) return Math.abs(n) < 1e-8;
+    // Non-numeric result (e.g. a complex residual like "0.+0.*i"): fall back to
+    // a symbolic zero check on the un-evalf'd substitution.
+    return await simplifiesToZero(`subst(${zeroForm},${substs})`);
   } catch {
     return false;
   }

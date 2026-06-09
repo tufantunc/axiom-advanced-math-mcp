@@ -19,7 +19,9 @@ describe('verifySolveSet', () => {
     expect(v.detail).toContain('2/2');
   });
   it('verifies complex roots', async () => {
-    expect((await verifySolveSet('x^2+1', 'x', ['i', '-i'])).verified).toBe(true);
+    const v = await verifySolveSet('x^2+1', 'x', ['i', '-i']);
+    expect(v.verified).toBe(true);
+    expect(v.detail).toContain('2/2');
   });
   it('rejects a wrong root', async () => {
     expect((await verifySolveSet('x^2-4', 'x', ['-2', '3'])).verified).toBe(false);
@@ -39,6 +41,9 @@ describe('verifySystem', () => {
   });
   it('rejects a tuple/variable count mismatch', async () => {
     expect((await verifySystem(['x+y=3'], ['x', 'y'], ['2'])).verified).toBe(false);
+  });
+  it('rejects a wrong tuple', async () => {
+    expect((await verifySystem(['x+y=3', 'x-y=1'], ['x', 'y'], ['3', '1'])).verified).toBe(false);
   });
 });
 
