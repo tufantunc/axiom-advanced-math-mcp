@@ -4,7 +4,7 @@ import { evalWithLatex } from '../src/server/tools/giac-eval.js';
 import type { VerificationResult } from '../src/server/tools/self-verify.js';
 import { algebraHandler } from '../src/server/tools/algebra.js';
 import { calculusHandler } from '../src/server/tools/calculus.js';
-import { solveEquationHandler, solveSystemHandler } from '../src/server/tools/solve.js';
+import { solveEquationHandler, solveSystemHandler, parseSolutions, parseTuple } from '../src/server/tools/solve.js';
 
 beforeAll(async () => {
   await giacEngine.initialize();
@@ -89,5 +89,21 @@ describe('solve escalation + verification (D + C)', () => {
     const t = allText(r);
     expect(t).toContain('Result: (2, 1)');
     expect(t).toContain('Verified: ✓');
+  });
+});
+
+describe('solve parse helpers', () => {
+  it('parseSolutions handles list[...] and bare [...] shapes', () => {
+    expect(parseSolutions('list[-2,2]')).toEqual(['-2', '2']);
+    expect(parseSolutions('list[i,-i]')).toEqual(['i', '-i']);
+    expect(parseSolutions('[0.739085133215]')).toEqual(['0.739085133215']); // fsolve shape
+    expect(parseSolutions('[]')).toEqual([]);
+  });
+  it('parseSolutions only strips the list[ wrapper, not a name starting with list', () => {
+    expect(parseSolutions('listvar')).toEqual(['listvar']);
+  });
+  it('parseTuple parses a single tuple and rejects non-tuples', () => {
+    expect(parseTuple('(2, 1)')).toEqual(['2', '1']);
+    expect(parseTuple('{-2, 2}')).toEqual([]);
   });
 });

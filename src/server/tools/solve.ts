@@ -6,9 +6,9 @@ import { listToSet, splitTopLevel } from './output-cleanup.js';
 import { verifySolveSet, verifySystem, type VerificationResult } from './self-verify.js';
 
 /** Parse a raw Giac solve result (list[...] / [] / [..]) into top-level member strings. */
-function parseSolutions(raw: string): string[] {
+export function parseSolutions(raw: string): string[] {
   let inner = raw.trim();
-  if (inner.startsWith('list')) inner = inner.slice(4).trim();
+  if (inner.startsWith('list[')) inner = inner.slice(4).trim();
   if (inner.startsWith('[') && inner.endsWith(']')) inner = inner.slice(1, -1).trim();
   if (inner === '') return [];
   return splitTopLevel(inner, ',')
@@ -17,7 +17,7 @@ function parseSolutions(raw: string): string[] {
 }
 
 /** Parse a clean tuple "(a, b)" into ['a','b']; returns [] if not a single tuple. */
-function parseTuple(s: string): string[] {
+export function parseTuple(s: string): string[] {
   const t = s.trim();
   if (t.startsWith('(') && t.endsWith(')')) {
     return splitTopLevel(t.slice(1, -1), ',')
@@ -50,6 +50,8 @@ export async function solveEquationHandler(args: Record<string, unknown>) {
     const validationError = validateExpression(equation);
     if (validationError) return formatErrorResponse(validationError.message);
 
+    // Escalation ladder. In practice Giac's solve already returns numeric roots
+    // for many transcendental equations, so the fsolve fallback rarely fires.
     const candidates: Candidate[] =
       domain === 'complex'
         ? [{ fn: 'csolve' }, { fn: 'fsolve', note: 'fsolve (numeric fallback)' }]
