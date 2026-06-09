@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { route } from '../src/server/tools/compute/router.js';
+import { computeHandler } from '../src/server/tools/compute/index.js';
 
 describe('Router — geometry3d', () => {
   it('routes distance3d() to geometry3d', () => {
@@ -61,5 +62,20 @@ describe('Router — geometry3d', () => {
   it('still routes matrix norm() to matrix', () => {
     const r = route('norm([[1,2],[3,4]])');
     expect(r.handler).toBe('matrix');
+  });
+});
+
+describe('compute gateway — geometry3d end-to-end', () => {
+  it('cross product through compute()', async () => {
+    const r = await computeHandler({ problem: 'cross([1,0,0], [0,1,0])' });
+    expect(r.isError).toBe(false);
+    const flat = r.content.map((c: { text: string }) => c.text).join('\n').replace(/\s/g, '');
+    expect(flat).toContain('[0,0,1]');
+  });
+
+  it('volume_tetrahedron through compute()', async () => {
+    const r = await computeHandler({ problem: 'volume_tetrahedron([0,0,0],[1,0,0],[0,1,0],[0,0,1])' });
+    expect(r.isError).toBe(false);
+    expect(r.content.map((c: { text: string }) => c.text).join('\n')).toContain('0.1666');
   });
 });
