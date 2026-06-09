@@ -1,4 +1,5 @@
 import type { ComputeEnvelope, McpResponse, ResultType } from './types.js';
+import { splitTopLevel } from '../output-cleanup.js';
 
 // ---------------------------------------------------------------------------
 // Result type mapping — handler key → result type
@@ -116,11 +117,15 @@ function buildData(resultType: ResultType, fields: ParsedFields): Record<string,
       return { expression: fields.result };
 
     case 'set': {
-      // Try to parse solutions from Giac list format: [2, -2] or list(2,-2)
       let solutions = [fields.result];
-      const listMatch = fields.result.match(/^\[(.+)\]$/) || fields.result.match(/^list\((.+)\)$/);
-      if (listMatch) {
-        solutions = listMatch[1].split(',').map((s) => s.trim());
+      const trimmed = fields.result.trim();
+      const setMatch =
+        trimmed.match(/^\{(.+)\}$/) ||
+        trimmed.match(/^\[(.+)\]$/) ||
+        trimmed.match(/^list\[(.+)\]$/) ||
+        trimmed.match(/^list\((.+)\)$/);
+      if (setMatch) {
+        solutions = splitTopLevel(setMatch[1], ',').map((s) => s.trim());
       }
       return { solutions, count: solutions.length };
     }
