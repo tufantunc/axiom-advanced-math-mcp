@@ -24,7 +24,7 @@ import path from 'path';
 import { buildConfig } from './config.js';
 import { createProvider } from './providers/index.js';
 import { loadGSM8K } from './datasets/gsm8k.js';
-import { loadMATH } from './datasets/math.js';
+import { loadMATH, activeMathLevels } from './datasets/math.js';
 import { loadOmniMATH } from './datasets/omni-math.js';
 import { loadCAS } from './datasets/cas-problems.js';
 import { gradeNumeric, grade } from './graders/grader.js';
@@ -103,9 +103,10 @@ async function main(): Promise<void> {
 
   // ── Load datasets ──────────────────────────────────────────────
   log('Loading datasets…');
+  const mathSel = activeMathLevels(config.limits);
   const [gsm8kProblems, mathProblems, omniProblems] = await Promise.all([
     loadGSM8K(config.limits.gsm8k, config.cacheDir),
-    loadMATH([3, 4, 5], config.limits.mathLevel3, config.cacheDir),
+    loadMATH(mathSel.levels, mathSel.limitPerLevel, config.cacheDir),
     loadOmniMATH(config.limits.omniMath, config.cacheDir),
   ]);
   const casProblems = loadCAS(config.limits.cas);

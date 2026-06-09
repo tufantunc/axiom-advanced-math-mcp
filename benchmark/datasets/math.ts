@@ -11,6 +11,31 @@ export interface MATHProblem {
 }
 
 /**
+ * Derive which MATH levels to load (and the per-level limit) from the resolved
+ * per-level limits. A level is loaded iff its limit is > 0, so passing
+ * `--math-l4 --math-l5` (which leaves `mathLevel3 = 0`) correctly loads L4+L5
+ * only — instead of the old bug where the single `mathLevel3` limit was applied
+ * to all three levels, yielding 0 problems whenever L3 was not requested.
+ * Sizes are uniform per size mode, so the active levels share one limit.
+ */
+export function activeMathLevels(limits: {
+  mathLevel3: number;
+  mathLevel4: number;
+  mathLevel5: number;
+}): { levels: MATHLevel[]; limitPerLevel: number } {
+  const entries: [MATHLevel, number][] = [
+    [3, limits.mathLevel3],
+    [4, limits.mathLevel4],
+    [5, limits.mathLevel5],
+  ];
+  const active = entries.filter(([, n]) => n > 0);
+  return {
+    levels: active.map(([lvl]) => lvl),
+    limitPerLevel: active.length > 0 ? Math.max(...active.map(([, n]) => n)) : 0,
+  };
+}
+
+/**
  * EleutherAI/hendrycks_math — public mirror of the MATH dataset.
  * Split into 7 configs by category.
  */
