@@ -17,7 +17,6 @@ export async function evalWithLatex(options: EvalOptions) {
   // Transformed results are cached under a separate key so a transformed call
   // and a raw call for the same giacExpr never return each other's result.
   const cacheKey = resultTransform ? `${giacExpr} transformed` : giacExpr;
-
   const cached = evaluationCache.get(cacheKey);
   if (cached) {
     return formatToolResponse({
@@ -32,8 +31,8 @@ export async function evalWithLatex(options: EvalOptions) {
     return formatErrorResponse(errorMessage ?? `Could not compute ${operation}`);
   }
 
-  // Cleanup, in order: caller transform (solve list→set) → generic order_size strip.
-  if (resultTransform) result = resultTransform(result);
+  // Strip the series big-O remainder BEFORE computing latex — the cleaned
+  // polynomial re-parses in Giac and yields clean latex.
   result = stripOrderTerm(result);
 
   let latex: string | undefined;
@@ -48,6 +47,11 @@ export async function evalWithLatex(options: EvalOptions) {
   } catch {
     /* best effort */
   }
+
+  // Apply the caller transform AFTER latex — e.g. solve's list→set yields set
+  // notation ({-2, 2}) that Giac's latex() cannot re-parse, so latex must be
+  // derived from the raw (pre-transform) result.
+  if (resultTransform) result = resultTransform(result);
 
   evaluationCache.set(cacheKey, { result, latex });
 

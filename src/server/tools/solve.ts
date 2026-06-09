@@ -1,6 +1,7 @@
 import { formatErrorResponse } from './response-formatter.js';
 import { validateExpression } from './symbolic/validator.js';
 import { evalWithLatex } from './giac-eval.js';
+import { listToSet } from './output-cleanup.js';
 
 export async function solveEquationHandler(args: Record<string, unknown>) {
   try {
@@ -20,6 +21,7 @@ export async function solveEquationHandler(args: Record<string, unknown>) {
       giacExpr,
       operation: 'solve',
       errorMessage: 'Could not solve equation',
+      resultTransform: listToSet,
     });
   } catch (error) {
     return formatErrorResponse(error instanceof Error ? error.message : String(error));
@@ -48,6 +50,7 @@ export async function solveSystemHandler(args: Record<string, unknown>) {
       giacExpr,
       operation: 'solve_system',
       errorMessage: 'Could not solve system',
+      resultTransform: listToSet,
     });
   } catch (error) {
     return formatErrorResponse(error instanceof Error ? error.message : String(error));

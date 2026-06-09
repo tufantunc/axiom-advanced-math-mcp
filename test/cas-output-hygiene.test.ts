@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { giacEngine } from '../src/server/giac/index.js';
 import { evalWithLatex } from '../src/server/tools/giac-eval.js';
+import { evaluationCache } from '../src/server/tools/symbolic/cache.js';
+import { solveEquationHandler, solveSystemHandler } from '../src/server/tools/solve.js';
+import { computeHandler } from '../src/server/tools/compute/index.js';
 
 beforeAll(async () => {
   await giacEngine.initialize();
@@ -43,5 +46,41 @@ describe('evalWithLatex — generic output hygiene', () => {
     });
     expect(allText(raw)).toContain('Result: list[-3,3]');
     expect(allText(transformed)).toContain('Result: XFORM');
+  });
+});
+
+describe('solve handlers — list→set normalization (D)', () => {
+  beforeAll(() => {
+    evaluationCache.clear();
+  });
+  it('renders two roots as a set', async () => {
+    const r = await solveEquationHandler({ equation: 'x^2-4', variable: 'x' });
+    expect(allText(r)).toContain('Result: {-2, 2}');
+  });
+  it('renders a single root bare', async () => {
+    const r = await solveEquationHandler({ equation: 'x-3', variable: 'x' });
+    expect(allText(r)).toContain('Result: 3');
+  });
+  it('renders a system solution as a tuple', async () => {
+    const r = await solveSystemHandler({
+      equations: ['x+y=3', 'x-y=1'],
+      variables: ['x', 'y'],
+    });
+    expect(allText(r)).toContain('Result: (2, 1)');
+  });
+  it('keeps a valid latex for a solved set (derived from raw, not undef)', async () => {
+    const r = await solveEquationHandler({ equation: 'x^2-4', variable: 'x' });
+    const text = allText(r);
+    expect(text).not.toContain('undef');
+    expect(text).toMatch(/LaTeX: .*-2/);
+  });
+});
+
+describe('compute json envelope — solution set parsing (D)', () => {
+  it('parses a two-root solve into two structured solutions', async () => {
+    const r = await computeHandler({ problem: 'solve(x^2-4,x)', format: 'json' });
+    const env = JSON.parse(allText(r));
+    expect(env.data.count).toBe(2);
+    expect(env.data.solutions).toEqual(['-2', '2']);
   });
 });
