@@ -121,4 +121,26 @@ describe('multivariable optimization', () => {
     const flat = text(r).replace(/\s/g, '');
     expect(flat).toContain('1/2');
   });
+
+  it('lagrange: min x^2+y^2+z^2 s.t. x+y+z=3 yields (1,1,1)', async () => {
+    const r = await optimizationHandler({
+      operation: 'lagrange',
+      expression: 'x^2+y^2+z^2',
+      constraint: 'x+y+z',
+      value: '3',
+      variables: ['x', 'y', 'z'],
+    });
+    expect(r.isError).toBe(false);
+    expect(text(r).replace(/\s/g, '')).toContain('(1,1,1)');
+  });
+
+  it('lagrange errors when constraint missing', async () => {
+    const r = await optimizationHandler({
+      operation: 'lagrange',
+      expression: 'x*y',
+      value: '1',
+      variables: ['x', 'y'],
+    });
+    expect(r.isError).toBe(true);
+  });
 });

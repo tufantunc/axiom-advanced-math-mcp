@@ -197,15 +197,28 @@ export async function optimizationHandler(args: Record<string, unknown>) {
       // Report each candidate point (dropping the trailing lambda) and the objective value there.
       const reported: string[] = [];
       for (const cand of candidates) {
+        if (cand.length < variables.length) continue;
         const coords = cand.slice(0, variables.length);
         const sub = substList(variables, coords);
         const fVal = await giac(`subst(${expression},${sub})`);
         reported.push(`(${coords.join(', ')}): f = ${fVal}`);
       }
 
+      if (reported.length === 0) {
+        return formatToolResponse({
+          result: 'No usable stationary points parsed from solve output',
+          notes: [`solve returned: ${raw}`],
+        });
+      }
+
       return formatToolResponse({
         result: reported.join('; '),
-        notes: [`Constraint: ${constraint} = ${value}`, `Candidates (Lagrange):`, ...reported],
+        notes: [
+          `Constraint: ${constraint} = ${value}`,
+          `Candidates (Lagrange):`,
+          ...reported,
+          'Note: Lagrange yields stationary points of the constrained problem; compare f values or check second-order conditions to classify max/min/saddle.',
+        ],
       });
     }
 
