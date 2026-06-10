@@ -40,3 +40,21 @@ describe('verify: taylor/series order_size handling', () => {
     expect(text(res)).toContain('Verified: TRUE');
   }, 30000);
 });
+
+describe('verify: "EXPR at x=a = b" claims', () => {
+  it('verifies a true point-evaluation claim', async () => {
+    const res = await verifyHandler({
+      claim: 'diff(exp(x), x, 4) at x=0 = 1',
+      method: 'both',
+    });
+    expect(text(res)).toContain('Verified: TRUE');
+  }, 30000);
+
+  it('rejects a false point-evaluation claim', async () => {
+    const res = await verifyHandler({
+      claim: 'diff(exp(x), x, 4) at x=0 = 2',
+      method: 'both',
+    });
+    expect(text(res)).toContain('Verified: FALSE');
+  }, 30000);
+});
