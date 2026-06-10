@@ -103,7 +103,7 @@ async function main(): Promise<void> {
   } else {
     for (const d of newImprovements.slice(0, 30)) {
       out.push(
-        `- **#${d.index}** [${d.dataset}] expected \`${d.groundTruth}\`, model said \`${d.toolAugmented.extractedAnswer}\``
+        `- **#${d.index}** [${d.dataset}] expected \`${d.groundTruth}\`, model said \`${answerToGrade(d.toolAugmented)}\``
       );
     }
     if (newImprovements.length > 30) {
