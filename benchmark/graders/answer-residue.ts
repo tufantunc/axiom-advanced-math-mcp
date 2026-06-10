@@ -35,3 +35,35 @@ export function stripValueLabels(s: string): string | null {
   }
   return values.join(', ');
 }
+
+const CONSTANT_TAIL = /\s*\+\s*C(?:_\{?\d+\}?)?\s*$/;
+
+/** Strip a trailing bare integration constant "+ C" / "+ C_1". Refuses when
+ *  the ground truth itself contains a C (the constant is then meaningful)
+ *  or when the C is part of a product term (general-solution shape). */
+export function stripConstantTail(s: string, ground: string): string | null {
+  if (/C/.test(ground)) return null;
+  const m = s.match(CONSTANT_TAIL);
+  if (!m || m.index === undefined) return null;
+  const stripped = s.slice(0, m.index).trim();
+  return stripped.length > 0 ? stripped : null;
+}
+
+const BIG_O_TAIL = /\s*\+\s*(?:\\mathcal\{O\}|O)\s*\(\s*x\s*(?:\^\s*\{?\d+\}?)?\s*\)?\s*$/;
+
+/** Strip a trailing big-O remainder "+ \mathcal{O}(x^5)" / "+ O(x^6)",
+ *  including the truncated form with a missing closing paren. */
+export function stripBigOTail(s: string): string | null {
+  const m = s.match(BIG_O_TAIL);
+  if (!m || m.index === undefined) return null;
+  const stripped = s.slice(0, m.index).trim();
+  return stripped.length > 0 ? stripped : null;
+}
+
+/** Replace absolute-value bars DIRECTLY inside a logarithm: "ln|x|" → "ln(x)".
+ *  Textbook-convention mismatch only; bars anywhere else are left alone. */
+export function stripLogAbs(s: string): string | null {
+  const cleaned = s.replace(/\\left\|/g, '|').replace(/\\right\|/g, '|');
+  const out = cleaned.replace(/(\\?(?:ln|log))\s*\|([^|]+)\|/g, '$1($2)');
+  return out !== cleaned ? out : null;
+}
