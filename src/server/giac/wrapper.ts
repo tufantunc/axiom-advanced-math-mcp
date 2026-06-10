@@ -1,23 +1,17 @@
-import { WasmGiacEngine } from './wasm-wrapper.js';
+import { createWorkerHost } from './worker-host.js';
 import type { GiacEngine } from './interface.js';
 
-const engine = new WasmGiacEngine();
-let initPromise: Promise<void> | null = null;
-
-function ensureInit(): Promise<void> {
-  if (!initPromise) {
-    initPromise = engine.initialize();
-  }
-  return initPromise;
-}
+// Singleton host: one worker (one WASM engine) per process, recycled on
+// timeout/crash by the host. Public GiacEngine interface is unchanged.
+const host = createWorkerHost();
 
 export const giacEngine: GiacEngine = {
-  initialize: ensureInit,
+  initialize: () => host.warmup(),
   async evaluate(expression: string): Promise<string> {
-    await ensureInit();
-    return engine.evaluate(expression);
+    await host.warmup();
+    return host.evaluate(expression);
   },
   isReady(): boolean {
-    return engine.isReady();
+    return host.isReady();
   },
 };
