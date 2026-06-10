@@ -331,10 +331,17 @@ const rules: RouterRule[] = [
   // 18. Combinatorics
   {
     name: 'combinatorics',
-    test: (p) =>
-      /^[CP]\s*\(\s*\d/.test(p.trim()) ||
-      startsWith(p, 'comb', 'perm', 'C', 'P') ||
-      hasKeyword(
+    test: (p) => {
+      const t = p.trim();
+      // Call-form: claim ONLY a single bare call. Compound arithmetic like
+      // "C(4,2) * (5/6)^2" must fall through to the Giac evaluator, which
+      // computes the whole expression (this handler would silently drop
+      // everything after the first call).
+      const callForm =
+        /^[cp]\s*\(\s*\d/i.test(t) ||
+        startsWith(p, 'comb', 'perm', 'combinations', 'permutations');
+      if (callForm) return /^[A-Za-z]+\s*\([^()]*\)$/.test(t);
+      return hasKeyword(
         p,
         'choose',
         'combinations',
@@ -345,7 +352,8 @@ const rules: RouterRule[] = [
         'derangements',
         'partitions',
         'multinomial'
-      ),
+      );
+    },
     extract: extractCombinatorics,
   },
 

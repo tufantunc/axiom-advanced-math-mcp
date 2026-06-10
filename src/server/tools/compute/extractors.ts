@@ -1,4 +1,5 @@
 import type { RouteResult } from './types.js';
+import { rewriteCombinatorics } from '../combinatorics-rewrite.js';
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -677,7 +678,9 @@ export function extractFourier(problem: string): RouteResult {
 // --- Giac raw (fallback) ---
 
 export function extractGiacRaw(problem: string): RouteResult {
-  return { handler: 'giac_raw', args: { expression: problem.trim() } };
+  // C(n,k)/P(n,k) notation reaches this fallback when it appears inside a
+  // compound expression — rewrite it to Giac-native comb()/perm().
+  return { handler: 'giac_raw', args: { expression: rewriteCombinatorics(problem.trim()) } };
 }
 
 // --- Multivariable ---

@@ -6,6 +6,7 @@ import {
   stripConstantTail,
   stripBigOTail,
   stripLogAbs,
+  stripPercentTail,
 } from './answer-residue.js';
 
 export interface Candidate {
@@ -33,6 +34,7 @@ export function generateCandidates(predicted: string, ground: string): Candidate
     { rhs: false, apply: (s) => stripConstantTail(s, ground) },
     { rhs: false, apply: stripBigOTail },
     { rhs: false, apply: stripLogAbs },
+    { rhs: false, apply: (s) => stripPercentTail(s, ground) },
   ];
 
   const seen = new Set<string>([predicted]);

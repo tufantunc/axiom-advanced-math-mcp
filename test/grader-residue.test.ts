@@ -4,6 +4,7 @@ import {
   stripConstantTail,
   stripBigOTail,
   stripLogAbs,
+  stripPercentTail,
   stripTrailingConstraint,
   stripValueLabels,
 } from '../benchmark/graders/answer-residue.js';
@@ -91,5 +92,31 @@ describe('residue transforms: extended constraint/label forms (pure)', () => {
 
   it('keeps rejecting mixed/unlabeled lists', () => {
     expect(stripValueLabels('i \\text{ and } \\lambda = -i')).toBeNull();
+  });
+});
+
+describe('residue transforms: percent tail (pure + pipeline)', () => {
+  it('strips a trailing percent sign when ground truth has none', () => {
+    expect(stripPercentTail('7\\%', '7')).toBe('7');
+    expect(stripPercentTail('7%', '7')).toBe('7');
+    expect(stripPercentTail('12.5\\%', '12.5')).toBe('12.5');
+  });
+
+  it('does NOT strip when ground truth itself carries a percent', () => {
+    expect(stripPercentTail('7\\%', '7\\%')).toBeNull();
+  });
+
+  it('returns null when there is no percent tail', () => {
+    expect(stripPercentTail('7', '7')).toBeNull();
+  });
+
+  it('pipeline: "7\\%" matches ground "7" under v3, wrong value stays wrong', () => {
+    process.env.AXIOM_GRADER_V3 = '1';
+    try {
+      expect(gradeV2('7\\%', '7').match).toBe(true);
+      expect(gradeV2('8\\%', '7').match).toBe(false);
+    } finally {
+      delete process.env.AXIOM_GRADER_V3;
+    }
   });
 });

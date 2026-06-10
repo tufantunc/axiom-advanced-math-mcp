@@ -79,3 +79,15 @@ export function stripLogAbs(s: string): string | null {
   const out = cleaned.replace(/(\\?(?:ln|log))\s*\|([^|]+)\|/g, '$1($2)');
   return out !== cleaned ? out : null;
 }
+
+const PERCENT_TAIL = /\s*\\?%\s*$/;
+
+/** Strip a trailing percent sign ("7\%" → "7") when the ground truth carries
+ *  none — pure unit-notation mismatch (e.g. interest-rate answers). */
+export function stripPercentTail(s: string, ground: string): string | null {
+  if (/%/.test(ground)) return null;
+  const m = s.match(PERCENT_TAIL);
+  if (!m || m.index === undefined) return null;
+  const stripped = s.slice(0, m.index).trim();
+  return stripped.length > 0 ? stripped : null;
+}

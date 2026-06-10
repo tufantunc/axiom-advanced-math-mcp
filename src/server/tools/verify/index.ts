@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { giacEngine } from '../../giac/index.js';
 import { unicodeToAscii } from '../unicode-normalize.js';
+import { rewriteCombinatorics } from '../combinatorics-rewrite.js';
 import { stripOrderTerm } from '../output-cleanup.js';
 
 export const verifySchema = z.object({
@@ -325,7 +326,7 @@ function findMainEquals(expr: string): number {
 export async function verifyHandler(
   args: Record<string, unknown>
 ): Promise<{ content: { type: 'text'; text: string }[]; isError: boolean }> {
-  const claim = unicodeToAscii(String(args.claim ?? ''));
+  const claim = rewriteCombinatorics(unicodeToAscii(String(args.claim ?? '')));
   const method = (args.method as string) || 'both';
 
   try {
