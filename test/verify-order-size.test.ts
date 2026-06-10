@@ -57,4 +57,14 @@ describe('verify: "EXPR at x=a = b" claims', () => {
     });
     expect(text(res)).toContain('Verified: FALSE');
   }, 30000);
+
+  it('solution claims still parse via the solution path (not hijacked by "at")', async () => {
+    const res = await verifyHandler({
+      claim: 'x=2 satisfies x^2-4=0',
+      method: 'both',
+    });
+    const t = text(res);
+    expect(t).toContain('Verified: TRUE');
+    expect(t).toContain('Substitution:');
+  }, 30000);
 });

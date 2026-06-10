@@ -252,17 +252,9 @@ interface ParsedClaim {
 }
 
 function parseClaim(claim: string): ParsedClaim {
-  // Point-evaluation claim: "EXPR at x=a = b" → identity subst(EXPR, x=a) = b
-  const atMatch = claim.match(/^(.+?)\s+at\s+([A-Za-z]\w*)\s*=\s*([^=\s,]+)\s*=\s*(.+)$/i);
-  if (atMatch) {
-    return {
-      type: 'identity',
-      lhs: `subst(${atMatch[1].trim()}, ${atMatch[2]}=${atMatch[3]})`,
-      rhs: atMatch[4].trim(),
-    };
-  }
-
   // Solution check: "x=2 satisfies x^2-4=0" or "x=2 is a solution of x^2-4=0"
+  // Checked BEFORE the point-evaluation pattern so claims containing "at" with
+  // solution phrasing are not hijacked by the lazy at-pattern.
   const solutionMatch = claim.match(
     /(\w+)\s*=\s*([^,\s]+)\s+(?:satisfies|is\s+(?:a\s+)?solution\s+(?:of|to))\s+(.+)/i
   );
@@ -272,6 +264,16 @@ function parseClaim(claim: string): ParsedClaim {
       variable: solutionMatch[1],
       value: solutionMatch[2],
       equation: solutionMatch[3].trim(),
+    };
+  }
+
+  // Point-evaluation claim: "EXPR at x=a = b" → identity subst(EXPR, x=a) = b
+  const atMatch = claim.match(/^(.+?)\s+at\s+([A-Za-z]\w*)\s*=\s*([^=\s,]+)\s*=\s*(.+)$/i);
+  if (atMatch) {
+    return {
+      type: 'identity',
+      lhs: `subst(${atMatch[1].trim()}, ${atMatch[2]}=${atMatch[3]})`,
+      rhs: atMatch[4].trim(),
     };
   }
 
