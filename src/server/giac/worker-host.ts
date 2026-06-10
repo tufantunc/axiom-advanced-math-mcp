@@ -69,6 +69,11 @@ export function createWorkerHost(opts: WorkerHostOptions = {}) {
       // protocol); keep stderr for diagnostics; ipc for messages.
       stdio: ['ignore', 'ignore', 'inherit', 'ipc'],
     });
+    // Don't let the live child (or its IPC channel) keep the parent process
+    // alive: when the parent finishes, it can exit, the channel disconnects,
+    // and the child self-exits on 'disconnect'. Prevents test-runner hangs.
+    c.unref();
+    c.channel?.unref();
     child = c;
     readyPromise = new Promise<void>((resolve, reject) => {
       const initTimer = setTimeout(() => {

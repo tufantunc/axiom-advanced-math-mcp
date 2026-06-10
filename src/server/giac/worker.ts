@@ -10,6 +10,10 @@ const send = (m: unknown): void => {
   process.send?.(m);
 };
 
+// When the parent (MCP server / test runner) goes away, the IPC channel
+// disconnects — exit so this child never lingers as an orphan.
+process.on('disconnect', () => process.exit(0));
+
 const ready = engine
   .initialize()
   .then(() => send({ type: 'ready' }))
