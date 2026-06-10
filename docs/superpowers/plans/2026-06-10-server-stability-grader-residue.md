@@ -31,6 +31,18 @@
 
 ## Task 1: Giac worker + watchdog host
 
+> **REVISED during execution (worker_threads → child_process.fork):** the spike
+> only tested a worker with NO nested import. The real worker imports
+> `./wasm-wrapper.js`, and tsx's `--import` loader does NOT rewrite nested
+> `.js`→`.ts` inside a `worker_threads` Worker (verified failure). It DOES
+> rewrite correctly under `child_process.fork(worker.ts, {execArgv:['--import','tsx']})`
+> (verified pass). So Task 1 ships on `fork` with IPC: `parentPort`→`process.send`/
+> `process.on('message')`, `Worker`→`fork`, `terminate()`→`kill('SIGKILL')`,
+> `stdio:['ignore','ignore','inherit','ipc']` (child stdout ignored so it can't
+> corrupt the MCP stdio protocol). Host API (`createWorkerHost`) and all other
+> tasks are unchanged. The committed source is the source of truth.
+
+
 **Files:**
 - Create: `src/server/giac/worker.ts`
 - Create: `src/server/giac/worker-host.ts`
