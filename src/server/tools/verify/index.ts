@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { giacEngine } from '../../giac/index.js';
 import { unicodeToAscii } from '../unicode-normalize.js';
+import { stripOrderTerm } from '../output-cleanup.js';
 
 export const verifySchema = z.object({
   claim: z
@@ -30,6 +31,49 @@ interface VerifyResult {
 // ---------------------------------------------------------------------------
 
 /**
+ * True when `expr` consists ONLY of top-level additive terms that carry an
+ * order_size factor — i.e. it is a series remainder, zero for verification
+ * purposes. (stripOrderTerm cannot be used here: it returns the ORIGINAL
+ * string when stripping would leave nothing.)
+ */
+function isOrderResidueOnly(expr: string): boolean {
+  if (!expr.includes('order_size')) return false;
+  const terms: string[] = [];
+  let depth = 0;
+  let cur = '';
+  for (const ch of expr) {
+    if (ch === '(' || ch === '[' || ch === '{') depth++;
+    else if (ch === ')' || ch === ']' || ch === '}') depth--;
+    if (depth === 0 && (ch === '+' || ch === '-') && cur.trim() !== '') {
+      terms.push(cur);
+      cur = ch === '-' ? '-' : '';
+    } else {
+      cur += ch;
+    }
+  }
+  if (cur.trim() !== '' && cur.trim() !== '-') terms.push(cur);
+  return terms.length > 0 && terms.every((t) => t.includes('order_size'));
+}
+
+/**
+ * Pre-normalize one side of an identity claim: when it evaluates to a series
+ * result carrying an order_size remainder, substitute the bare polynomial.
+ * Any evaluation problem leaves the side untouched.
+ */
+async function normalizeSide(side: string): Promise<string> {
+  try {
+    const r = await giacEngine.evaluate(side);
+    if (r && r !== 'undef' && r.includes('order_size')) {
+      const stripped = stripOrderTerm(r);
+      if (stripped && stripped !== r) return `(${stripped})`;
+    }
+  } catch {
+    // keep original side
+  }
+  return side;
+}
+
+/**
  * Symbolic verification: simplify(LHS - RHS) and check if result is 0.
  */
 async function verifySymbolic(
@@ -48,7 +92,7 @@ async function verifySymbolic(
     }
 
     const trimmed = result.trim();
-    const isZero = trimmed === '0' || trimmed === '0.0';
+    const isZero = trimmed === '0' || trimmed === '0.0' || isOrderResidueOnly(trimmed);
 
     return {
       verified: isZero,
@@ -307,8 +351,8 @@ async function handleIdentityVerification(
   parsed: ParsedClaim,
   method: string
 ): Promise<VerifyResult> {
-  const lhs = parsed.lhs ?? '';
-  const rhs = parsed.rhs ?? '';
+  const lhs = await normalizeSide(parsed.lhs ?? '');
+  const rhs = await normalizeSide(parsed.rhs ?? '');
   const checks: string[] = [];
   let symbolicOk: boolean | null = null;
   let numericOk: boolean | null = null;
