@@ -8,21 +8,33 @@ import { splitTopLevel } from '../../src/server/tools/output-cleanup.js';
 
 const CONSTRAINT_TAIL =
   /,\s*(?:\\quad\s*|\\;\s*|\\,\s*)?[A-Za-z](?:_\{?\w+\}?)?\s*(?:\\neq\b|≠|!=)\s*[^,]+\s*$/;
+const TEXT_FOR_TAIL =
+  /\s*,?\s*\\text\{\s*for\s*\}\s*[A-Za-z](?:_\{?\w+\}?)?\s*(?:\\neq\b|≠|!=)\s*\S[^,]*\s*$/;
+const IN_SET_TAIL =
+  /,\s*(?:\\quad\s*|\\;\s*|\\,\s*)?[A-Za-z](?:_\{?\w+\}?)?\s*\\in\s*\\mathbb\{[A-Z]\}\s*$/;
 
-/** Strip a single trailing domain constraint like ", x ≠ 1" / ", \quad x \neq 1".
- *  Returns the remainder, or null when there is no such tail. */
+/** Strip a single trailing domain constraint — ", x ≠ 1", "\text{ for } x \neq 1",
+ *  or ", C \in \mathbb{R}". Returns the remainder, or null when no tail matches. */
 export function stripTrailingConstraint(s: string): string | null {
-  const m = s.match(CONSTRAINT_TAIL);
-  if (!m || m.index === undefined) return null;
-  const stripped = s.slice(0, m.index).trim();
-  return stripped.length > 0 ? stripped : null;
+  for (const re of [CONSTRAINT_TAIL, TEXT_FOR_TAIL, IN_SET_TAIL]) {
+    const m = s.match(re);
+    if (m && m.index !== undefined) {
+      const stripped = s.slice(0, m.index).trim();
+      if (stripped.length > 0) return stripped;
+    }
+  }
+  return null;
 }
 
 /** When EVERY top-level comma segment is "<label> = <value>" (e.g.
  *  "\lambda_1 = i, \lambda_2 = -i"), return the bare value list "i, -i".
  *  Mixed labeled/unlabeled input returns null (left untouched). */
 export function stripValueLabels(s: string): string | null {
-  const cleaned = s.replace(/\\quad\b/g, ' ').trim();
+  const cleaned = s
+    .replace(/\\text\{\s*and\s*\}/g, ', ')
+    .replace(/\s+\band\b\s+/g, ', ')
+    .replace(/\\quad\b/g, ' ')
+    .trim();
   const parts = splitTopLevel(cleaned, ',')
     .map((p) => p.trim())
     .filter((p) => p.length > 0);

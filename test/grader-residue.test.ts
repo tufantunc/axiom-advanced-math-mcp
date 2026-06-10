@@ -4,6 +4,8 @@ import {
   stripConstantTail,
   stripBigOTail,
   stripLogAbs,
+  stripTrailingConstraint,
+  stripValueLabels,
 } from '../benchmark/graders/answer-residue.js';
 
 describe('grader residue patterns (v3-gated)', () => {
@@ -65,5 +67,29 @@ describe('residue transforms: +C / big-O / log-abs (pure)', () => {
     expect(stripLogAbs('\\ln\\left|x\\right|')).toBe('\\ln(x)');
     expect(stripLogAbs('|x| + 1')).toBeNull();
     expect(stripLogAbs('ln(x)')).toBeNull();
+  });
+});
+
+describe('residue transforms: extended constraint/label forms (pure)', () => {
+  it('strips a "\\text{ for } x \\neq 1" constraint tail', () => {
+    expect(stripTrailingConstraint('x + 1 \\text{ for } x \\neq 1')).toBe('x + 1');
+  });
+
+  it('strips a ", C \\in \\mathbb{R}" membership tail', () => {
+    expect(stripTrailingConstraint('Ce^{x}, \\quad C \\in \\mathbb{R}')).toBe('Ce^{x}');
+  });
+
+  it('still strips the comma form and rejects non-constraints', () => {
+    expect(stripTrailingConstraint('x + 1, \\quad x \\neq 1')).toBe('x + 1');
+    expect(stripTrailingConstraint('x + 1')).toBeNull();
+  });
+
+  it('handles \\text{ and } separators in labeled value lists', () => {
+    expect(stripValueLabels('\\lambda = i \\text{ and } \\lambda = -i')).toBe('i, -i');
+    expect(stripValueLabels('x = 2 and x = 5')).toBe('2, 5');
+  });
+
+  it('keeps rejecting mixed/unlabeled lists', () => {
+    expect(stripValueLabels('i \\text{ and } \\lambda = -i')).toBeNull();
   });
 });
