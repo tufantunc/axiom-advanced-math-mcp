@@ -29,6 +29,11 @@ describe('normalizer: exponent braces and Euler base', () => {
   it('does not touch non-e bases', () => {
     expect(normalize('2^x').canonical).toBe('2^x');
   });
+
+  it('negative single-number exponents stay aligned with the bare form', () => {
+    expect(normalize('x^{-2}').canonical).toBe('x^-2');
+    expect(normalize('x^{-2}').canonical).toBe(normalize('x^-2').canonical);
+  });
 });
 
 describe('normalizer: unparenthesized function arguments', () => {

@@ -97,7 +97,7 @@ export function normalize(input: string): NormalizedAnswer {
   // longer needs parens to survive as one exponent (e^{-2x} → e^(-2x)).
   s = s.replace(/\^\{([^{}]+)\}/g, (_m, inner: string) => {
     const tok = inner.trim();
-    return /^(\d+|[A-Za-z])$/.test(tok) ? `^${tok}` : `^(${tok})`;
+    return /^(-?\d+|[A-Za-z])$/.test(tok) ? `^${tok}` : `^(${tok})`;
   });
   s = s.replace(/[{}]/g, '');
 
