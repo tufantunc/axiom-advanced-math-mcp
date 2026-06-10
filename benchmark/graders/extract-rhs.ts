@@ -11,7 +11,14 @@
  *     variable names are rejected because `x = 5` is itself the answer,
  *     not a renaming.
  */
-export function extractRHS(input: string): string | null {
+export interface ExtractRHSOptions {
+  /** Accept a single-letter LHS like "y = …". Callers must enable this ONLY
+   *  when the ground truth is an expression (not a scalar) — "x = 5" vs "5"
+   *  must keep failing (golden corpus). */
+  allowSingleLetterLHS?: boolean;
+}
+
+export function extractRHS(input: string, opts: ExtractRHSOptions = {}): string | null {
   let s = input.trim();
 
   // Strip surrounding math delimiters
@@ -39,10 +46,17 @@ export function extractRHS(input: string): string | null {
   if (!lhs || !rhs) return null;
 
   // LHS must look like a function call OR a multi-character symbolic name.
-  // Single bare variables ("x", "y", "a") are rejected.
+  // Single bare variables ("x", "y", "a") are rejected unless explicitly allowed.
   const looksLikeFunctionCall = /\(/.test(lhs);
   const isMultiCharSymbol = /[A-Za-z]{2,}/.test(lhs);
-  if (!looksLikeFunctionCall && !isMultiCharSymbol) return null;
+  const isSingleLetter = /^[A-Za-z]'?$/.test(lhs);
+  if (
+    !looksLikeFunctionCall &&
+    !isMultiCharSymbol &&
+    !(opts.allowSingleLetterLHS && isSingleLetter)
+  ) {
+    return null;
+  }
 
   return rhs;
 }

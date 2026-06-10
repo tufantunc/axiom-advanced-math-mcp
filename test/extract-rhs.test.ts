@@ -49,3 +49,19 @@ describe('extractRHS', () => {
     expect(extractRHS('log(x) = ln(x)/ln(10)')).toBe('ln(x)/ln(10)');
   });
 });
+
+describe('extractRHS: allowSingleLetterLHS option', () => {
+  it('rejects single-letter LHS by default (unchanged)', () => {
+    expect(extractRHS('y = x^2')).toBeNull();
+  });
+
+  it('accepts single-letter LHS when the option is set', () => {
+    expect(extractRHS('y = x^2', { allowSingleLetterLHS: true })).toBe('x^2');
+    expect(extractRHS('y = 3\\,e^{-2x}', { allowSingleLetterLHS: true })).toBe('3\\,e^{-2x}');
+  });
+
+  it('the option does not loosen anything else', () => {
+    expect(extractRHS('a = b = c', { allowSingleLetterLHS: true })).toBeNull();
+    expect(extractRHS('= x^2', { allowSingleLetterLHS: true })).toBeNull();
+  });
+});
