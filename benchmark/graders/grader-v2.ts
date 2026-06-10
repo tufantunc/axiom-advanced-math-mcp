@@ -1,6 +1,7 @@
 import { normalize } from './normalizer.js';
 import type { AnswerKind } from './normalizer.js';
 import { extractRHS } from './extract-rhs.js';
+import { stripTrailingConstraint, stripValueLabels } from './answer-residue.js';
 import { bareCommaList } from './bare-list.js';
 
 export interface GradeResultV2 {
@@ -149,6 +150,19 @@ export function gradeV2(
       if (r.match) {
         return { ...r, method: 'equation-rhs-match' as GradeResultV2['method'] };
       }
+    }
+    // Residue 2: trailing domain constraint ", x ≠ 1" on the predicted answer.
+    const pNoConstraint = stripTrailingConstraint(predicted);
+    if (pNoConstraint !== null) {
+      const r = gradeV2(pNoConstraint, ground, innerOpts);
+      if (r.match) return r;
+    }
+    // Residue 3: fully-labeled multi-value → bare list, matched by the v3
+    // bareCommaList set stage.
+    const pUnlabeled = stripValueLabels(predicted);
+    if (pUnlabeled !== null) {
+      const r = gradeV2(pUnlabeled, ground, innerOpts);
+      if (r.match) return r;
     }
   }
 
