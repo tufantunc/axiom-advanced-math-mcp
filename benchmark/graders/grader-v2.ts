@@ -1,7 +1,7 @@
 import { normalize } from './normalizer.js';
 import type { AnswerKind } from './normalizer.js';
 import { extractRHS } from './extract-rhs.js';
-import { stripTrailingConstraint, stripValueLabels } from './answer-residue.js';
+import { generateCandidates } from './candidates.js';
 import { bareCommaList } from './bare-list.js';
 
 export interface GradeResultV2 {
@@ -134,14 +134,15 @@ export function gradeV2(
     return finish(true, 'exact-string-match', 'scalar', 'exact');
   }
 
-  // v3 equation-RHS stage — only when flag set, and skip on recursive calls.
+  // v3 candidate stage — only when flag set, and skip on recursive calls.
   if (process.env.AXIOM_GRADER_V3 === '1' && !opts._skipV3) {
     const innerOpts: GradeOptions = { ...opts, _skipV3: true };
-    const pRHS = extractRHS(predicted);
-    if (pRHS !== null) {
-      const r = gradeV2(pRHS, ground, innerOpts);
+    for (const cand of generateCandidates(predicted, ground).slice(1)) {
+      const r = gradeV2(cand.value, ground, innerOpts);
       if (r.match) {
-        return { ...r, method: 'equation-rhs-match' as GradeResultV2['method'] };
+        return cand.viaEquationRHS
+          ? { ...r, method: 'equation-rhs-match' as GradeResultV2['method'] }
+          : r;
       }
     }
     const gRHS = extractRHS(ground);
@@ -150,19 +151,6 @@ export function gradeV2(
       if (r.match) {
         return { ...r, method: 'equation-rhs-match' as GradeResultV2['method'] };
       }
-    }
-    // Residue 2: trailing domain constraint ", x ≠ 1" on the predicted answer.
-    const pNoConstraint = stripTrailingConstraint(predicted);
-    if (pNoConstraint !== null) {
-      const r = gradeV2(pNoConstraint, ground, innerOpts);
-      if (r.match) return r;
-    }
-    // Residue 3: fully-labeled multi-value → bare list, matched by the v3
-    // bareCommaList set stage.
-    const pUnlabeled = stripValueLabels(predicted);
-    if (pUnlabeled !== null) {
-      const r = gradeV2(pUnlabeled, ground, innerOpts);
-      if (r.match) return r;
     }
   }
 
@@ -254,8 +242,10 @@ function finish(
 }
 
 /**
- * Async variant: same as gradeV2 but adds a final symbolic-equivalence stage
- * via Giac when an evaluator is provided.
+ * Async variant: same as gradeV2 but adds a symbolic-equivalence stage via
+ * Giac when an evaluator is provided. With grader-v3 enabled, the symbolic
+ * attempt runs over the full candidate list — residue/RHS-transformed
+ * candidates reach simplify((p)-(g)) too, not just the raw string.
  */
 export async function gradeV2Async(
   predicted: string,
@@ -267,26 +257,34 @@ export async function gradeV2Async(
 
   if (!opts.giacEval) return sync;
 
-  // Only attempt symbolic equivalence when both sides are symbolic-ish.
-  const p = normalize(predicted);
   const g = normalize(ground);
-  if (!p.canonical || !g.canonical) return sync;
-  if (p.kind === 'scalar' && g.kind === 'scalar') return sync;
-  if (p.kind === 'set' || g.kind === 'set') return sync;
-  if (p.kind === 'interval' || g.kind === 'interval') return sync;
+  if (!g.canonical) return sync;
+  if (g.kind === 'set' || g.kind === 'interval') return sync;
 
-  const expr = `simplify((${p.canonical}) - (${g.canonical}))`;
-  let result: string | null;
-  try {
-    result = await opts.giacEval(expr);
-  } catch {
-    return sync;
-  }
-  if (result === null) return sync;
+  const v3 = process.env.AXIOM_GRADER_V3 === '1' && !opts._skipV3;
+  const candidates = v3
+    ? generateCandidates(predicted, ground)
+    : [{ value: predicted, viaEquationRHS: false }];
 
-  const trimmed = result.trim().replace(/\s+/g, '');
-  if (trimmed === '0' || trimmed === '0.0') {
-    return finish(true, 'symbolic-equivalence', g.kind, 'symbolic');
+  for (const cand of candidates) {
+    const p = normalize(cand.value);
+    if (!p.canonical) continue;
+    if (p.kind === 'scalar' && g.kind === 'scalar') continue;
+    if (p.kind === 'set' || p.kind === 'interval') continue;
+
+    const expr = `simplify((${p.canonical}) - (${g.canonical}))`;
+    let result: string | null;
+    try {
+      result = await opts.giacEval(expr);
+    } catch {
+      continue;
+    }
+    if (result === null) continue;
+
+    const trimmed = result.trim().replace(/\s+/g, '');
+    if (trimmed === '0' || trimmed === '0.0') {
+      return finish(true, 'symbolic-equivalence', g.kind, 'symbolic');
+    }
   }
   return sync;
 }
