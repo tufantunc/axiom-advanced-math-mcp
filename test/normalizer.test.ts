@@ -38,7 +38,7 @@ describe('normalizer — LaTeX/Unicode basics', () => {
 
   it('strips \\text{} and \\mathrm{}', () => {
     expect(normalize('5 \\text{ apples}').canonical).toBe('5apples');
-    expect(normalize('\\mathrm{e}^2').canonical).toBe('e^2');
+    expect(normalize('\\mathrm{e}^2').canonical).toBe('exp(2)'); // Euler base canonicalizes to exp() since the Task-8 normalizer change
   });
 
   it('strips unknown LaTeX commands but keeps the name', () => {

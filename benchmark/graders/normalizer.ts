@@ -52,6 +52,14 @@ function latexToPlain(s: string): string {
   r = r.replace(/\\cdot\b/g, '*').replace(/\\times\b/g, '*');
   r = r.replace(/\\div\b/g, '/');
   r = r.replace(/\\pi\b/g, 'pi');
+  // Known functions: insert explicit '*' when the command directly follows an
+  // operand, then wrap a space-separated single-atom argument in parens.
+  const FUNC_NAMES = 'arcsin|arccos|arctan|sinh|cosh|tanh|sin|cos|tan|cot|sec|csc|ln|log|exp';
+  r = r.replace(new RegExp(`([A-Za-z0-9)}])\\s*\\\\(${FUNC_NAMES})\\b`, 'g'), '$1*\\$2');
+  r = r.replace(
+    new RegExp(`\\\\(${FUNC_NAMES})\\s+([A-Za-z0-9]+(?:\\^[A-Za-z0-9]+)?)`, 'g'),
+    '$1($2)'
+  );
   r = r.replace(/\\text\{([^}]*)\}/g, '$1');
   r = r.replace(/\\mathrm\{([^}]*)\}/g, '$1');
   r = r.replace(/\\mathbf\{([^}]*)\}/g, '$1');
@@ -85,13 +93,24 @@ export function normalize(input: string): NormalizedAnswer {
   s = latexToPlain(s);
   s = unicodeToPlain(s);
 
-  // Drop curly braces left over from non-fraction LaTeX: x^{2} → x^2
-  s = s.replace(/\^\{([^{}]+)\}/g, '^$1');
+  // Single atomic token keeps the brace-free form (x^{2} → x^2); anything
+  // longer needs parens to survive as one exponent (e^{-2x} → e^(-2x)).
+  s = s.replace(/\^\{([^{}]+)\}/g, (_m, inner: string) => {
+    const tok = inner.trim();
+    return /^(\d+|[A-Za-z])$/.test(tok) ? `^${tok}` : `^(${tok})`;
+  });
   s = s.replace(/[{}]/g, '');
 
   // Restore set delimiters that were protected from brace-stripping.
   s = s.replace(new RegExp(SET_OPEN, 'g'), '{');
   s = s.replace(new RegExp(SET_CLOSE, 'g'), '}');
+
+  // Split a fused single-char factor off "e^": "xe^x" → "x*e^x", "3e^(2x)" → "3*e^(2x)".
+  s = s.replace(/(?<![A-Za-z0-9_])([A-Za-z0-9])e\^/g, '$1*e^');
+  // Standalone Euler base → exp(): "e^x" → "exp(x)", "e^(-2x)" → "exp(-2x)".
+  s = s.replace(/(?<![A-Za-z0-9_])e\^(\([^()]*\)|[A-Za-z0-9]+)/g, (_m, ex: string) =>
+    `exp(${ex.startsWith('(') ? ex.slice(1, -1) : ex})`
+  );
 
   // Collapse whitespace
   const canonical = s.replace(/\s+/g, '');
@@ -99,7 +118,7 @@ export function normalize(input: string): NormalizedAnswer {
   const decimal = tryEval(canonical);
   // is_exact holds only when the decimal IS the exact value — not a float
   // approximation. Excludes irrational roots and transcendental constants.
-  const has_irrational = /\bsqrt\b|\bpi\b|\be\b/.test(canonical);
+  const has_irrational = /\bsqrt\b|\bpi\b|\be\b|\bexp\b/.test(canonical);
   const is_exact = decimal !== null && !has_irrational;
 
   const kind = detectKind(canonical);
@@ -128,6 +147,7 @@ function detectKind(canonical: string): AnswerKind {
   // for residual variable letters.
   const stripped = canonical
     .replace(/\bsqrt\b/g, '')
+    .replace(/\bexp\b/g, '')
     .replace(/\bpi\b/g, '')
     .replace(/\binfty\b/gi, '')
     .replace(/\binfinity\b/gi, '')
@@ -149,6 +169,7 @@ function tryEval(expr: string): number | null {
   if (!expr) return null;
   let e = expr
     .replace(/\bpi\b/g, String(Math.PI))
+    .replace(/exp\(([^()]+)\)/g, 'Math.exp($1)')
     .replace(/\be\b/g, String(Math.E))
     .replace(/sqrt\(([^()]+)\)/g, 'Math.sqrt($1)')
     .replace(/\^/g, '**');
@@ -157,7 +178,7 @@ function tryEval(expr: string): number | null {
   // exclusively of digits, decimal point, arithmetic operators, parentheses,
   // and whitespace. This rejects array literals, comma operators, identifiers,
   // and anything else.
-  const stripped = e.replace(/Math\.sqrt\([^()]*\)/g, '');
+  const stripped = e.replace(/Math\.(?:sqrt|exp)\([^()]*\)/g, '');
   if (!/^[\d.+\-*/()\s]*$/.test(stripped)) return null;
 
   try {
