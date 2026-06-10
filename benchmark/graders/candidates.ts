@@ -7,6 +7,7 @@ import {
   stripBigOTail,
   stripLogAbs,
   stripPercentTail,
+  lastChainSegment,
 } from './answer-residue.js';
 
 export interface Candidate {
@@ -29,6 +30,7 @@ export function generateCandidates(predicted: string, ground: string): Candidate
   const allowSingleLetterLHS = normalize(ground).kind === 'expression';
   const transforms: Array<{ rhs: boolean; apply: (s: string) => string | null }> = [
     { rhs: true, apply: (s) => extractRHS(s, { allowSingleLetterLHS }) },
+    { rhs: true, apply: lastChainSegment },
     { rhs: false, apply: stripTrailingConstraint },
     { rhs: false, apply: stripValueLabels },
     { rhs: false, apply: (s) => stripConstantTail(s, ground) },

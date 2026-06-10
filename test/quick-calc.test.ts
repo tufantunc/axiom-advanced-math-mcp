@@ -208,3 +208,16 @@ describe('QuickCalcService', () => {
     });
   });
 });
+
+describe('ln alias (natural log)', () => {
+  const service = new QuickCalcService();
+
+  it('evaluates ln() as the natural logarithm', () => {
+    expect(service.evaluate({ expression: 'ln(1)' }).result).toBe(0);
+    expect(service.evaluate({ expression: 'ln(e)' }).result).toBeCloseTo(1, 10);
+    expect(service.evaluate({ expression: '0.0001*ln(0.0001)' }).result).toBeCloseTo(
+      -0.000921034,
+      6
+    );
+  });
+});

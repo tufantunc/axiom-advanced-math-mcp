@@ -5,6 +5,7 @@ import {
   stripBigOTail,
   stripLogAbs,
   stripPercentTail,
+  lastChainSegment,
   stripTrailingConstraint,
   stripValueLabels,
 } from '../benchmark/graders/answer-residue.js';
@@ -118,5 +119,24 @@ describe('residue transforms: percent tail (pure + pipeline)', () => {
     } finally {
       delete process.env.AXIOM_GRADER_V3;
     }
+  });
+});
+
+describe('residue transforms: chained equalities (pure)', () => {
+  it('takes the last segment of a = b = c chains', () => {
+    expect(lastChainSegment('\\cos(x) = 1 - \\frac{x^2}{2!} + \\cdots = 1 - \\frac{x^2}{2}')).toBe(
+      '1 - \\frac{x^2}{2}'
+    );
+  });
+
+  it('returns null for single equations and non-chains', () => {
+    expect(lastChainSegment('x = 5')).toBeNull();
+    expect(lastChainSegment('x + 1')).toBeNull();
+  });
+
+  it('refuses multi-solution and listed forms (or/and/comma)', () => {
+    expect(lastChainSegment('x=-2 \\text{ or } x=2')).toBeNull();
+    expect(lastChainSegment('x = -2 or x = 2')).toBeNull();
+    expect(lastChainSegment('\\lambda_1 = 2, \\lambda_2 = 5')).toBeNull();
   });
 });

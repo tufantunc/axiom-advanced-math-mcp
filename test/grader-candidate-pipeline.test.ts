@@ -82,3 +82,35 @@ describe('candidate pipeline — symbolic equivalence reaches candidates', () =>
     expect(r.match).toBe(false);
   }, 30000);
 });
+
+describe('candidate pipeline — exponent LHS and chained equalities (run #55/#57 shapes)', () => {
+  it('recovers "e^x = poly + \\mathcal{O}(x^5" vs the bare polynomial', () => {
+    expect(
+      gradeV2(
+        'e^x = 1 + x + \\frac{x^2}{2} + \\frac{x^3}{6} + \\frac{x^4}{24} + \\mathcal{O}(x^5',
+        '1+x+x^2/2+x^3/6+x^4/24'
+      ).match
+    ).toBe(true);
+  });
+
+  it('recovers the chained cos-series form', () => {
+    expect(
+      gradeV2(
+        '\\cos(x) = 1 - \\frac{x^2}{2!} + \\frac{x^4}{4!} + \\cdots = 1 - \\frac{x^2}{2} + \\frac{x^4}{24} + \\mathcal{O}(x^5',
+        '1-x^2/2+x^4/24'
+      ).match
+    ).toBe(true);
+  });
+
+  it('guard: wrong coefficients stay wrong through both new paths', () => {
+    expect(
+      gradeV2(
+        'e^x = 1 + x + \\frac{x^2}{3} + \\mathcal{O}(x^5',
+        '1+x+x^2/2+x^3/6+x^4/24'
+      ).match
+    ).toBe(false);
+    expect(
+      gradeV2('x=-2 \\text{ or } x=2', '2').match
+    ).toBe(false);
+  });
+});

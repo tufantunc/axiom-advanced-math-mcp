@@ -65,3 +65,13 @@ describe('extractRHS: allowSingleLetterLHS option', () => {
     expect(extractRHS('= x^2', { allowSingleLetterLHS: true })).toBeNull();
   });
 });
+
+describe('extractRHS: expression-shaped LHS with an exponent', () => {
+  it('accepts an LHS like "e^x" (an expression, not a bare variable)', () => {
+    expect(extractRHS('e^x = 1 + x + \\frac{x^2}{2}')).toBe('1 + x + \\frac{x^2}{2}');
+  });
+
+  it('still rejects bare single-letter LHS without the option', () => {
+    expect(extractRHS('x = 5')).toBeNull();
+  });
+});

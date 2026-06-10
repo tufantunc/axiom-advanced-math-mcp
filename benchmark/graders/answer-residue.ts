@@ -91,3 +91,17 @@ export function stripPercentTail(s: string, ground: string): string | null {
   const stripped = s.slice(0, m.index).trim();
   return stripped.length > 0 ? stripped : null;
 }
+
+/** For a chained equality "a = b = c", return the final (most refined)
+ *  segment as a candidate. Refuses multi-solution and listed forms — any
+ *  top-level comma or an or/and connective means the equals signs belong to
+ *  separate statements, not one chain. */
+export function lastChainSegment(s: string): string | null {
+  if (/\bor\b|\band\b/i.test(s)) return null;
+  if (splitTopLevel(s, ',').length > 1) return null;
+  const parts = splitTopLevel(s, '=')
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+  if (parts.length < 3) return null;
+  return parts[parts.length - 1];
+}

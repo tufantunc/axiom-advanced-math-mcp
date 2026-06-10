@@ -28,3 +28,16 @@ describe('boxed extraction still works (regression guard)', () => {
     expect(extractModelAnswer('So \\boxed{42}.')).toBe('42');
   });
 });
+
+describe('prompts — bare-value boxing directive', () => {
+  it('all prompts tell the model to box only the value, not assignments', () => {
+    expect(BASELINE_SYSTEM_PROMPT).toContain('not \\boxed{n=4}');
+    expect(TOOL_SYSTEM_PROMPT).toContain('not \\boxed{n=4}');
+    expect(getToolPromptForProblem('Find the derivative of x^2.')).toContain('not \\boxed{n=4}');
+  });
+
+  it('all prompts tell the model to box the answer immediately', () => {
+    expect(BASELINE_SYSTEM_PROMPT).toContain('as soon as');
+    expect(TOOL_SYSTEM_PROMPT).toContain('as soon as');
+  });
+});

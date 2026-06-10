@@ -49,10 +49,14 @@ export function extractRHS(input: string, opts: ExtractRHSOptions = {}): string 
   // Single bare variables ("x", "y", "a") are rejected unless explicitly allowed.
   const looksLikeFunctionCall = /\(/.test(lhs);
   const isMultiCharSymbol = /[A-Za-z]{2,}/.test(lhs);
+  // An LHS carrying an exponent (e.g. "e^x") is an expression restatement,
+  // not a bare variable — safe to treat like the function-call form.
+  const isExponentExpression = /\^/.test(lhs);
   const isSingleLetter = /^[A-Za-z]'?$/.test(lhs);
   if (
     !looksLikeFunctionCall &&
     !isMultiCharSymbol &&
+    !isExponentExpression &&
     !(opts.allowSingleLetterLHS && isSingleLetter)
   ) {
     return null;

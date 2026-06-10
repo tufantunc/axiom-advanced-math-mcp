@@ -39,6 +39,8 @@ export class QuickCalcService {
 
   constructor() {
     this.math = create(all, {});
+    // mathjs has no ln(); models write it constantly. Alias to natural log.
+    this.math.import({ ln: (x: number) => Math.log(x) });
   }
 
   evaluate(options: QuickCalcOptions): QuickCalcResult {

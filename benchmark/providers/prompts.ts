@@ -10,8 +10,9 @@
 
 export const BASELINE_SYSTEM_PROMPT = `You are a math problem solver. Solve the given problem step by step.
 
-At the very end, put your final answer in a LaTeX box: \\boxed{...}
-Use the exact mathematical form, e.g. \\boxed{3x^2}, \\boxed{\\frac{1}{2}}, \\boxed{42}, \\boxed{x=-2 \\text{ or } x=2}.`;
+Put your final answer in a LaTeX box as soon as you have determined it: \\boxed{...} — do not leave it for a closing summary that may get cut off.
+Box ONLY the answer itself, never a variable assignment or a unit: write \\boxed{4}, not \\boxed{n=4}; write \\boxed{7}, not \\boxed{7\\%}.
+Use the exact mathematical form, e.g. \\boxed{3x^2}, \\boxed{\\frac{1}{2}}, \\boxed{42}. Only multi-solution equations may use \\boxed{x=-2 \\text{ or } x=2}.`;
 
 export const TOOL_SYSTEM_PROMPT = `You are a math problem solver with access to a compute tool and a verify tool.
 
@@ -30,8 +31,9 @@ Approach:
    verify({ claim: "sin(x)^2+cos(x)^2 = 1" })
 4. Limit to 3 compute calls + 1 verify call per problem.
 
-At the very end, put your final answer in a LaTeX box: \\boxed{...}
-Use the exact mathematical form, e.g. \\boxed{3x^2}, \\boxed{\\frac{1}{2}}, \\boxed{42}, \\boxed{x=-2 \\text{ or } x=2}.`;
+Put your final answer in a LaTeX box as soon as you have determined it: \\boxed{...} — do not leave it for a closing summary that may get cut off.
+Box ONLY the answer itself, never a variable assignment or a unit: write \\boxed{4}, not \\boxed{n=4}; write \\boxed{7}, not \\boxed{7\\%}.
+Use the exact mathematical form, e.g. \\boxed{3x^2}, \\boxed{\\frac{1}{2}}, \\boxed{42}. Only multi-solution equations may use \\boxed{x=-2 \\text{ or } x=2}.`;
 
 const TOOL_PROMPT_ALGEBRA = `You are a math problem solver with access to a compute tool and a verify tool.
 
@@ -46,8 +48,9 @@ Example: compute({ problem: "solve(x^2-5*x+6=0, x)" })
 After computing, use verify to confirm: verify({ claim: "x=2 satisfies x^2-5*x+6=0" })
 Limit to 3 compute calls + 1 verify call.
 
-At the very end, put your final answer in a LaTeX box: \\boxed{...}
-Use the exact mathematical form, e.g. \\boxed{3x^2}, \\boxed{\\frac{1}{2}}, \\boxed{42}, \\boxed{x=-2 \\text{ or } x=2}.`;
+Put your final answer in a LaTeX box as soon as you have determined it: \\boxed{...} — do not leave it for a closing summary that may get cut off.
+Box ONLY the answer itself, never a variable assignment or a unit: write \\boxed{4}, not \\boxed{n=4}; write \\boxed{7}, not \\boxed{7\\%}.
+Use the exact mathematical form, e.g. \\boxed{3x^2}, \\boxed{\\frac{1}{2}}, \\boxed{42}. Only multi-solution equations may use \\boxed{x=-2 \\text{ or } x=2}.`;
 
 const TOOL_PROMPT_COUNTING = `You are a math problem solver with access to a compute tool and a verify tool.
 
@@ -61,8 +64,9 @@ Example: compute({ problem: "C(10, 3)" })
 After computing, use verify to confirm your result.
 Limit to 3 compute calls + 1 verify call.
 
-At the very end, put your final answer in a LaTeX box: \\boxed{...}
-Use the exact mathematical form, e.g. \\boxed{3x^2}, \\boxed{\\frac{1}{2}}, \\boxed{42}, \\boxed{x=-2 \\text{ or } x=2}.`;
+Put your final answer in a LaTeX box as soon as you have determined it: \\boxed{...} — do not leave it for a closing summary that may get cut off.
+Box ONLY the answer itself, never a variable assignment or a unit: write \\boxed{4}, not \\boxed{n=4}; write \\boxed{7}, not \\boxed{7\\%}.
+Use the exact mathematical form, e.g. \\boxed{3x^2}, \\boxed{\\frac{1}{2}}, \\boxed{42}. Only multi-solution equations may use \\boxed{x=-2 \\text{ or } x=2}.`;
 
 const TOOL_PROMPT_CALCULUS = `You are a math problem solver with access to a compute tool and a verify tool.
 
@@ -79,8 +83,9 @@ Example: compute({ problem: "int(x^2*exp(x), x, 0, 1)" })
 After computing, use verify to confirm: verify({ claim: "result = expected" })
 Limit to 3 compute calls + 1 verify call.
 
-At the very end, put your final answer in a LaTeX box: \\boxed{...}
-Use the exact mathematical form, e.g. \\boxed{3x^2}, \\boxed{\\frac{1}{2}}, \\boxed{42}, \\boxed{x=-2 \\text{ or } x=2}.`;
+Put your final answer in a LaTeX box as soon as you have determined it: \\boxed{...} — do not leave it for a closing summary that may get cut off.
+Box ONLY the answer itself, never a variable assignment or a unit: write \\boxed{4}, not \\boxed{n=4}; write \\boxed{7}, not \\boxed{7\\%}.
+Use the exact mathematical form, e.g. \\boxed{3x^2}, \\boxed{\\frac{1}{2}}, \\boxed{42}. Only multi-solution equations may use \\boxed{x=-2 \\text{ or } x=2}.`;
 
 const TOOL_PROMPT_NUMBER_THEORY = `You are a math problem solver with access to a compute tool and a verify tool.
 
@@ -95,8 +100,9 @@ Example: compute({ problem: "ifactor(2310)" })
 After computing, use verify to confirm your result.
 Limit to 3 compute calls + 1 verify call.
 
-At the very end, put your final answer in a LaTeX box: \\boxed{...}
-Use the exact mathematical form, e.g. \\boxed{3x^2}, \\boxed{\\frac{1}{2}}, \\boxed{42}, \\boxed{x=-2 \\text{ or } x=2}.`;
+Put your final answer in a LaTeX box as soon as you have determined it: \\boxed{...} — do not leave it for a closing summary that may get cut off.
+Box ONLY the answer itself, never a variable assignment or a unit: write \\boxed{4}, not \\boxed{n=4}; write \\boxed{7}, not \\boxed{7\\%}.
+Use the exact mathematical form, e.g. \\boxed{3x^2}, \\boxed{\\frac{1}{2}}, \\boxed{42}. Only multi-solution equations may use \\boxed{x=-2 \\text{ or } x=2}.`;
 
 const TOOL_PROMPT_GEOMETRY = `You are a math problem solver with access to a compute tool and a verify tool.
 
@@ -111,8 +117,9 @@ Example: compute({ problem: "distance([0,0], [3,4])" })
 After computing, use verify to confirm your result.
 Limit to 3 compute calls + 1 verify call.
 
-At the very end, put your final answer in a LaTeX box: \\boxed{...}
-Use the exact mathematical form, e.g. \\boxed{3x^2}, \\boxed{\\frac{1}{2}}, \\boxed{42}, \\boxed{x=-2 \\text{ or } x=2}.`;
+Put your final answer in a LaTeX box as soon as you have determined it: \\boxed{...} — do not leave it for a closing summary that may get cut off.
+Box ONLY the answer itself, never a variable assignment or a unit: write \\boxed{4}, not \\boxed{n=4}; write \\boxed{7}, not \\boxed{7\\%}.
+Use the exact mathematical form, e.g. \\boxed{3x^2}, \\boxed{\\frac{1}{2}}, \\boxed{42}. Only multi-solution equations may use \\boxed{x=-2 \\text{ or } x=2}.`;
 
 const TOOL_PROMPT_PROBABILITY = `You are a math problem solver with access to a compute tool and a verify tool.
 
@@ -126,8 +133,9 @@ Example: compute({ problem: "C(52, 5)" })
 After computing, use verify to confirm your result.
 Limit to 3 compute calls + 1 verify call.
 
-At the very end, put your final answer in a LaTeX box: \\boxed{...}
-Use the exact mathematical form, e.g. \\boxed{3x^2}, \\boxed{\\frac{1}{2}}, \\boxed{42}, \\boxed{x=-2 \\text{ or } x=2}.`;
+Put your final answer in a LaTeX box as soon as you have determined it: \\boxed{...} — do not leave it for a closing summary that may get cut off.
+Box ONLY the answer itself, never a variable assignment or a unit: write \\boxed{4}, not \\boxed{n=4}; write \\boxed{7}, not \\boxed{7\\%}.
+Use the exact mathematical form, e.g. \\boxed{3x^2}, \\boxed{\\frac{1}{2}}, \\boxed{42}. Only multi-solution equations may use \\boxed{x=-2 \\text{ or } x=2}.`;
 
 const TOOL_PROMPT_CAS = `You are a math problem solver with access to a compute tool and a verify tool.
 
@@ -146,8 +154,9 @@ Example: compute({ problem: "int(x^2*exp(x), x)" })
 After computing, use verify to confirm: verify({ claim: "result_expression = expected" })
 Limit to 3 compute calls + 1 verify call.
 
-At the very end, put your final answer in a LaTeX box: \\boxed{...}
-Use the exact mathematical form, e.g. \\boxed{3x^2}, \\boxed{\\frac{1}{2}}, \\boxed{42}, \\boxed{x=-2 \\text{ or } x=2}.`;
+Put your final answer in a LaTeX box as soon as you have determined it: \\boxed{...} — do not leave it for a closing summary that may get cut off.
+Box ONLY the answer itself, never a variable assignment or a unit: write \\boxed{4}, not \\boxed{n=4}; write \\boxed{7}, not \\boxed{7\\%}.
+Use the exact mathematical form, e.g. \\boxed{3x^2}, \\boxed{\\frac{1}{2}}, \\boxed{42}. Only multi-solution equations may use \\boxed{x=-2 \\text{ or } x=2}.`;
 
 const CATEGORY_KEYWORDS: Record<string, string[]> = {
   cas: [
