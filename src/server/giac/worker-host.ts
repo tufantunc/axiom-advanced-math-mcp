@@ -32,6 +32,7 @@ export function createWorkerHost(opts: WorkerHostOptions = {}) {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   let child: ChildProcess | null = null;
   let readyPromise: Promise<void> | null = null;
+  let ready = false; // true only between the worker's 'ready' handshake and the next recycle/dispose
   let nextId = 1;
   const pending = new Map<number, Pending>();
 
@@ -55,6 +56,7 @@ export function createWorkerHost(opts: WorkerHostOptions = {}) {
     const c = child;
     child = null;
     readyPromise = null;
+    ready = false;
     failAllPending(err);
     if (c) c.kill('SIGKILL');
   }
@@ -78,6 +80,7 @@ export function createWorkerHost(opts: WorkerHostOptions = {}) {
       c.on('message', (msg: { type?: string; id?: number; result?: string; error?: string }) => {
         if (msg.type === 'ready') {
           clearTimeout(initTimer);
+          ready = true;
           resolve();
           return;
         }
@@ -113,7 +116,6 @@ export function createWorkerHost(opts: WorkerHostOptions = {}) {
   return {
     async evaluate(expr: string): Promise<string> {
       await ensureWorker();
-      const c = child!;
       const id = nextId++;
       return new Promise<string>((resolve, reject) => {
         const timer = setTimeout(() => {
@@ -123,19 +125,36 @@ export function createWorkerHost(opts: WorkerHostOptions = {}) {
           reject(err);
         }, timeoutMs);
         pending.set(id, { resolve, reject, timer });
-        c.send({ id, expr });
+        // Re-read `child` here: a sibling call's timeout could have recycled
+        // between the await above and now. Guard so this call can't send on a
+        // killed child and then hang until its own timeout.
+        const c = child;
+        if (!c) {
+          clearTimeout(timer);
+          pending.delete(id);
+          reject(new Error('Giac worker unavailable'));
+          return;
+        }
+        try {
+          c.send({ id, expr });
+        } catch (e) {
+          clearTimeout(timer);
+          pending.delete(id);
+          reject(e instanceof Error ? e : new Error(String(e)));
+        }
       });
     },
     async warmup(): Promise<void> {
       await ensureWorker();
     },
     isReady(): boolean {
-      return child !== null;
+      return ready; // only true after the worker's init handshake, until recycle/dispose
     },
     async dispose(): Promise<void> {
       const c = child;
       child = null;
       readyPromise = null;
+      ready = false;
       failAllPending(new Error('worker host disposed'));
       if (c) c.kill('SIGKILL');
     },
