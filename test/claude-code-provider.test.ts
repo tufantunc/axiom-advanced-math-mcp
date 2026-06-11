@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildCliArgs, buildMcpConfig } from '../benchmark/providers/claude-code.js';
+import { buildCliArgs, buildMcpConfig, ClaudeCodeProvider } from '../benchmark/providers/claude-code.js';
 
 describe('claude-code provider: CLI arg construction', () => {
   it('baseline args: isolation flags present, no --mcp-config', () => {
@@ -45,4 +45,31 @@ describe('claude-code provider: MCP config generation', () => {
     expect(cfg.mcpServers.axiom.command).toBe('/usr/local/bin/node');
     expect(cfg.mcpServers.axiom.args).toEqual(['/repo/benchmark/dist/cli.js', '--flag']);
   });
+});
+
+const SMOKE = process.env.CLAUDE_CODE_SMOKE === '1';
+
+describe.skipIf(!SMOKE)('claude-code provider: live smoke (CLAUDE_CODE_SMOKE=1)', () => {
+  // Vitest runs from the repo root, so the MCP server entry resolves from there.
+  const mcpCmd = ['tsx', 'src/cli.ts'];
+
+  it('baseline answers a trivial problem', async () => {
+    const p = new ClaudeCodeProvider('claude-haiku-4-5', mcpCmd);
+    const r = await p.runBaseline('What is 2+2? Reply with just the number.', 4096);
+    expect(r.text).toContain('4');
+    expect(r.outputTokens).toBeGreaterThan(0);
+  }, 300000);
+
+  it('tool condition reaches the Axiom MCP server', async () => {
+    const p = new ClaudeCodeProvider('claude-haiku-4-5', mcpCmd);
+    const r = await p.runWithTools(
+      'Use the axiom compute tool to find the derivative of x^3 with respect to x. Put the final answer in \\boxed{}.',
+      [],
+      async () => { throw new Error('unused'); },
+      4096,
+      8
+    );
+    expect(r.toolCalls.some((tc) => tc.name.startsWith('mcp__axiom__'))).toBe(true);
+    expect(r.text).toContain('3');
+  }, 300000);
 });

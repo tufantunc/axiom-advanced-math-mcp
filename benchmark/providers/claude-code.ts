@@ -1,5 +1,5 @@
 import { spawn } from 'child_process';
-import { mkdtempSync, writeFileSync, existsSync, rmSync } from 'fs';
+import { mkdtempSync, writeFileSync, existsSync, rmSync, symlinkSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
 import type {
@@ -86,6 +86,18 @@ export class ClaudeCodeProvider implements LLMProvider {
     }
     this.mcpConfigPath = path.join(this.workdir, 'mcp-config.json');
     writeFileSync(this.mcpConfigPath, JSON.stringify(config));
+    // tsx (and similar Node CLIs) re-resolve themselves as bare specifiers
+    // from the child process cwd; the claude CLI spawns MCP servers with
+    // cwd = this.workdir, so expose the host node_modules there — without
+    // it the tsx-launched Axiom server never finishes connecting.
+    const nodeModules = path.resolve(process.cwd(), 'node_modules');
+    if (existsSync(nodeModules)) {
+      try {
+        symlinkSync(nodeModules, path.join(this.workdir, 'node_modules'), 'dir');
+      } catch {
+        /* best-effort */
+      }
+    }
     // Best-effort temp-dir cleanup (spec) — the OS reaps tmpdir leftovers anyway.
     process.once('exit', () => {
       try {
