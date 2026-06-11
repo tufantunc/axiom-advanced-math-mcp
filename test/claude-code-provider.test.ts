@@ -20,6 +20,16 @@ describe('claude-code provider: CLI arg construction', () => {
     const args = buildCliArgs({ model: 'claude-sonnet-4-6', maxTurns: 8, mcpConfigPath: '/tmp/x.json' });
     expect(args[args.indexOf('--mcp-config') + 1]).toBe('/tmp/x.json');
   });
+
+  it('passes a system prompt via --append-system-prompt when provided', () => {
+    const args = buildCliArgs({ model: 'claude-sonnet-4-6', maxTurns: 8, appendSystemPrompt: 'SYS' });
+    expect(args[args.indexOf('--append-system-prompt') + 1]).toBe('SYS');
+  });
+
+  it('omits --append-system-prompt when not provided', () => {
+    const args = buildCliArgs({ model: 'claude-sonnet-4-6', maxTurns: 8 });
+    expect(args).not.toContain('--append-system-prompt');
+  });
 });
 
 describe('claude-code provider: MCP config generation', () => {
