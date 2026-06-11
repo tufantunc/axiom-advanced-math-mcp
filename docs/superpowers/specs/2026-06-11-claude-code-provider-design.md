@@ -56,6 +56,13 @@ claude -p "<prompt>" --model <model> \
 
 - **cwd = empty temp directory** (created once per benchmark run): prevents
   the project's CLAUDE.md, memory, and repo files from leaking into context.
+- **`--setting-sources project` + `--strict-mcp-config` in BOTH conditions**
+  (probe-verified finding): without these, USER-level config leaks in —
+  SessionStart hooks (superpowers, ~8.8K tokens), plugins, and the user's own
+  MCP servers all load even in an empty cwd. With both flags the init event
+  shows 0 mcp_servers, 0 plugins, no hook events, and auth still works. In
+  the tool condition `--strict-mcp-config` additionally ensures ONLY our
+  `--mcp-config` (Axiom) is attached.
 - Existing prompt templates (incl. the boxed directive) are passed as the
   user prompt unchanged.
 - `--dangerously-skip-permissions` is required for headless built-in tool
