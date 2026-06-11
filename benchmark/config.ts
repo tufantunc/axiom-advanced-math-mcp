@@ -35,6 +35,7 @@ const DEFAULT_MODELS: Record<ProviderName, string> = {
   zai: 'glm-5.1',
   openrouter: 'meta-llama/llama-3.3-70b-instruct',
   local: '',
+  'claude-code': 'claude-sonnet-4-6',
 };
 
 // Sample sizes per size mode
@@ -81,7 +82,8 @@ function parseMcpServerCmd(): string[] {
  * Can be combined: --gsm8k --quick  →  GSM8K with quick sample size
  *
  * Provider / model flags:
- *   --provider anthropic|zai|openrouter
+ *   --provider anthropic|zai|openrouter|local|claude-code
+ *   --claude-code        shorthand for --provider claude-code
  *   --zai                shorthand for --provider zai
  *   --openrouter         shorthand for --provider openrouter
  *   --model <name>       model override
@@ -146,12 +148,14 @@ export function buildConfig(): BenchmarkConfig {
     provider = 'openrouter';
   } else if (args.includes('--local')) {
     provider = 'local';
+  } else if (args.includes('--claude-code')) {
+    provider = 'claude-code';
   } else {
     const providerIdx = args.indexOf('--provider');
     if (providerIdx !== -1) {
       const raw = args[providerIdx + 1];
-      if (raw === 'anthropic' || raw === 'zai' || raw === 'openrouter' || raw === 'local') provider = raw;
-      else throw new Error(`Unknown provider: "${raw}". Valid options: anthropic, zai, openrouter, local`);
+      if (raw === 'anthropic' || raw === 'zai' || raw === 'openrouter' || raw === 'local' || raw === 'claude-code') provider = raw;
+      else throw new Error(`Unknown provider: "${raw}". Valid options: anthropic, zai, openrouter, local, claude-code`);
     }
   }
 

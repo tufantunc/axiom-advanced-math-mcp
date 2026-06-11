@@ -99,7 +99,7 @@ async function main(): Promise<void> {
   }
 
   // ── Create LLM provider ────────────────────────────────────────
-  const provider = createProvider(config.provider, config.model);
+  const provider = createProvider(config.provider, config.model, config.mcpServerCmd);
 
   // ── Load datasets ──────────────────────────────────────────────
   log('Loading datasets…');
@@ -116,9 +116,24 @@ async function main(): Promise<void> {
   );
 
   // ── Create MCP proxy ───────────────────────────────────────────
-  log('\nConnecting to MCP server…');
-  const proxy = await createMCPProxy(config.mcpServerCmd);
-  log(`  Tools available: ${proxy.tools.length} (${proxy.tools.map((t) => t.name).join(', ')})`);
+  // The claude-code provider lets the CLI spawn and talk to the MCP server
+  // itself; the harness-side proxy is only for API providers.
+  const useCliMcp = config.provider === 'claude-code';
+  let proxy: Awaited<ReturnType<typeof createMCPProxy>>;
+  if (!useCliMcp) {
+    log('\nConnecting to MCP server…');
+    proxy = await createMCPProxy(config.mcpServerCmd);
+    log(`  Tools available: ${proxy.tools.length} (${proxy.tools.map((t) => t.name).join(', ')})`);
+  } else {
+    log('\nMCP server: attached by Claude Code CLI (--mcp-config), no harness proxy.');
+    proxy = {
+      tools: [],
+      callTool: async () => {
+        throw new Error('callTool is unused with the claude-code provider');
+      },
+      close: async () => {},
+    };
+  }
 
   // ── Tool usage tracking ────────────────────────────────────────
   const toolCallMap = new Map<string, { calls: number; successes: number }>();

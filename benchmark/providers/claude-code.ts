@@ -102,14 +102,23 @@ export class ClaudeCodeProvider implements LLMProvider {
       const child = spawn('claude', args, { cwd: this.workdir, stdio: ['ignore', 'pipe', 'pipe'] });
       let stdout = '';
       let stderr = '';
+      let settled = false;
       const timer = setTimeout(() => {
+        settled = true;
         child.kill('SIGKILL');
         reject(new Error(`claude-code timed out after ${this.timeoutMs}ms`));
       }, this.timeoutMs);
       child.stdout.on('data', (d: Buffer) => { stdout += d.toString(); });
       child.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
-      child.on('error', (err) => { clearTimeout(timer); reject(err); });
+      child.on('error', (err) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(err);
+      });
       child.on('close', (code) => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timer);
         const parsed = parseClaudeCodeStream(stdout.split('\n').filter((l) => l.trim()));
         if (code !== 0 || parsed.isError) {

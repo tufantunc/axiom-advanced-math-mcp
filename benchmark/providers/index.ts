@@ -3,12 +3,17 @@ import { AnthropicProvider } from './anthropic.js';
 import { createZaiProvider } from './zai.js';
 import { createOpenRouterProvider } from './openrouter.js';
 import { createLocalProvider } from './local.js';
+import { ClaudeCodeProvider } from './claude-code.js';
 
-export type ProviderName = 'anthropic' | 'zai' | 'openrouter' | 'local';
+export type ProviderName = 'anthropic' | 'zai' | 'openrouter' | 'local' | 'claude-code';
 
 export { type LLMProvider };
 
-export function createProvider(provider: ProviderName, model: string): LLMProvider {
+export function createProvider(
+  provider: ProviderName,
+  model: string,
+  mcpServerCmd: string[] = []
+): LLMProvider {
   switch (provider) {
     case 'anthropic': {
       const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -21,6 +26,8 @@ export function createProvider(provider: ProviderName, model: string): LLMProvid
       return createOpenRouterProvider(model);
     case 'local':
       return createLocalProvider(model);
+    case 'claude-code':
+      return new ClaudeCodeProvider(model, mcpServerCmd);
     default:
       throw new Error(`Unknown provider: ${provider as string}`);
   }
