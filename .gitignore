@@ -144,3 +144,6 @@ vite.config.ts.timestamp-*
 
 # git worktrees for isolated feature work
 .claude/worktrees/
+
+# Stray worktree/session artifacts
+.claire/

@@ -1,6 +1,5 @@
 # Axiom Advanced Math MCP Server
 
-[![MIT License](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Node.js >=20](https://img.shields.io/badge/Node.js->=20-green.svg)](https://nodejs.org/)
 [![MCP](https://img.shields.io/badge/MCP-1.25.3-blue)](https://modelcontextprotocol.io/)
 [![Tests](https://img.shields.io/badge/Tests-510%20passed-green.svg)](https://github.com/anomalyco/axiom-advanced-math-mcp)
@@ -393,4 +392,6 @@ Build creates `giac.wasm` and `giac.wasm.js` in `docker/wasm-output/`. Copy to `
 
 ## License
 
-MIT License — see [LICENSE](LICENSE) for details.
+Proprietary — all rights reserved. Distributed only as a hosted service; not
+licensed for redistribution or self-hosting. This server embeds Giac (GPL3);
+see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
