@@ -51,6 +51,11 @@ describe('buildCliArgs: tool allow/deny (diff-bench)', () => {
     const args = buildCliArgs({ model: 'claude-sonnet-4-6', maxTurns: 8, disallowedTools: ['WebSearch'] });
     expect(args[args.indexOf('--disallowed-tools') + 1]).toBe('WebSearch');
   });
+
+  it('passes --tools as the restriction flag, each tool its own arg', () => {
+    const args = buildCliArgs({ model: 'claude-sonnet-4-6', maxTurns: 8, tools: ['mcp__axiom'] });
+    expect(args[args.indexOf('--tools') + 1]).toBe('mcp__axiom');
+  });
 });
 
 describe('claude-code provider: MCP config generation', () => {

@@ -21,6 +21,7 @@ export interface CliArgOptions {
   appendSystemPrompt?: string;
   allowedTools?: string[];
   disallowedTools?: string[];
+  tools?: string[];
 }
 
 /** Build the claude CLI argument list (prompt is passed separately via -p). */
@@ -47,6 +48,9 @@ export function buildCliArgs(opts: CliArgOptions): string[] {
   }
   if (opts.disallowedTools && opts.disallowedTools.length > 0) {
     args.push('--disallowed-tools', ...opts.disallowedTools);
+  }
+  if (opts.tools && opts.tools.length > 0) {
+    args.push('--tools', ...opts.tools);
   }
   return args;
 }

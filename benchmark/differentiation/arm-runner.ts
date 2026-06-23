@@ -23,7 +23,11 @@ export function armCliArgs(prompt: string, arm: Arm, opts: ArmRunOptions): strin
       maxTurns: opts.maxTurns,
       mcpConfigPath,
       appendSystemPrompt: opts.appendSystemPrompt,
-      allowedTools: arm.allowedTools,
+      // `--tools` is the RESTRICTION flag (limits the available tool set);
+      // `--allowed-tools` is permission-only (auto-approve) and does NOT
+      // restrict. arm.allowedTools therefore drives `--tools` here so each
+      // arm is genuinely confined to its intended backend.
+      tools: arm.allowedTools,
     }),
   ];
 }
