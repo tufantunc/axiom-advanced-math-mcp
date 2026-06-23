@@ -10,6 +10,16 @@
 
 **Spec:** `docs/superpowers/specs/2026-06-23-differentiation-benchmark-design.md`
 
+> **AMENDMENT (2026-06-23): SymPy arm deferred.** The live probe found no `uvx`/`uv`
+> installed and both real SymPy MCP servers need heavier setup (uv+clone, or a Docker
+> image build/HTTP lifecycle) than the plan assumed. Per the user's decision, **build
+> THREE arms only: `pure-model`, `code-exec`, `axiom`.** The code-exec arm already
+> covers "model + python/sympy via code" (the key alternative). All SymPy-specific
+> code below (the `sympy` arm entry, `SYMPY_MCP_CMD`, `sympyMcpPath`, the sympy
+> probe step 1.2, the sympy mcp-config in run.ts/smoke) is **dropped**. Where a task's
+> code block still shows SymPy, use the 3-arm form described in the amendment notes
+> inline. SymPy/Wolfram remain future arms.
+
 **Execution context:** Isolated git worktree (standing instruction — parallel sessions share this checkout). Branch: `differentiation-benchmark`; symlink `node_modules` from the main checkout.
 
 **Probe-verified facts (trust these):**
@@ -109,8 +119,10 @@ Expected: FAIL — module does not exist.
 
 - [ ] **Step 1.5: Implement `arms.ts`** (fill `SYMPY_MCP_CMD` + pure-model allowlist with the values pinned in 1.1/1.2)
 
+**AMENDED (3-arm):** no SymPy consts, no sympy arm.
+
 ```ts
-export type ArmName = 'pure-model' | 'code-exec' | 'sympy' | 'axiom';
+export type ArmName = 'pure-model' | 'code-exec' | 'axiom';
 
 export interface Arm {
   name: ArmName;
@@ -118,22 +130,13 @@ export interface Arm {
    *  intended backend so accuracy is attributable. */
   allowedTools: string[];
   /** Which MCP server to attach. */
-  mcp: 'none' | 'axiom' | 'sympy';
+  mcp: 'none' | 'axiom';
 }
-
-/** SymPy MCP launch command, pinned by the Task 1 probe.
- *  Default: sdiehl/sympy-mcp via uvx. Fallback (Docker): ['docker','run','-i','--rm','math-mcp']
- *  with the arm allowlist set to 'mcp__math-mcp' instead of 'mcp__sympy'. */
-export const SYMPY_MCP_CMD: string[] = ['uvx', 'sympy-mcp'];
-
-/** Server name as it appears in claude tool names (mcp__<name>__<tool>). */
-export const SYMPY_SERVER_NAME = 'sympy';
 
 export const ARMS: Arm[] = [
   // 'mcp__none' is an unattached server → grants zero usable tools (pure model).
   { name: 'pure-model', allowedTools: ['mcp__none'], mcp: 'none' },
   { name: 'code-exec', allowedTools: ['Bash'], mcp: 'none' },
-  { name: 'sympy', allowedTools: [`mcp__${SYMPY_SERVER_NAME}`], mcp: 'sympy' },
   { name: 'axiom', allowedTools: ['mcp__axiom'], mcp: 'axiom' },
 ];
 ```
