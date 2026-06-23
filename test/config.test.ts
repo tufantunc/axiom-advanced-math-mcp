@@ -41,19 +41,3 @@ describe('buildConfig — self-consistency feature flag', () => {
     expect(c.selfConsistency).toBeNull();
   });
 });
-
-describe('buildConfig — claude-code provider flag', () => {
-  it('--claude-code selects the provider with the sonnet default model', () => {
-    process.argv = ['tsx', 'index.ts', '--cas', '--quick', '--claude-code'];
-    const c = buildConfig();
-    expect(c.provider).toBe('claude-code');
-    expect(c.model).toBe('claude-sonnet-4-6');
-  });
-
-  it('--model overrides the default', () => {
-    process.argv = ['tsx', 'index.ts', '--cas', '--quick', '--claude-code', '--model', 'claude-haiku-4-5'];
-    const c = buildConfig();
-    expect(c.provider).toBe('claude-code');
-    expect(c.model).toBe('claude-haiku-4-5');
-  });
-});

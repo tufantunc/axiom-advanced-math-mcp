@@ -60,7 +60,7 @@ export async function generateReport(
   // Write main report (without bulky problemDetails)
   const { problemDetails, ...reportSummary } = report;
   await writeFile(jsonPath, JSON.stringify(reportSummary, null, 2));
-  await writeFile(mdPath, renderMarkdown(report, config.provider));
+  await writeFile(mdPath, renderMarkdown(report));
 
   // Write per-problem JSONL for deep debugging
   const jsonl = problemDetails.map(d => JSON.stringify(d)).join('\n') + '\n';
@@ -77,7 +77,7 @@ function delta(d: number): string {
   return `${d >= 0 ? '+' : ''}${(d * 100).toFixed(1)}%`;
 }
 
-function renderMarkdown(r: BenchmarkReport, provider: BenchmarkConfig['provider']): string {
+function renderMarkdown(r: BenchmarkReport): string {
   const lines: string[] = [];
 
   lines.push('# Axiom MCP Benchmark Results');
@@ -86,13 +86,6 @@ function renderMarkdown(r: BenchmarkReport, provider: BenchmarkConfig['provider'
     `**Date:** ${r.date.slice(0, 10)} | **Model:** ${r.model} | **Mode:** ${r.mode} (${r.totalProblems} problems)`,
   );
   lines.push('');
-  if (provider === 'claude-code') {
-    lines.push(
-      '> **Product scenario:** run through headless Claude Code CLI with built-in tools and web access enabled. ' +
-        'Results measure the Claude Code + Axiom product experience, NOT bare-model capability (web search leakage possible).'
-    );
-    lines.push('');
-  }
 
   // Summary table
   lines.push('## Summary');
