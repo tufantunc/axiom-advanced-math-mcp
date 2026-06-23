@@ -19,6 +19,8 @@ export interface CliArgOptions {
   maxTurns: number;
   mcpConfigPath?: string;
   appendSystemPrompt?: string;
+  allowedTools?: string[];
+  disallowedTools?: string[];
 }
 
 /** Build the claude CLI argument list (prompt is passed separately via -p). */
@@ -39,6 +41,12 @@ export function buildCliArgs(opts: CliArgOptions): string[] {
   }
   if (opts.appendSystemPrompt) {
     args.push('--append-system-prompt', opts.appendSystemPrompt);
+  }
+  if (opts.allowedTools && opts.allowedTools.length > 0) {
+    args.push('--allowed-tools', ...opts.allowedTools);
+  }
+  if (opts.disallowedTools && opts.disallowedTools.length > 0) {
+    args.push('--disallowed-tools', ...opts.disallowedTools);
   }
   return args;
 }

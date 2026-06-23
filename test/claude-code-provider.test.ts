@@ -32,6 +32,27 @@ describe('claude-code provider: CLI arg construction', () => {
   });
 });
 
+describe('buildCliArgs: tool allow/deny (diff-bench)', () => {
+  it('omits allow/deny flags by default (unchanged behavior)', () => {
+    const args = buildCliArgs({ model: 'claude-sonnet-4-6', maxTurns: 8 });
+    expect(args).not.toContain('--allowed-tools');
+    expect(args).not.toContain('--disallowed-tools');
+  });
+
+  it('passes --allowed-tools with each tool as its own arg', () => {
+    const args = buildCliArgs({ model: 'claude-sonnet-4-6', maxTurns: 8, allowedTools: ['mcp__axiom', 'Bash'] });
+    const i = args.indexOf('--allowed-tools');
+    expect(i).toBeGreaterThan(-1);
+    expect(args[i + 1]).toBe('mcp__axiom');
+    expect(args[i + 2]).toBe('Bash');
+  });
+
+  it('passes --disallowed-tools when provided', () => {
+    const args = buildCliArgs({ model: 'claude-sonnet-4-6', maxTurns: 8, disallowedTools: ['WebSearch'] });
+    expect(args[args.indexOf('--disallowed-tools') + 1]).toBe('WebSearch');
+  });
+});
+
 describe('claude-code provider: MCP config generation', () => {
   it('resolves relative paths in mcpServerCmd to absolute (CLI runs in a temp cwd)', () => {
     const cfg = buildMcpConfig(['tsx', '../src/cli.ts'], '/repo/benchmark');
