@@ -867,8 +867,10 @@ npm uninstall express @types/express
 
 - [ ] **Step 3: Confirm Express is gone from the source tree**
 
-Run: `grep -rn "express" src/ package.json`
+Run: `grep -rnE "from ..express..|require\(..express..\)|@types/express" src/ package.json`
 Expected: no matches.
+
+Do NOT use a bare `grep -rn "express"` — it matches ~150 occurrences of "expression"/"Expression" throughout the math code and tells you nothing.
 
 - [ ] **Step 4: Build and confirm the preserved contract still holds**
 
