@@ -140,7 +140,11 @@ src/version.ts, enforced by a test."
 
 ### Task 2: Contract tests against the current Express transport
 
-This is the safety net the migration currently lacks. These tests drive the **built** server as a subprocess over real HTTP, so they are transport-implementation-agnostic: they pass on Express today and must still pass on Hono after Task 6. They are the definition of "behaviour to preserve."
+These tests drive the **built** server as a subprocess over real HTTP, so they are transport-implementation-agnostic: whatever passes on Express today must still pass on Hono after Task 6.
+
+**Measured before writing this task — the current Express transport is broken beyond `initialize`.** `src/http.ts:36` reads `transport.sessionId` immediately after `server.connect(transport)`, but the SDK assigns that field while handling the `initialize` request, which happens later at `handleRequest`. The guard is therefore always false and `sessions` is never populated — confirmed by `/health` reporting `sessions: 0` after three successive `initialize` calls. Every follow-up request answers `400 Bad Request: Server not initialized`.
+
+So the "behaviour to preserve" is only `initialize` and `/health`. The rest is not a regression risk; it is a defect this migration fixes. This task therefore captures two things: the genuinely working contract, and one **characterization test** that pins the current breakage so Task 6 has to demonstrably flip it.
 
 They live in the integration config because they need `dist/`, so `npm test` stays fast and build-independent.
 
@@ -258,37 +262,28 @@ describe('HTTP transport contract (subprocess, real HTTP)', () => {
     expect(json.result.serverInfo.version).toBe(VERSION);
   });
 
-  it('lists the compute, verify and plot tools', async () => {
-    await rpc(base, INIT);
-    const { json } = await rpc(base, { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
-    const names = json.result.tools.map((t: { name: string }) => t.name).sort();
-    expect(names).toEqual(['compute', 'plot', 'verify']);
-  });
-
-  it('computes a symbolic integral end to end', async () => {
-    await rpc(base, INIT);
-    const { json } = await rpc(base, {
-      jsonrpc: '2.0',
-      id: 3,
-      method: 'tools/call',
-      params: { name: 'compute', arguments: { problem: 'integrate(sin(x)^3,x)' } },
-    });
-    const text = json.result.content.map((c: { text: string }) => c.text).join('\n');
-    expect(text).toContain('-cos(x)+cos(x)^3/3');
-  });
-
-  it('lists the registered prompts', async () => {
-    await rpc(base, INIT);
-    const { json } = await rpc(base, { jsonrpc: '2.0', id: 4, method: 'prompts/list', params: {} });
-    expect(json.result.prompts.length).toBeGreaterThan(0);
-  });
-
   it('serves /health', async () => {
     const res = await fetch(`${base}/health`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { status: string; giac: boolean };
     expect(body.status).toBe('ok');
     expect(body.giac).toBe(true);
+  });
+
+  // CHARACTERIZATION TEST — pins a defect, not desired behaviour.
+  //
+  // src/http.ts:36 reads transport.sessionId immediately after connect(), but
+  // the SDK assigns it while handling `initialize`, which happens later at
+  // handleRequest. The session map is therefore never populated (/health
+  // reports sessions: 0 after any number of initializes), so every request
+  // after initialize is rejected.
+  //
+  // Task 6 REPLACES this test with real protocol assertions. If it starts
+  // failing before then, the session bug changed and this plan needs revising.
+  it('currently rejects any request after initialize (defect, fixed in Task 6)', async () => {
+    await rpc(base, INIT);
+    const { json } = await rpc(base, { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
+    expect(json.error.message).toContain('Server not initialized');
   });
 });
 ```
@@ -325,7 +320,7 @@ Run:
 npm run build && npx vitest run --config vitest.config.integration.ts test/http-contract.test.ts
 ```
 
-Expected: PASS, 5 tests. **If any of these fail now, stop and investigate — the baseline must be green before migrating.**
+Expected: PASS, 3 tests — including the characterization test, which passes by asserting the current breakage. **If any fail now, stop and investigate: the plan's model of current behaviour is wrong.**
 
 - [ ] **Step 5: Confirm the unit suite is unaffected**
 
@@ -847,15 +842,56 @@ npm uninstall express @types/express
 Run: `grep -rn "express" src/ package.json`
 Expected: no matches.
 
-- [ ] **Step 4: Build and run the contract tests — the acceptance gate**
+- [ ] **Step 4: Build and confirm the preserved contract still holds**
 
 ```bash
 npm run build && npx vitest run --config vitest.config.integration.ts test/http-contract.test.ts
 ```
 
-Expected: PASS, 5 tests — the same file that passed against Express in Task 2.
+Expected: the `initialize` and `/health` tests PASS unchanged from Task 2. The characterization test now **FAILS** — `tools/list` succeeds instead of returning "Server not initialized". That failure is the proof the migration fixed the session defect; the next step converts it into real assertions.
 
-- [ ] **Step 5: Run everything**
+- [ ] **Step 5: Replace the characterization test with real protocol assertions**
+
+In `test/http-contract.test.ts`, delete the whole `it('currently rejects any request after initialize (defect, fixed in Task 6)', ...)` block — including its CHARACTERIZATION TEST comment — and put these three tests in its place:
+
+```ts
+  it('lists the compute, verify and plot tools', async () => {
+    await rpc(base, INIT);
+    const { json } = await rpc(base, { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
+    const names = json.result.tools.map((t: { name: string }) => t.name).sort();
+    expect(names).toEqual(['compute', 'plot', 'verify']);
+  });
+
+  it('computes a symbolic integral end to end', async () => {
+    await rpc(base, INIT);
+    const { json } = await rpc(base, {
+      jsonrpc: '2.0',
+      id: 3,
+      method: 'tools/call',
+      params: { name: 'compute', arguments: { problem: 'integrate(sin(x)^3,x)' } },
+    });
+    const text = json.result.content.map((c: { text: string }) => c.text).join('\n');
+    expect(text).toContain('-cos(x)+cos(x)^3/3');
+  });
+
+  it('lists the registered prompts', async () => {
+    await rpc(base, INIT);
+    const { json } = await rpc(base, { jsonrpc: '2.0', id: 4, method: 'prompts/list', params: {} });
+    expect(json.result.prompts.length).toBeGreaterThan(0);
+  });
+```
+
+Note these need no session handling: the Hono transport is stateless, so each request stands alone. That is the fix.
+
+- [ ] **Step 6: Re-run the contract tests — the acceptance gate**
+
+```bash
+npx vitest run --config vitest.config.integration.ts test/http-contract.test.ts
+```
+
+Expected: PASS, 5 tests.
+
+- [ ] **Step 7: Run everything**
 
 Run: `npm test`
 Expected: `Tests 630 passed (630)` (617 after Task 1, plus the 13 from Tasks 3-5).
@@ -866,23 +902,29 @@ Expected: no output, exit 0.
 Run: `npx oxlint src`
 Expected: `Found 0 warnings and 0 errors.`
 
-- [ ] **Step 6: Record the dependency reduction**
+- [ ] **Step 8: Record the dependency reduction**
 
 Run: `npm ls --omit=dev --all --json | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);const seen=new Set();(function w(d){for(const [k,v] of Object.entries(d.dependencies||{})){if(seen.has(k))continue;seen.add(k);w(v);}})(j);console.log('prod packages:',seen.size);})"`
 
 Expected: roughly 32 fewer packages than before the migration — the tree should match a build with no HTTP framework at all, since `hono` and `@hono/node-server` are zero-dependency. Note the actual figure in the commit message.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
-git add src/http.ts package.json package-lock.json
+git add src/http.ts test/http-contract.test.ts package.json package-lock.json
 git commit -m "refactor(http): serve the Hono app, drop Express
 
 src/http.ts is now a thin Node entrypoint: config, eager Giac init,
 signals, and a warning when bound to 0.0.0.0 without auth. The routes
 live in the portable app factory.
 
-The Task 2 contract tests, written against Express, pass unchanged."
+This also fixes a defect the old transport had from the start: it read
+transport.sessionId immediately after connect(), before the SDK assigns
+it during initialize, so the session map was never populated and every
+request after initialize got 'Server not initialized'. The stateless
+design removes the failure mode rather than patching it. Task 2's
+characterization test, which pinned that breakage, is replaced here with
+real tools/list, tools/call and prompts/list assertions."
 ```
 
 ---
