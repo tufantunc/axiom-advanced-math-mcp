@@ -1,6 +1,6 @@
 import { giacEngine } from '../giac/index.js';
 import { formatToolResponse, formatErrorResponse } from './response-formatter.js';
-import { evaluationCache } from './symbolic/cache.js';
+import { evaluationCache, isCacheable } from './symbolic/cache.js';
 import { stripQuotes, stripOrderTerm } from './output-cleanup.js';
 import type { VerificationResult } from './self-verify.js';
 import { unicodeToAscii } from './unicode-normalize.js';
@@ -34,11 +34,16 @@ export async function evalWithLatex(options: EvalOptions) {
   // listToSet, applied solely to solve expressions).
   const cacheKey = resultTransform ? `${giacExpr} transformed` : giacExpr;
 
+  // An expression that mutates CAS state bypasses the cache in both
+  // directions: its result is only valid under that mutation, and the key
+  // does not capture the mutation the *reader* would need to have made.
+  const cacheable = isCacheable(giacExpr);
+
   let result: string;
   let latex: string | undefined;
   let verification: VerificationResult | undefined;
 
-  const cached = evaluationCache.get(cacheKey);
+  const cached = cacheable ? evaluationCache.get(cacheKey) : undefined;
   if (cached) {
     result = cached.result;
     latex = cached.latex;
@@ -72,7 +77,7 @@ export async function evalWithLatex(options: EvalOptions) {
 
     if (verify) verification = await verify(result);
 
-    evaluationCache.set(cacheKey, { result, latex, verification });
+    if (cacheable) evaluationCache.set(cacheKey, { result, latex, verification });
   }
 
   return formatToolResponse({

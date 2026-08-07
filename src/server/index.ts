@@ -3,7 +3,7 @@ import { computeSchema, computeHandler } from './tools/compute/index.js';
 import { verifySchema, verifyHandler } from './tools/verify/index.js';
 import { registerPlotTools } from './tools/plot/index.js';
 import { registerPrompts } from './prompts/index.js';
-import { giacEngine } from './giac/index.js';
+import { withGiacSession } from './giac/session-lock.js';
 import { VERSION } from '../version.js';
 
 /**
@@ -14,17 +14,12 @@ import { VERSION } from '../version.js';
  * `integrate(sqrt(bb^2),bb)` into `bb^2/2` instead of `1/2*bb^2*sign(bb)`,
  * answered with a 200. An LLM has no way to know state persisted.
  *
- * So the tool-call boundary is where the engine is wiped — not `evaluate()`,
- * because a single `compute` legitimately makes several Giac calls (result,
- * latex, verification pass) that must share one session. Measured cost of the
- * `restart`: ~1 ms.
+ * `withGiacSession` closes both halves of that: it resets the engine at the
+ * tool-call boundary (not per-`evaluate()` — one `compute` legitimately makes
+ * several Giac calls that must share a session) AND holds a mutex for the
+ * whole handler, so a concurrent tool call cannot interleave its own
+ * evaluations between this one's reset and its result. See session-lock.ts.
  */
-function withGiacReset<A, R>(handler: (args: A) => Promise<R>): (args: A) => Promise<R> {
-  return async (args: A): Promise<R> => {
-    await giacEngine.reset();
-    return handler(args);
-  };
-}
 
 export function createServer(): McpServer {
   const server = new McpServer(
@@ -79,7 +74,7 @@ The "plot" tool renders function graphs as SVG images.`,
       'Pass a CAS-style problem string (e.g., "solve(x^2-4=0, x)", "diff(x^3, x)", ' +
       '"det([[1,2],[3,4]])", "C(10,3)", "2+3*sin(pi/4)") or any Giac/Xcas expression.',
     computeSchema.shape,
-    withGiacReset(async (args) => computeHandler(args))
+    withGiacSession(async (args) => computeHandler(args))
   );
 
   // --- verify: independent result verification ---
@@ -89,7 +84,7 @@ The "plot" tool renders function graphs as SVG images.`,
       'Supports identity verification (e.g., "sin(x)^2+cos(x)^2 = 1"), ' +
       'solution checking (e.g., "x=2 satisfies x^2-4=0"), and computation assertions.',
     verifySchema.shape,
-    withGiacReset(async (args) => verifyHandler(args as Record<string, unknown>))
+    withGiacSession(async (args) => verifyHandler(args as Record<string, unknown>))
   );
 
   // --- plot: mathjs only, never touches Giac, so no reset needed ---

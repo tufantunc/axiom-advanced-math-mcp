@@ -1,6 +1,7 @@
 import { serve } from '@hono/node-server';
 import { createHttpApp } from './server/transports/http-app.js';
 import { giacEngine } from './server/giac/index.js';
+import { createGiacHealthProbe } from './server/giac/health-probe.js';
 import { createServer } from './server/index.js';
 
 const rawPort = process.env.MCP_PORT || '3000';
@@ -25,26 +26,10 @@ const allowedHosts = (process.env.MCP_ALLOWED_HOSTS || '')
   .map((entry) => entry.trim())
   .filter((entry) => entry.length > 0);
 
-/**
- * Active health probe.
- *
- * `isReady()` alone latches: it goes false on any worker recycle (a routine
- * CAS timeout is enough) and only goes true again when the next `evaluate()`
- * lazily respawns the worker. /health never evaluates, so a fully working
- * server would report 503 indefinitely — and docker-compose's healthcheck
- * (30 s interval, 3 retries) would mark the container unhealthy ~90 s after
- * any timeout. Driving `initialize()` here makes the probe do the respawn
- * itself, so /health reports what the engine can actually do right now.
- */
-async function probeGiac(): Promise<boolean> {
-  try {
-    await giacEngine.initialize();
-    return giacEngine.isReady();
-  } catch (err) {
-    console.error('[http] health probe: giac warmup failed:', err);
-    return false;
-  }
-}
+// Active (it respawns a recycled worker) but bounded (a health endpoint must
+// answer promptly, and a cold `initialize()` can run to the worker host's 30 s
+// init timeout). See createGiacHealthProbe.
+const probeGiac = createGiacHealthProbe(giacEngine);
 
 const app = createHttpApp({
   healthProbe: probeGiac,

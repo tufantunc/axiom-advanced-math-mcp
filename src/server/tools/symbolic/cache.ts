@@ -9,6 +9,33 @@ export interface CacheEntry {
 const MAX_ENTRIES = 100;
 
 /**
+ * Giac constructs that mutate global CAS session state.
+ *
+ * `:=` covers Xcas assignment (`a:=5`) and `=<` is not a thing, so a plain
+ * substring scan is enough; `sto(`/`assume(`/`purge(` are matched with the
+ * open paren so an unrelated identifier like `store_x` is not caught.
+ */
+const STATE_MUTATING = ['sto(', ':=', 'assume(', 'purge('];
+
+/**
+ * Whether a Giac expression may be served from / stored in the shared cache.
+ *
+ * The cache is process-wide and keyed on the expression string alone, so it
+ * is a second state-leak channel that the per-tool-call engine reset cannot
+ * close: a single tool call whose input both mutates CAS state and computes
+ * against it (`sto(9,d); d+1`) would store a result that is only valid under
+ * that mutation, under a key that does not mention it — and hand it to a
+ * later, clean caller.
+ *
+ * Deliberately conservative and syntactic: a false positive is just a cache
+ * miss, which costs a millisecond and is always correct.
+ */
+export function isCacheable(expression: string): boolean {
+  const lower = expression.toLowerCase();
+  return !STATE_MUTATING.some((token) => lower.includes(token));
+}
+
+/**
  * Simple LRU cache for Giac evaluation results.
  */
 class LruCache {

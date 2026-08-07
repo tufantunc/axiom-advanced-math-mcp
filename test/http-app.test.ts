@@ -192,6 +192,36 @@ describe('http-app CAS state isolation between requests', () => {
     // Pre-fix this is "bb^2/2" — correct only under the leaked bb>0.
     expect(text).toContain('sign(bb)');
   });
+
+  // Resetting at the tool-call boundary only makes *sequential* calls
+  // independent. One tool call makes several `evaluate()` calls (the
+  // computation, its latex, its verification pass), so two overlapping calls
+  // interleave against the one shared worker and the reset of one lands in the
+  // middle of the other. Over a stateless multi-client HTTP transport, that
+  // overlap is the normal case, not an edge case — hence the session lock.
+
+  it('does not leak a `sto` assignment into a CONCURRENT request', async () => {
+    const [, reader] = await Promise.all([compute(34, 'sto(5,c1)'), compute(35, 'simplify(c1+1)')]);
+    // Pre-fix this is "6": the writer's `sto` landed between the reader's
+    // reset and the reader's own evaluation.
+    expect(reader).toContain('c1+1');
+    expect(reader).not.toMatch(/\b6\b/);
+  });
+
+  it('does not leak `sto` between four concurrent writers and four readers', async () => {
+    const calls: Promise<string>[] = [];
+    for (let k = 0; k < 4; k++) {
+      calls.push(compute(40 + k, `sto(5,d${k})`));
+      calls.push(compute(50 + k, `simplify(d${k}+1)`));
+    }
+    const results = await Promise.all(calls);
+    const readers = results.filter((_, i) => i % 2 === 1);
+    // Pre-fix all four readers saw their writer's value and answered "6".
+    for (let k = 0; k < 4; k++) {
+      expect(readers[k]).toContain(`d${k}+1`);
+      expect(readers[k]).not.toMatch(/\b6\b/);
+    }
+  });
 });
 
 describe('http-app method rejection and errors', () => {

@@ -1,7 +1,7 @@
 import { giacEngine } from '../../giac/index.js';
 import type { SymbolicToolDefinition } from './types.js';
 import { validateExpression } from './validator.js';
-import { evaluationCache } from './cache.js';
+import { evaluationCache, isCacheable } from './cache.js';
 
 function normalizeLaTeX(s: string): string {
   return s
@@ -36,8 +36,10 @@ export function createSymbolicHandler(definition: SymbolicToolDefinition) {
         }
       }
 
-      // Check cache
-      const cached = evaluationCache.get(giacExpression);
+      // Check cache — skipped entirely for state-mutating expressions, whose
+      // results are only valid under a CAS state the key does not capture.
+      const cacheable = isCacheable(giacExpression);
+      const cached = cacheable ? evaluationCache.get(giacExpression) : undefined;
       if (cached) {
         const content: { type: 'text'; text: string }[] = [
           { type: 'text', text: `Result: ${cached.result}` },
@@ -80,7 +82,7 @@ export function createSymbolicHandler(definition: SymbolicToolDefinition) {
       content.push({ type: 'text', text: `Giac command: ${giacExpression}` });
 
       // Cache the result
-      evaluationCache.set(giacExpression, { result, latex: latexStr });
+      if (cacheable) evaluationCache.set(giacExpression, { result, latex: latexStr });
 
       return { content, isError: false };
     } catch (error) {
