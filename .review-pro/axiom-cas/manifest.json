@@ -1,0 +1,6 @@
+{
+  "name": "axiom-cas",
+  "version": "0.1.0",
+  "description": "Project-local signals for Axiom: CAS expression evaluation, the Giac WASM worker, and the MCP tool surface",
+  "reviewers": ["security", "correctness", "backend", "performance", "tests"]
+}
