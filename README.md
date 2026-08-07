@@ -151,6 +151,8 @@ scales horizontally with no shared state.
 > **Security:** there is no authentication yet. The default bind address is
 > `127.0.0.1`, but `docker/docker-compose.yml` sets `MCP_HOST=0.0.0.0`. If you expose
 > the port, put it behind a reverse proxy that handles authentication.
+> [SECURITY.md](SECURITY.md) documents the full posture — what is protected,
+> what is not, and how to report a vulnerability.
 >
 > `POST /mcp` also validates the `Host` header against an allowlist
 > (`localhost`, `127.0.0.1`, `[::1]` by default) to block DNS rebinding — a

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MAX_EXPRESSION_LENGTH } from '../limits.js';
 
 /**
  * Upper bound on the `problem` field accepted by the compute tool.
@@ -14,13 +15,12 @@ import { z } from 'zod';
  * multi-line system of equations or a long Taylor expansion request -- while
  * keeping worst-case parsing/evaluation cost bounded.
  */
-const MAX_PROBLEM_LENGTH = 8192; // 8 KB
 
 export const computeSchema = z.object({
   problem: z
     .string()
     .min(1)
-    .max(MAX_PROBLEM_LENGTH, `problem must be at most ${MAX_PROBLEM_LENGTH} characters`)
+    .max(MAX_EXPRESSION_LENGTH, `problem must be at most ${MAX_EXPRESSION_LENGTH} characters`)
     .describe(
       'Mathematical problem to solve. Use CAS-style function calls for clarity:\n' +
         '  solve(x^2-4=0, x)        — solve equation\n' +

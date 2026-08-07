@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MAX_EXPRESSION_LENGTH } from '../limits.js';
 import { giacEngine } from '../../giac/index.js';
 import { unicodeToAscii } from '../unicode-normalize.js';
 import { rewriteCombinatorics } from '../combinatorics-rewrite.js';
@@ -8,6 +9,7 @@ export const verifySchema = z.object({
   claim: z
     .string()
     .min(1)
+    .max(MAX_EXPRESSION_LENGTH, `claim must be at most ${MAX_EXPRESSION_LENGTH} characters`)
     .describe(
       'Mathematical claim to verify. Examples:\n' +
         '  "sin(x)^2 + cos(x)^2 = 1"     — identity check\n' +

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MAX_EXPRESSION_LENGTH } from '../limits.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { evaluateFunction } from './evaluator.js';
 import { renderSvg } from './svg-renderer.js';
@@ -6,6 +7,7 @@ import { renderSvg } from './svg-renderer.js';
 const plotFunctionSchema = {
   expression: z
     .string()
+    .max(MAX_EXPRESSION_LENGTH, `expression must be at most ${MAX_EXPRESSION_LENGTH} characters`)
     .describe('Mathematical expression to plot (e.g., "sin(x)", "x^2 - 3*x + 1")'),
   variable: z.string().optional().describe('Variable name (default: "x")'),
   x_min: z.number().optional().describe('Minimum x value (default: -10)'),
