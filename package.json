@@ -3,7 +3,6 @@
   "version": "0.2.0",
   "description": "Advanced Math MCP Server - Symbolic and numerical computation engine for LLMs",
   "type": "module",
-  "main": "./dist/index.js",
   "bin": {
     "axiom-mcp": "./dist/cli.js"
   },
