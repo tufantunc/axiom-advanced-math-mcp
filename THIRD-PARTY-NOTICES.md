@@ -1,37 +1,59 @@
 # Third-Party Notices
 
-This project embeds third-party software. The notes below are an internal
-record of what is bundled and the compliance posture chosen for it.
+This project embeds and depends on third-party software. The notes below record
+what is bundled and how this project satisfies the corresponding license terms.
 
 ## Giac / Xcas — GPL-3.0-or-later
 
-- **Component:** `src/server/giac/giac.wasm.js` (and its `.wasm` payload),
-  compiled from the [geogebra/giac](https://github.com/geogebra/giac) fork of
-  Giac/Xcas by Bernard Parisse (https://xcas.univ-grenoble-alpes.fr/).
+- **Component:** `src/server/giac/giac.wasm.js` (and its embedded `.wasm`
+  payload), compiled from the [geogebra/giac](https://github.com/geogebra/giac)
+  fork of Giac/Xcas by Bernard Parisse
+  (https://xcas.univ-grenoble-alpes.fr/).
 - **License:** GNU General Public License, version 3 or later (GPL-3.0+).
+- **Copyright:** © Bernard Parisse and the Giac/Xcas contributors.
 - **Build:** `scripts/build-giac-wasm.sh` → `docker/build-giac-wasm/`
-  (`GIAC_REF` selects the upstream ref).
+  (`GIAC_REF` selects the upstream ref). The build is fully reproducible from
+  upstream sources; no patches are applied to Giac itself.
 
-### Compliance posture
+### Compliance
 
-This product is distributed **only as a hosted service** (private repository;
-customers reach it over an API and never receive the software). Under GPL-3.0,
-running the software to provide a network service is **not** "conveying"
-(distribution), so the source-disclosure obligation is not triggered for API
-users. This is the GPL "SaaS/ASP" boundary — note it would be closed by the
-AGPL, but Giac is GPL-3.0, not AGPL.
+Axiom links Giac into a combined work. Under GPL-3.0 this obliges the combined
+work to be distributed under GPL-3.0-compatible terms, so **this entire project
+is licensed GPL-3.0-or-later** — see [LICENSE](LICENSE).
 
-**Load-bearing constraint — do NOT, without a separate commercial Giac
-license from the upstream author:**
+The corresponding source for every part of the distributed work is publicly
+available at https://github.com/tufantunc/axiom-advanced-math-mcp, which
+satisfies the source-availability requirement of GPL-3.0 §6. Giac's own
+corresponding source is available from the upstream repository above.
 
-- publish this package to npm or any public registry,
-- make this repository public,
-- ship an on-prem / self-hosted / downloadable build to any customer,
-- distribute a demo build.
+### What this means for you
 
-Each of those is "conveying" and would place the entire combined work under
-GPL-3.0 for that copy. For any non-hosted model, obtain a commercial license
-from Bernard Parisse first.
+- **Running Axiom, including as a service, is unrestricted.** The GPL places no
+  conditions on use.
+- **Calling Axiom from your own agent does not make your agent GPL.** Your agent
+  and this server are separate programs communicating at arm's length over the
+  Model Context Protocol (a separate process, over stdio or HTTP). That is not
+  linking, and it does not create a combined work.
+- **Redistributing Axiom — modified or not — requires GPL-3.0 terms.** Ship the
+  source (or a written offer for it) alongside any binary or bundled copy you
+  distribute, and keep this notice intact.
+- **Embedding Giac in a proprietary product is not possible under this
+  license.** That requires a separate commercial Giac license from the upstream
+  author.
 
-This file is an internal record, not legal advice. Confirm the commercial
-posture with an IP attorney before relying on it.
+This file is a compliance record, not legal advice.
+
+## Runtime dependencies
+
+These are declared in `package.json` and installed from npm rather than vendored
+into this repository. Their licenses are permissive and compatible with
+GPL-3.0-or-later:
+
+| Package                     | License    |
+| --------------------------- | ---------- |
+| `@modelcontextprotocol/sdk` | MIT        |
+| `mathjs`                    | Apache-2.0 |
+| `express`                   | MIT        |
+| `zod`                       | MIT        |
+
+Full license texts ship inside each package under `node_modules/`.

@@ -1,8 +1,9 @@
 # Axiom Advanced Math MCP Server
 
+[![License: GPL v3+](https://img.shields.io/badge/License-GPLv3+-blue.svg)](LICENSE)
 [![Node.js >=20](https://img.shields.io/badge/Node.js->=20-green.svg)](https://nodejs.org/)
 [![MCP](https://img.shields.io/badge/MCP-1.25.3-blue)](https://modelcontextprotocol.io/)
-[![Tests](https://img.shields.io/badge/Tests-510%20passed-green.svg)](https://github.com/anomalyco/axiom-advanced-math-mcp)
+[![Tests](https://img.shields.io/badge/Tests-616%20passed-green.svg)](https://github.com/tufantunc/axiom-advanced-math-mcp)
 
 Advanced mathematical computation engine for LLMs powered by the Model Context Protocol.
 
@@ -73,7 +74,7 @@ Axiom exposes **3 MCP tools**. Almost everything flows through `compute`, a sing
 
 ```bash
 # Clone and install
-git clone https://github.com/anomalyco/axiom-advanced-math-mcp.git
+git clone https://github.com/tufantunc/axiom-advanced-math-mcp.git
 cd axiom-advanced-math-mcp
 npm install
 
@@ -372,7 +373,7 @@ npm run test:watch
 npm run test:coverage
 ```
 
-**Test coverage:** 510 tests, 100% pass rate.
+**Test coverage:** 616 tests, 100% pass rate.
 
 ### WASM Build (Giac)
 
@@ -392,6 +393,20 @@ Build creates `giac.wasm` and `giac.wasm.js` in `docker/wasm-output/`. Copy to `
 
 ## License
 
-Proprietary — all rights reserved. Distributed only as a hosted service; not
-licensed for redistribution or self-hosting. This server embeds Giac (GPL3);
-see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+**GNU General Public License v3.0 or later** — see [LICENSE](LICENSE).
+
+Axiom embeds [Giac/Xcas](https://xcas.univ-grenoble-alpes.fr/), which is
+GPL-3.0-or-later, so the combined work carries the same license. Details and
+attribution: [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+
+### Does the GPL affect my agent?
+
+**No.** Your agent talks to Axiom over the Model Context Protocol — a separate
+process, over stdio or HTTP. Separate programs communicating at arm's length
+are not a combined work, so running Axiom alongside your own agent puts no
+license obligation on your code, whatever license it uses. Running the software
+is unrestricted under the GPL, including running it as a service.
+
+The copyleft terms apply when you **redistribute** Axiom itself — shipping it
+(modified or not) inside a product you hand to someone else. In that case, pass
+along the source under GPL-3.0 and keep the notices intact.

@@ -8,7 +8,9 @@
     "axiom-mcp": "./dist/cli.js"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && npm run copy:wasm",
+    "copy:wasm": "node scripts/copy-wasm-asset.mjs",
+    "prepack": "npm run build",
     "build:giac:wasm": "bash scripts/build-giac-wasm.sh",
     "start": "node dist/cli.js",
     "start:http": "node dist/http.js",
@@ -57,8 +59,15 @@
     "claude"
   ],
   "author": "Tufan Tunç",
-  "license": "UNLICENSED",
-  "private": true,
+  "license": "GPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tufantunc/axiom-advanced-math-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/tufantunc/axiom-advanced-math-mcp/issues"
+  },
+  "homepage": "https://github.com/tufantunc/axiom-advanced-math-mcp#readme",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.25.3",
     "express": "^4.18.2",
@@ -81,9 +90,9 @@
   },
   "files": [
     "dist",
-    "src/server/giac",
     "scripts",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "THIRD-PARTY-NOTICES.md"
   ]
 }

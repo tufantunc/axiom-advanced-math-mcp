@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { startStdioServer } from './server/transports/stdio.js';
 
 startStdioServer().catch((err) => {

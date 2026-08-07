@@ -147,3 +147,6 @@ vite.config.ts.timestamp-*
 
 # Stray worktree/session artifacts
 .claire/
+
+# Internal business/strategy notes — never publish
+docs/business/
