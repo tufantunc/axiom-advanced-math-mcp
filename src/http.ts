@@ -1,11 +1,15 @@
 import { serve } from '@hono/node-server';
 import { createHttpApp } from './server/transports/http-app.js';
 import { giacEngine } from './server/giac/index.js';
+import { createServer } from './server/index.js';
 
 const port = parseInt(process.env.MCP_PORT || '3000', 10);
 const host = process.env.MCP_HOST || '127.0.0.1';
 
-const app = createHttpApp({ healthProbe: () => giacEngine.isReady() });
+const app = createHttpApp({
+  healthProbe: () => giacEngine.isReady(),
+  createServer,
+});
 
 async function start(): Promise<void> {
   await giacEngine.initialize();

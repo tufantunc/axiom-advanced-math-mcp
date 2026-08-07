@@ -16,6 +16,7 @@ export default defineConfig({
       'test/integration.test.ts',
       'test/golden/tool.golden.test.ts',
       'test/http-contract.test.ts',
+      'test/http-portability.test.ts',
     ],
     testTimeout: 60000,
     hookTimeout: 60000,

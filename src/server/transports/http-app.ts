@@ -1,6 +1,6 @@
 import { Hono, type Context } from 'hono';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
-import { createServer } from '../index.js';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 export interface HttpAppOptions {
   /**
@@ -13,6 +13,18 @@ export interface HttpAppOptions {
    * Enforced by test/http-portability.test.ts.
    */
   healthProbe: () => boolean;
+
+  /**
+   * Builds a fresh MCP server instance for a single request.
+   *
+   * Injected rather than imported: calling `createServer()` here directly
+   * would pull `node:child_process` into this module via
+   * index.ts -> tools/{compute,verify}/index.ts -> giac/index.ts ->
+   * wrapper.ts -> worker-host.ts, and this module must stay free of Node
+   * APIs so it can run unchanged on Workers/Deno/Bun.
+   * Enforced by test/http-portability.test.ts.
+   */
+  createServer: () => McpServer;
 }
 
 /**
@@ -54,7 +66,7 @@ export function createHttpApp(options: HttpAppOptions): Hono {
     // answers with an SSE stream, and the close() below truncates the body to
     // "". With it, every response is a complete JSON body and closing once
     // handleRequest resolves is safe by construction.
-    const server = createServer();
+    const server = options.createServer();
     const transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true,

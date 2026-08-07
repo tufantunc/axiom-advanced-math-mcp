@@ -36,7 +36,7 @@ const INIT_MSG = {
 
 describe('http-app /health', () => {
   it('returns 200 and giac:true when the probe reports ready', async () => {
-    const app = createHttpApp({ healthProbe: () => true });
+    const app = createHttpApp({ healthProbe: () => true, createServer });
     const res = await app.fetch(new Request('http://localhost/health'));
     expect(res.status).toBe(200);
     const body = (await res.json()) as { status: string; giac: boolean; transport: string };
@@ -44,7 +44,7 @@ describe('http-app /health', () => {
   });
 
   it('returns 503 and giac:false when the probe reports not ready', async () => {
-    const app = createHttpApp({ healthProbe: () => false });
+    const app = createHttpApp({ healthProbe: () => false, createServer });
     const res = await app.fetch(new Request('http://localhost/health'));
     expect(res.status).toBe(503);
     const body = (await res.json()) as { status: string; giac: boolean };
@@ -54,7 +54,7 @@ describe('http-app /health', () => {
 });
 
 describe('http-app POST /mcp (stateless)', () => {
-  const app = createHttpApp({ healthProbe: () => true });
+  const app = createHttpApp({ healthProbe: () => true, createServer });
 
   it('answers initialize with the correct serverInfo', async () => {
     const { res, json } = await post(app, INIT_MSG);
@@ -106,7 +106,7 @@ describe('http-app POST /mcp (stateless)', () => {
 });
 
 describe('http-app method rejection and errors', () => {
-  const app = createHttpApp({ healthProbe: () => true });
+  const app = createHttpApp({ healthProbe: () => true, createServer });
 
   it('rejects GET /mcp with 405 (no SSE stream offered)', async () => {
     const res = await app.fetch(new Request('http://localhost/mcp', { method: 'GET' }));
@@ -147,6 +147,7 @@ describe('http-app method rejection and errors', () => {
       healthProbe: () => {
         throw new Error('probe exploded at Object.<anonymous> (/secret/path.ts:1:1)');
       },
+      createServer,
     });
     const res = await boom.fetch(new Request('http://localhost/health'));
     expect(res.status).toBe(500);
