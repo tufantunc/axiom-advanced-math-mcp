@@ -1087,6 +1087,7 @@ Temporarily add this line to the top of `src/server/transports/http-app.ts`:
 
 ```ts
 import { randomUUID } from 'node:crypto';
+void randomUUID; // keep the import alive — tsc elides unused imports entirely
 ```
 
 Then run:

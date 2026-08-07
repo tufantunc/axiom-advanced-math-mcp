@@ -166,6 +166,7 @@ existing `src/server/transports/stdio.ts` convention:
 ```ts
 export interface HttpAppOptions {
   healthProbe: () => boolean;
+  createServer: () => McpServer; // type-only import; erased from the build
 }
 
 export function createHttpApp(options: HttpAppOptions): Hono;
@@ -176,11 +177,24 @@ signal handling. Web-standard `Request`/`Response` only. This is the file a
 future Workers entrypoint would consume unchanged via
 `export default { fetch: app.fetch }`, and it is the target of the tests.
 
-The `healthProbe` injection is load-bearing, not ceremony. Calling
-`giacEngine.isReady()` directly would pull
-`src/server/giac/index.ts → wrapper.ts → worker-host.ts → node:child_process`
-into the app module and silently destroy the portability boundary. Injection
-keeps the app layer ignorant of Giac.
+**Both injections are load-bearing, and the second one is the important one.**
+Everything reachable from this module must be Node-free, and the module's two
+natural dependencies both violate that:
+
+- `giacEngine.isReady()` for `/health` would pull in
+  `giac/index.ts → wrapper.ts → worker-host.ts → node:child_process`.
+- `createServer()` for `POST /mcp` reaches the same place by a longer route:
+  `server/index.ts → tools/verify/index.ts → giac/index.ts → wrapper.ts →
+  worker-host.ts → node:child_process`.
+
+The second chain was missed in the first draft of this design, which injected
+only the health probe and declared the boundary clean. The portability guard
+(below) caught it against the real build. That is the argument for the guard in
+one sentence: a boundary asserted in a comment had already been breached by the
+module's most important route.
+
+Both dependencies are therefore supplied by the host. The Node entrypoint knows
+about Giac; the app layer does not.
 
 ### `src/http.ts` — Node entrypoint (~30 lines)
 
