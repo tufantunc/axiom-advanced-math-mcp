@@ -5,17 +5,30 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 /**
  * Replaces the 100 kb cap `express.json()` used to provide before the Hono
- * migration. `c.req.json()` has no size limit of its own, and
- * `@hono/node-server` buffers the whole request body before handing it to
- * Hono — so without an explicit cap, an unauthenticated `POST /mcp` is a
- * memory-exhaustion vector for anyone who can reach the port.
+ * migration. `c.req.json()` has no size limit of its own and buffers the
+ * entire body into memory while parsing it — so without an explicit cap, an
+ * unauthenticated `POST /mcp` is a memory-exhaustion vector for anyone who
+ * can reach the port.
  *
  * 1 MB is generous for MCP payloads (the largest realistic case is a
  * regression dataset embedded in a `tools/call` argument) while still
  * bounding how much an unauthenticated caller can force this process to
  * buffer per request.
  */
-const MAX_MCP_BODY_BYTES = 1024 * 1024;
+export const MAX_MCP_BODY_BYTES = 1024 * 1024;
+
+/**
+ * Builds the standard JSON-RPC error envelope used for every error response
+ * this app returns outside of a parsed JSON-RPC message (host/origin
+ * rejection, body-limit, parse error, method-not-allowed, not-found, and
+ * unhandled errors). `id` is always `null` here because none of these
+ * failures ever get far enough to know the request's real id — either the
+ * body was never parsed, or the failure happened before the transport had a
+ * chance to look at it.
+ */
+function jsonRpcError(code: number, message: string) {
+  return { jsonrpc: '2.0' as const, id: null, error: { code, message } };
+}
 
 /**
  * Loopback-only default for `allowedHosts`. Kept as bracketed `[::1]` to
@@ -27,18 +40,32 @@ const DEFAULT_ALLOWED_HOSTS = ['localhost', '127.0.0.1', '[::1]'];
 
 /**
  * Pulls just the hostname out of a `Host` header value, discarding the
- * port. Naively splitting on the first `:` would mangle a bracketed IPv6
- * literal like `[::1]:3000` (or truncate bare `::1` to an empty string), so
+ * port, and normalizes it for allowlist comparison.
+ *
+ * Naively splitting on the first `:` would mangle a bracketed IPv6 literal
+ * like `[::1]:3000` (or truncate bare `::1` to an empty string), so
  * bracketed hosts are unwrapped explicitly before falling back to a plain
  * `host:port` split.
+ *
+ * Lowercased because hostnames are case-insensitive (`Host: LOCALHOST` and
+ * `Host: localhost` must be the same request) but `Set` membership is not —
+ * comparing raw header bytes against a raw config string would fail-closed
+ * on any case mismatch, on either side, for no security benefit. A trailing
+ * FQDN dot (`localhost.`) is stripped for the same reason: it's a different
+ * string but the same host.
  */
 function extractHostname(hostHeader: string): string {
-  if (hostHeader.startsWith('[')) {
-    const closeBracket = hostHeader.indexOf(']');
-    return closeBracket === -1 ? hostHeader : hostHeader.slice(1, closeBracket);
-  }
-  const colonIndex = hostHeader.indexOf(':');
-  return colonIndex === -1 ? hostHeader : hostHeader.slice(0, colonIndex);
+  const withoutPort = hostHeader.startsWith('[')
+    ? (() => {
+        const closeBracket = hostHeader.indexOf(']');
+        return closeBracket === -1 ? hostHeader : hostHeader.slice(1, closeBracket);
+      })()
+    : (() => {
+        const colonIndex = hostHeader.indexOf(':');
+        return colonIndex === -1 ? hostHeader : hostHeader.slice(0, colonIndex);
+      })();
+  const lower = withoutPort.toLowerCase();
+  return lower.endsWith('.') ? lower.slice(0, -1) : lower;
 }
 
 export interface HttpAppOptions {
@@ -132,16 +159,41 @@ export function createHttpApp(options: HttpAppOptions): Hono {
       const hostname = hostHeader ? extractHostname(hostHeader) : '';
       if (!hostHeader || !allowedHosts.has(hostname)) {
         return c.json(
-          {
-            jsonrpc: '2.0',
-            id: null,
-            error: {
-              code: -32000,
-              message: `Host not allowed: ${hostHeader ?? '(missing)'}. Set MCP_ALLOWED_HOSTS to permit this host.`,
-            },
-          },
+          jsonRpcError(
+            -32000,
+            `Host not allowed: ${hostHeader ?? '(missing)'}. Set MCP_ALLOWED_HOSTS to permit this host.`
+          ),
           403
         );
+      }
+      await next();
+    },
+    // Origin validation, alongside the Host check above. Not currently
+    // exploitable on its own -- the SDK's 415 on non-JSON content types and
+    // the 405 a CORS preflight falls through to (with no
+    // Access-Control-Allow-Origin) already stop a browser from mounting
+    // this attack -- but that protection lives in a dependency's strictness,
+    // not in a check this app owns. An absent Origin is allowed outright:
+    // that's the normal shape of a non-browser client (curl, another
+    // server, an MCP client library) and must keep working.
+    async (c, next) => {
+      const origin = c.req.header('origin');
+      if (origin) {
+        let originHost = '';
+        try {
+          originHost = extractHostname(new URL(origin).host);
+        } catch {
+          // Unparseable Origin header -- fail closed rather than guess.
+        }
+        if (!allowedHosts.has(originHost)) {
+          return c.json(
+            jsonRpcError(
+              -32000,
+              `Origin not allowed: ${origin}. Set MCP_ALLOWED_HOSTS to permit this host.`
+            ),
+            403
+          );
+        }
       }
       await next();
     },
@@ -149,14 +201,7 @@ export function createHttpApp(options: HttpAppOptions): Hono {
       maxSize: MAX_MCP_BODY_BYTES,
       onError: (c) =>
         c.json(
-          {
-            jsonrpc: '2.0',
-            id: null,
-            error: {
-              code: -32000,
-              message: `Request body exceeds the ${MAX_MCP_BODY_BYTES} byte limit`,
-            },
-          },
+          jsonRpcError(-32000, `Request body exceeds the ${MAX_MCP_BODY_BYTES} byte limit`),
           413
         ),
     }),
@@ -167,10 +212,7 @@ export function createHttpApp(options: HttpAppOptions): Hono {
       try {
         parsed = await c.req.json();
       } catch {
-        return c.json(
-          { jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } },
-          400
-        );
+        return c.json(jsonRpcError(-32700, 'Parse error'), 400);
       }
 
       // Stateless: a throwaway server + transport per request. This costs
@@ -214,27 +256,22 @@ export function createHttpApp(options: HttpAppOptions): Hono {
           ? 'there are no sessions to terminate'
           : 'the method is not supported';
     c.header('Allow', 'POST');
-    return c.json(
-      { jsonrpc: '2.0', id: null, error: { code: -32000, message: `Method not allowed: ${reason}` } },
-      405
-    );
+    return c.json(jsonRpcError(-32000, `Method not allowed: ${reason}`), 405);
   });
 
-  app.notFound((c) =>
-    c.json(
-      { jsonrpc: '2.0', id: null, error: { code: -32601, message: 'Not found' } },
-      404
-    )
-  );
+  // -32601 ("method not found") is a JSON-RPC-spec code meaning the RPC
+  // *method* named in a parsed message doesn't exist. A 404 here fires
+  // before any JSON-RPC message is even parsed -- it's an unknown HTTP
+  // *path* -- so it reuses the implementation-defined -32000 already used
+  // for the other rejections above instead of overloading a spec code that
+  // means something more specific.
+  app.notFound((c) => c.json(jsonRpcError(-32000, 'Not found'), 404));
 
   app.onError((err, c) => {
     // Full detail to stderr; never into the response body. This is an
     // open-source server — leaking internals buys nothing.
     console.error('[http] unhandled error:', err);
-    return c.json(
-      { jsonrpc: '2.0', id: null, error: { code: -32603, message: 'Internal error' } },
-      500
-    );
+    return c.json(jsonRpcError(-32603, 'Internal error'), 500);
   });
 
   return app;

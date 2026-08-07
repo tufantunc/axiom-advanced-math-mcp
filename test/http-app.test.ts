@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createHttpApp } from '../src/server/transports/http-app.js';
+import { createHttpApp, MAX_MCP_BODY_BYTES } from '../src/server/transports/http-app.js';
 import { createServer } from '../src/server/index.js';
 import { VERSION } from '../src/version.js';
 
@@ -133,6 +133,28 @@ describe('http-app POST /mcp (stateless)', () => {
     });
     const text = json.result.content.map((c: { text: string }) => c.text).join('\n');
     expect(text).toContain('-cos(x)+cos(x)^3/3');
+  });
+
+  it('rejects an oversized compute problem before it ever reaches mathjs/Giac', async () => {
+    // Guards the compute schema's `.max()` on `problem` (see
+    // src/server/tools/compute/schema.ts): without it, an oversized problem
+    // that happens to classify as arithmetic is routed straight to a
+    // synchronous, un-timed-out mathjs.evaluate() on the event loop.
+    //
+    // The SDK reports schema-validation failures as a tool-call result with
+    // isError: true (not a top-level JSON-RPC error) -- MCP error -32602 is
+    // embedded in the result's text content.
+    const { res, json } = await post(app, {
+      jsonrpc: '2.0',
+      id: 4,
+      method: 'tools/call',
+      params: { name: 'compute', arguments: { problem: '1+'.repeat(5000) } },
+    });
+    expect(res.status).toBe(200);
+    expect(json.result.isError).toBe(true);
+    const text = json.result.content.map((c: { text: string }) => c.text).join('\n');
+    expect(text).toContain('-32602');
+    expect(text).toMatch(/problem must be at most 8192 characters/);
   });
 
   it('never issues a session id', async () => {
@@ -271,6 +293,59 @@ describe('http-app method rejection and errors', () => {
     expect(body.error.message).toMatch(/exceeds/i);
   });
 
+  /**
+   * Builds a JSON-RPC `ping` request body whose exact byte length is
+   * `targetBytes`, by padding an unused params field. All characters
+   * involved (JSON structure, digits, `x`) are ASCII, so `.length` and the
+   * UTF-8 byte length coincide -- no separate byte-counting needed.
+   */
+  function pingBodyOfSize(targetBytes: number): string {
+    const withoutPad = JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'ping',
+      params: { pad: '' },
+    });
+    const padLength = targetBytes - withoutPad.length;
+    if (padLength < 0) {
+      throw new Error(`target ${targetBytes} is smaller than the unpadded body (${withoutPad.length})`);
+    }
+    return JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'ping',
+      params: { pad: 'x'.repeat(padLength) },
+    });
+  }
+
+  it('accepts a body exactly at the 1 MB limit', async () => {
+    const body = pingBodyOfSize(MAX_MCP_BODY_BYTES);
+    expect(Buffer.byteLength(body)).toBe(MAX_MCP_BODY_BYTES);
+    const res = await app.fetch(
+      new Request('http://localhost/mcp', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', host: 'localhost' },
+        body,
+      })
+    );
+    expect(res.status).not.toBe(413);
+  });
+
+  it('rejects a body one byte over the 1 MB limit with 413', async () => {
+    const body = pingBodyOfSize(MAX_MCP_BODY_BYTES + 1);
+    expect(Buffer.byteLength(body)).toBe(MAX_MCP_BODY_BYTES + 1);
+    const res = await app.fetch(
+      new Request('http://localhost/mcp', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', host: 'localhost' },
+        body,
+      })
+    );
+    expect(res.status).toBe(413);
+    const responseBody = (await res.json()) as { error: { code: number; message: string } };
+    expect(responseBody.error.code).toBe(-32000);
+  });
+
   it('maps a malformed JSON body to -32700', async () => {
     const res = await app.fetch(
       new Request('http://localhost/mcp', {
@@ -285,12 +360,14 @@ describe('http-app method rejection and errors', () => {
     expect(body.error.message).toBe('Parse error');
   });
 
-  it('returns a JSON-RPC shaped 404 for unknown paths', async () => {
+  it('returns a JSON-RPC shaped 404 for unknown paths, using -32000 (not the ' +
+    'spec-defined -32601 "method not found", since no JSON-RPC message was ' +
+    'ever parsed here)', async () => {
     const res = await app.fetch(new Request('http://localhost/nope'));
     expect(res.status).toBe(404);
     const body = (await res.json()) as { jsonrpc: string; error: { code: number } };
     expect(body.jsonrpc).toBe('2.0');
-    expect(body.error.code).toBe(-32601);
+    expect(body.error.code).toBe(-32000);
   });
 
   it('never leaks a stack trace in an internal error body', async () => {
@@ -371,6 +448,38 @@ describe('http-app Host header validation (DNS-rebinding protection)', () => {
     expect(nowRejected.status).toBe(403);
   });
 
+  it('allows Host: LOCALHOST (comparison is case-insensitive)', async () => {
+    const app = createHttpApp({ healthProbe: () => true, createServer });
+    const res = await postWithHost(app, 'LOCALHOST');
+    expect(res.status).toBe(200);
+  });
+
+  it('allows Host: localhost. (a trailing FQDN dot is stripped)', async () => {
+    const app = createHttpApp({ healthProbe: () => true, createServer });
+    const res = await postWithHost(app, 'localhost.');
+    expect(res.status).toBe(200);
+  });
+
+  it('a mixed-case configured allowlist entry matches a lowercase Host header', async () => {
+    const app = createHttpApp({
+      healthProbe: () => true,
+      createServer,
+      allowedHosts: ['MCP.Example.com'],
+    });
+    const res = await postWithHost(app, 'mcp.example.com');
+    expect(res.status).toBe(200);
+  });
+
+  it('a mixed-case configured allowlist entry also matches a same-case Host header', async () => {
+    const app = createHttpApp({
+      healthProbe: () => true,
+      createServer,
+      allowedHosts: ['MCP.Example.com'],
+    });
+    const res = await postWithHost(app, 'MCP.Example.com');
+    expect(res.status).toBe(200);
+  });
+
   it('rejects a missing Host header (fail closed)', async () => {
     const app = createHttpApp({ healthProbe: () => true, createServer });
     const res = await postWithHost(app, null);
@@ -383,6 +492,77 @@ describe('http-app Host header validation (DNS-rebinding protection)', () => {
     const app = createHttpApp({ healthProbe: () => true, createServer });
     const res = await app.fetch(
       new Request('http://placeholder/health', { headers: { host: 'evil.example.com' } })
+    );
+    expect(res.status).toBe(200);
+  });
+});
+
+describe('http-app Origin header validation', () => {
+  /** POST /mcp with a Host header always present and an optional Origin header. */
+  async function postWithOrigin(app: ReturnType<typeof createHttpApp>, origin: string | undefined) {
+    const headers: Record<string, string> = {
+      'content-type': 'application/json',
+      accept: 'application/json, text/event-stream',
+      host: 'localhost',
+    };
+    if (origin !== undefined) headers.origin = origin;
+    return app.fetch(
+      new Request('http://placeholder/mcp', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }),
+      })
+    );
+  }
+
+  it('allows a request with no Origin header (non-browser clients)', async () => {
+    const app = createHttpApp({ healthProbe: () => true, createServer });
+    const res = await postWithOrigin(app, undefined);
+    expect(res.status).toBe(200);
+  });
+
+  it('allows an Origin whose host is in the allowlist', async () => {
+    const app = createHttpApp({ healthProbe: () => true, createServer });
+    const res = await postWithOrigin(app, 'http://localhost:5173');
+    expect(res.status).toBe(200);
+  });
+
+  it('rejects an Origin whose host is not in the allowlist, with a JSON-RPC error naming it', async () => {
+    const app = createHttpApp({ healthProbe: () => true, createServer });
+    const res = await postWithOrigin(app, 'https://evil.example.com');
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { jsonrpc: string; error: { code: number; message: string } };
+    expect(body.jsonrpc).toBe('2.0');
+    expect(body.error.code).toBe(-32000);
+    expect(body.error.message).toContain('evil.example.com');
+  });
+
+  it('honors a custom allowedHosts list for Origin the same way it does for Host', async () => {
+    const app = createHttpApp({
+      healthProbe: () => true,
+      createServer,
+      allowedHosts: ['mcp.example.com'],
+    });
+    const headers = {
+      'content-type': 'application/json',
+      accept: 'application/json, text/event-stream',
+      host: 'mcp.example.com',
+      origin: 'https://mcp.example.com',
+    };
+    const res = await app.fetch(
+      new Request('http://placeholder/mcp', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }),
+      })
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it('does not apply the Origin check to GET /health', async () => {
+    const app = createHttpApp({ healthProbe: () => true, createServer });
+    const res = await app.fetch(
+      new Request('http://placeholder/health', { headers: { origin: 'https://evil.example.com' } })
     );
     expect(res.status).toBe(200);
   });

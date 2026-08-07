@@ -1,9 +1,26 @@
 import { z } from 'zod';
 
+/**
+ * Upper bound on the `problem` field accepted by the compute tool.
+ *
+ * The transport already caps the whole HTTP body at 1 MB (see
+ * `MAX_MCP_BODY_BYTES` in http-app.ts), but that limit exists to bound
+ * memory use for an unauthenticated caller -- it says nothing about what's a
+ * *reasonable* CAS expression. Without a tighter cap here, an oversized
+ * `problem` that happens to classify as arithmetic gets routed straight to a
+ * synchronous, un-timed-out `mathjs.evaluate()` on the event loop.
+ *
+ * 8 KB comfortably covers realistic symbolic-math input -- even a gnarly
+ * multi-line system of equations or a long Taylor expansion request -- while
+ * keeping worst-case parsing/evaluation cost bounded.
+ */
+const MAX_PROBLEM_LENGTH = 8192; // 8 KB
+
 export const computeSchema = z.object({
   problem: z
     .string()
     .min(1)
+    .max(MAX_PROBLEM_LENGTH, `problem must be at most ${MAX_PROBLEM_LENGTH} characters`)
     .describe(
       'Mathematical problem to solve. Use CAS-style function calls for clarity:\n' +
         '  solve(x^2-4=0, x)        — solve equation\n' +

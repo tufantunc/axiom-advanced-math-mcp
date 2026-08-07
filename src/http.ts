@@ -53,7 +53,22 @@ async function start(): Promise<void> {
   });
 
   const shutdown = () => {
-    server.close(() => process.exit(0));
+    // server.close() waits for in-flight connections to finish, with no
+    // deadline of its own -- a single wedged connection (or a Giac call that
+    // never returns) would extend shutdown indefinitely. `.unref()` keeps
+    // this timer from itself holding the process open once close() succeeds
+    // first, and the timer is cleared in that case so a clean shutdown never
+    // waits out the full 10 s.
+    const forceExitTimer = setTimeout(() => {
+      console.error('[http] graceful shutdown timed out after 10s; forcing exit');
+      process.exit(1);
+    }, 10_000);
+    forceExitTimer.unref();
+
+    server.close(() => {
+      clearTimeout(forceExitTimer);
+      process.exit(0);
+    });
   };
 
   process.on('SIGTERM', shutdown);
