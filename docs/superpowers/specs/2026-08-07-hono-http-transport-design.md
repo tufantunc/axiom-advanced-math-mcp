@@ -21,12 +21,11 @@ carries three problems that the open-source context makes material:
    | --- | --- | --- |
    | Baseline (`sdk` + `mathjs` + `zod`, no HTTP framework) | 103 | — |
    | Current (baseline + `express@4`) | **135** | 45 MB |
-   | After (baseline + `hono` + `@hono/node-server` + `@hono/mcp`) | **105** | 43 MB |
+   | After (baseline + `hono` + `@hono/node-server`) | **103** | 43 MB |
 
-   So Express contributes **32 packages** and the entire Hono stack contributes
-   **2** — a net removal of **30 packages (−22%)**. `hono` and
-   `@hono/node-server` are themselves zero-dependency; `@hono/mcp` adds only
-   `hono-rate-limiter` and `pkce-challenge`.
+   Express contributes **32 packages**; `hono` and `@hono/node-server`
+   contribute **zero** — both are zero-dependency, so the post-migration tree
+   is byte-for-byte the baseline. Net removal: **32 packages (−24%)**.
 
    Note the disk saving is small (2 MB): the MCP SDK and mathjs dominate the
    tree, and no framework choice changes that. The argument here is package
@@ -46,7 +45,8 @@ carries three problems that the open-source context makes material:
 
 ### Goals (agreed with user)
 
-- Replace Express with Hono using `@hono/mcp`'s `StreamableHTTPTransport`.
+- Replace Express with Hono, using the MCP SDK's
+  `WebStandardStreamableHTTPServerTransport`.
 - Convert the transport to fully stateless.
 - Give the transport real test coverage, currently at zero.
 - Structure the code so a Cloudflare Workers entrypoint becomes possible later
@@ -59,43 +59,85 @@ carries three problems that the open-source context makes material:
   authorization spec makes the MCP server a *resource server* and puts the
   authorization server explicitly out of scope, which means every self-hosting
   user would have to stand up an AS (Auth0, Keycloak, …). That is a project of
-  its own and it lands cleanly on top of this one. `@hono/mcp` already ships
-  `@hono/mcp/auth` (`mcpAuthRouter`, `bearerAuth`, `ProxyOAuthServerProvider`),
-  so the follow-up stays on the same package.
+  its own and it lands cleanly on top of this one. The SDK already ships the
+  pieces (`server/auth/middleware/bearerAuth`, `providers/proxyProvider`,
+  `handlers/authorize|token|revoke`, `router`), so the follow-up needs no new
+  dependency either.
 - **A Workers entrypoint and a Workers-compatible Giac build.** Giac's loader
   uses `new Function()` and runtime `WebAssembly.instantiate(buffer)`, both
   blocked on Workers, and its linear memory is 64 MB against a 128 MB isolate
   limit. Separate, much larger project. This spec only avoids foreclosing it.
-- **Rate limiting.** `hono-rate-limiter` arrives as a transitive dependency of
-  `@hono/mcp`; we do not wire it up. No demonstrated need.
+- **Rate limiting.** No demonstrated need.
 - **`benchmark/`.** Verified not to use Express. Untouched.
 
 ## Approach
 
-Three options were considered:
+Four options were considered:
 
-- **A. Hono + `@hono/mcp` `StreamableHTTPTransport`** — chosen.
-- **B. Hono + `@hono/node-server`, driving the SDK's own
-  `StreamableHTTPServerTransport` through raw Node `req`/`res`.** Uses only
-  official SDK code, but re-binds the transport to Node HTTP objects and so
-  kills the portability goal. Also leaves Hono used as a router while
-  bypassing its `Response` model.
-- **C. Stay on Express, delete the dead session code.** Lowest risk, no new
-  dependencies, but keeps 44 packages and forecloses Workers.
+- **A. Hono + the SDK's `WebStandardStreamableHTTPServerTransport`** — chosen.
+- **B. Hono + the community `@hono/mcp` `StreamableHTTPTransport`.** Initially
+  chosen, then rejected on evidence — see below.
+- **C. Hono + `@hono/node-server`, driving the SDK's Node-flavoured
+  `StreamableHTTPServerTransport` through raw `req`/`res`.** Official SDK code,
+  but re-binds the transport to Node HTTP objects and so kills the portability
+  goal. Also leaves Hono used as a router while bypassing its `Response` model.
+- **D. Stay on Express, delete the dead session code.** Lowest risk, no new
+  dependencies, but keeps 32 packages and forecloses Workers.
 
-**A** was chosen because the two forward-looking goals — portability and the
-Spec 2 OAuth layer — point at the same package, and the dependency arithmetic
-is decisive. Verified from the installed package's type definitions:
-`StreamableHTTPTransport` accepts the SDK's own
-`StreamableHTTPServerTransportOptions` (so `sessionIdGenerator: undefined`
-selects stateless mode) and exposes
-`handleRequest(ctx: Context): Promise<Response | undefined>` — pure Web
-Standards, no Node APIs.
+### Why B was rejected
 
-**Known risk:** `@hono/mcp` is at `0.3.1`, pre-1.0 and community-maintained.
-Mitigation: it is referenced from exactly one file (`http-app.ts`) and the test
-suite written in this spec pins the behaviour, so replacing it later is a
-single-file change.
+B was the original choice. A spike run before writing any implementation code
+falsified it. Under `@hono/mcp`, a stateless `POST /mcp` that closes the
+transport once `handleRequest` resolves returns:
+
+```
+initialize -> status 200, content-type: text/event-stream, body: ""
+```
+
+The transport answers with SSE, and closing it truncates the stream to an empty
+body. The "responses are fully materialised JSON" assumption this spec
+originally recorded as a risk was simply wrong.
+
+### Why A
+
+The MCP SDK exports `WebStandardStreamableHTTPServerTransport`
+(`@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js`), built on
+`Request`/`Response`/`ReadableStream`. Its own documentation gives the two
+usages this project needs verbatim:
+
+```ts
+// Hono.js usage
+app.all('/mcp', async (c) => transport.handleRequest(c.req.raw));
+
+// Cloudflare Workers usage
+export default { async fetch(request) { return transport.handleRequest(request); } };
+```
+
+Spiked with `sessionIdGenerator: undefined` and `enableJsonResponse: true`,
+against per-request throwaway servers. All four properties this design depends
+on were confirmed:
+
+- `content-type: application/json` with **complete** bodies — early close is
+  safe, deterministically, not by assumption
+- no `Mcp-Session-Id` header
+- `tools/list` and `tools/call` succeed on an instance that never saw
+  `initialize`, which is what makes a throwaway server per request viable
+- already present at the project's existing `^1.25.3` floor — verified against
+  1.25.3, 1.26.0 and 1.27.0
+
+A dominates B on every axis that mattered: it is first-party rather than a
+pre-1.0 community package, it adds **zero** transitive dependencies where B
+added `hono-rate-limiter` and `pkce-challenge`, and it makes the resource
+cleanup correct instead of broken.
+
+The argument originally made for B — that `@hono/mcp/auth` would carry the
+Spec 2 OAuth work — does not survive either: the SDK ships its own auth module
+(`server/auth/middleware/bearerAuth`, `providers/proxyProvider`,
+`handlers/authorize|token|revoke`, `router`), so Spec 2 also stays first-party.
+
+**Residual risk:** none specific to this choice. `hono` and
+`@hono/node-server` are used only as a router and a Node adapter; the MCP
+protocol surface is entirely SDK code.
 
 ## Architecture
 
@@ -140,7 +182,7 @@ until Spec 2; the user should know what they are running.
 
 | Route | Behaviour |
 | --- | --- |
-| `POST /mcp` | Per request: `createServer()` + `StreamableHTTPTransport({ sessionIdGenerator: undefined })`, `handleRequest(c)`, then close |
+| `POST /mcp` | Per request: `createServer()` + `WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true })`, `handleRequest(c.req.raw)`, then close |
 | `GET /mcp` | **405** — required by the MCP spec for servers that offer no SSE stream |
 | `DELETE /mcp` | **405** — session termination is meaningless without sessions |
 | `GET /health` | `{ status, giac, transport: 'stateless' }`; HTTP 503 when the probe reports Giac not ready |
@@ -155,20 +197,22 @@ Measured per-request cost of `createServer()` + transport + `connect()` +
 retained after GC across 2000 request cycles: **0.79 MB total, 416 bytes per
 request** — noise, not a leak.
 
-### Resource cleanup — assumption and guard
+### Resource cleanup
 
-The SDK's own stateless example cleans up via `res.on('close')`. Hono's
-web-standard `Response` has no such hook. Because this server emits no
-server-initiated messages, every POST response should be a fully materialised
-JSON body, which makes closing the transport in a `finally` after
-`handleRequest` resolves safe.
+`enableJsonResponse: true` makes every response a complete JSON body rather
+than an SSE stream, so closing the transport in a `finally` once
+`handleRequest` resolves is safe by construction — there is no stream left to
+drain.
 
-That is an assumption, not a certainty: a client sending
-`Accept: text/event-stream` could cause `@hono/mcp` to answer with SSE, and
-closing early would then truncate the stream. It is therefore guarded by a test
-asserting that POST responses carry `content-type: application/json`. If the
-assumption ever breaks, the suite fails loudly instead of leaking in
-production.
+This is not an assumption. The first draft of this design did assume it, was
+spiked, and turned out to be wrong under `@hono/mcp`, which answered with
+`text/event-stream` and returned an empty body when the transport was closed.
+`enableJsonResponse` is precisely the option that removes the ambiguity, and
+the spike confirms complete bodies under the chosen transport.
+
+A test still asserts `content-type: application/json` on POST responses — not
+to guard a guess, but to pin the contract the cleanup depends on, so a future
+change to transport options cannot silently reintroduce truncation.
 
 ## Error handling
 
@@ -276,7 +320,8 @@ wrong one. Reduce to a single source of truth.
 
 ## Expected outcome
 
-- Production dependency tree: **135 → 105 packages** (−30, −22%)
+- Production dependency tree: **135 → 103 packages** (−32, −24%) — identical to
+  a build with no HTTP framework at all
 - HTTP transport coverage: **0% → full transport layer**
 - The Workers path stays open, enforced by a test rather than a convention
 - Docker image loses a redundant 9.7 MB layer and its phantom configuration
