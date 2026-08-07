@@ -104,3 +104,57 @@ describe('http-app POST /mcp (stateless)', () => {
     expect(json.result).toBeDefined();
   });
 });
+
+describe('http-app method rejection and errors', () => {
+  const app = createHttpApp({ healthProbe: () => true });
+
+  it('rejects GET /mcp with 405 (no SSE stream offered)', async () => {
+    const res = await app.fetch(new Request('http://localhost/mcp', { method: 'GET' }));
+    expect(res.status).toBe(405);
+    const body = (await res.json()) as { error: { code: number } };
+    expect(body.error.code).toBe(-32000);
+  });
+
+  it('rejects DELETE /mcp with 405 (no sessions to terminate)', async () => {
+    const res = await app.fetch(new Request('http://localhost/mcp', { method: 'DELETE' }));
+    expect(res.status).toBe(405);
+  });
+
+  it('maps a malformed JSON body to -32700', async () => {
+    const res = await app.fetch(
+      new Request('http://localhost/mcp', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{ not json',
+      })
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: number; message: string } };
+    expect(body.error.code).toBe(-32700);
+    expect(body.error.message).toBe('Parse error');
+  });
+
+  it('returns a JSON-RPC shaped 404 for unknown paths', async () => {
+    const res = await app.fetch(new Request('http://localhost/nope'));
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { jsonrpc: string; error: { code: number } };
+    expect(body.jsonrpc).toBe('2.0');
+    expect(body.error.code).toBe(-32601);
+  });
+
+  it('never leaks a stack trace in an internal error body', async () => {
+    const boom = createHttpApp({
+      healthProbe: () => {
+        throw new Error('probe exploded at Object.<anonymous> (/secret/path.ts:1:1)');
+      },
+    });
+    const res = await boom.fetch(new Request('http://localhost/health'));
+    expect(res.status).toBe(500);
+    const text = await res.text();
+    expect(text).not.toMatch(/at .*\(/);
+    expect(text).not.toContain('/secret/path.ts');
+    const body = JSON.parse(text) as { error: { code: number; message: string } };
+    expect(body.error.code).toBe(-32603);
+    expect(body.error.message).toBe('Internal error');
+  });
+});

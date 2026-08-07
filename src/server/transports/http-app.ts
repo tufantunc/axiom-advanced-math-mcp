@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { createServer } from '../index.js';
 
@@ -67,6 +67,38 @@ export function createHttpApp(options: HttpAppOptions): Hono {
       await transport.close();
       await server.close();
     }
+  });
+
+  // The MCP spec requires 405 from servers that offer no SSE stream at this
+  // endpoint. Session termination is likewise meaningless without sessions.
+  const methodNotAllowed = (c: Context) =>
+    c.json(
+      {
+        jsonrpc: '2.0',
+        id: null,
+        error: { code: -32000, message: 'Method not allowed: this server is stateless' },
+      },
+      405
+    );
+
+  app.get('/mcp', methodNotAllowed);
+  app.delete('/mcp', methodNotAllowed);
+
+  app.notFound((c) =>
+    c.json(
+      { jsonrpc: '2.0', id: null, error: { code: -32601, message: 'Not found' } },
+      404
+    )
+  );
+
+  app.onError((err, c) => {
+    // Full detail to stderr; never into the response body. This is an
+    // open-source server — leaking internals buys nothing.
+    console.error('[http] unhandled error:', err);
+    return c.json(
+      { jsonrpc: '2.0', id: null, error: { code: -32603, message: 'Internal error' } },
+      500
+    );
   });
 
   return app;
