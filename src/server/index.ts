@@ -3,12 +3,13 @@ import { computeSchema, computeHandler } from './tools/compute/index.js';
 import { verifySchema, verifyHandler } from './tools/verify/index.js';
 import { registerPlotTools } from './tools/plot/index.js';
 import { registerPrompts } from './prompts/index.js';
+import { VERSION } from '../version.js';
 
 export function createServer(): McpServer {
   const server = new McpServer(
     {
       name: 'axiom-advanced-math-mcp',
-      version: '0.2.0',
+      version: VERSION,
     },
     {
       instructions: `Axiom — Advanced Math MCP Server

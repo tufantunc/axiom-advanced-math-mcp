@@ -1,99 +1,60 @@
-import express from 'express';
-import { randomUUID } from 'node:crypto';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { createServer } from './server/index.js';
+import { serve } from '@hono/node-server';
+import { createHttpApp } from './server/transports/http-app.js';
 import { giacEngine } from './server/giac/index.js';
+import { createServer } from './server/index.js';
 
-const app = express();
-const port = parseInt(process.env.MCP_PORT || '3000', 10);
+const rawPort = process.env.MCP_PORT || '3000';
+const port = parseInt(rawPort, 10);
+if (!Number.isInteger(port) || port < 0 || port > 65535) {
+  // parseInt('garbage', 10) is NaN, and serve() silently binds an ephemeral
+  // port when given NaN — the log line below would then claim a port the
+  // process isn't actually listening on. Fail fast instead.
+  console.error(`[http] invalid MCP_PORT: ${JSON.stringify(rawPort)} (must be an integer 0-65535)`);
+  process.exit(1);
+}
 const host = process.env.MCP_HOST || '127.0.0.1';
 
-// Session management
-const sessions = new Map<string, StreamableHTTPServerTransport>();
+// Comma-separated Host-header allowlist for DNS-rebinding protection (see
+// createHttpApp's `allowedHosts` doc comment for the threat model). Reading
+// process.env belongs here, not in http-app.ts, which must stay free of
+// Node APIs. An unset or blank variable is passed through as an empty
+// array so createHttpApp falls back to its loopback-only default rather
+// than replacing it with an empty allowlist.
+const allowedHosts = (process.env.MCP_ALLOWED_HOSTS || '')
+  .split(',')
+  .map((entry) => entry.trim())
+  .filter((entry) => entry.length > 0);
 
-app.use(express.json());
-
-// MCP Streamable HTTP endpoint
-app.post('/mcp', async (req, res) => {
-  const sessionId = req.headers['mcp-session-id'] as string | undefined;
-
-  if (sessionId && sessions.has(sessionId)) {
-    const transport = sessions.get(sessionId);
-    if (transport) {
-      await transport.handleRequest(req, res, req.body);
-      return;
-    }
-  }
-
-  // New session
-  const transport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: () => randomUUID(),
-  });
-
-  const server = createServer();
-  await server.connect(transport);
-
-  if (transport.sessionId) {
-    sessions.set(transport.sessionId, transport);
-  }
-
-  transport.onclose = () => {
-    if (transport.sessionId) {
-      sessions.delete(transport.sessionId);
-    }
-  };
-
-  await transport.handleRequest(req, res, req.body);
+const app = createHttpApp({
+  healthProbe: () => giacEngine.isReady(),
+  createServer,
+  ...(allowedHosts.length > 0 ? { allowedHosts } : {}),
 });
 
-app.get('/mcp', async (req, res) => {
-  const sessionId = req.headers['mcp-session-id'] as string | undefined;
-  if (!sessionId || !sessions.has(sessionId)) {
-    res.status(400).json({ jsonrpc: '2.0', error: { code: -32000, message: 'No valid session' } });
-    return;
-  }
-  const transport = sessions.get(sessionId);
-  if (!transport) {
-    res.status(400).json({ jsonrpc: '2.0', error: { code: -32000, message: 'No valid session' } });
-    return;
-  }
-  await transport.handleRequest(req, res);
-});
-
-app.delete('/mcp', async (req, res) => {
-  const sessionId = req.headers['mcp-session-id'] as string | undefined;
-  const transportDelete = sessions.get(sessionId ?? '');
-  if (!transportDelete) {
-    res.status(400).json({ jsonrpc: '2.0', error: { code: -32000, message: 'No valid session' } });
-    return;
-  }
-  await transportDelete.handleRequest(req, res);
-});
-
-app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', giac: giacEngine.isReady(), sessions: sessions.size });
-});
-
-async function start() {
+async function start(): Promise<void> {
   await giacEngine.initialize();
 
-  app.listen(port, host, () => {
-    console.log(`Axiom Math MCP Server (HTTP) listening on http://${host}:${port}/mcp`);
+  if (host === '0.0.0.0') {
+    console.error(
+      '[http] WARNING: bound to 0.0.0.0 with no authentication. ' +
+        'Anyone who can reach this port can run computations on this server. ' +
+        'Put it behind a reverse proxy or restrict MCP_HOST.'
+    );
+  }
+
+  const server = serve({ fetch: app.fetch, port, hostname: host }, (info) => {
+    console.log(`Axiom Math MCP Server (HTTP) listening on http://${host}:${info.port}/mcp`);
   });
+
+  const shutdown = () => {
+    server.close(() => process.exit(0));
+  };
+
+  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', shutdown);
 }
 
 start().catch((err) => {
   console.error('Failed to start:', err);
   process.exit(1);
 });
-
-async function shutdown() {
-  for (const transport of sessions.values()) {
-    await transport.close();
-  }
-  sessions.clear();
-  process.exit(0);
-}
-
-process.on('SIGTERM', shutdown);
-process.on('SIGINT', shutdown);

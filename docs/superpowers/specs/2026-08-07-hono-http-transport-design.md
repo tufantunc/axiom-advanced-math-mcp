@@ -19,19 +19,34 @@ carries three problems that the open-source context makes material:
 
    | Production dependency set | Packages | Disk |
    | --- | --- | --- |
-   | Baseline (`sdk` + `mathjs` + `zod`, no HTTP framework) | 103 | — |
+   | Baseline (`sdk` + `mathjs` + `zod`, no HTTP framework declared) | 103 | — |
    | Current (baseline + `express@4`) | **135** | 45 MB |
    | After (baseline + `hono` + `@hono/node-server`) | **103** | 43 MB |
 
-   Express contributes **32 packages**; `hono` and `@hono/node-server`
-   contribute **zero** — both are zero-dependency, so the post-migration tree
-   is byte-for-byte the baseline. Net removal: **32 packages (−24%)**.
+   Net removal: **32 packages (−24%)**.
 
-   Note the disk saving is small (2 MB): the MCP SDK and mathjs dominate the
-   tree, and no framework choice changes that. The argument here is package
-   count and supply-chain surface, not install size. Most users never touch
-   HTTP at all — `npx axiom-mcp` uses stdio — so Express's 32 packages are dead
-   weight for the majority.
+   **What is actually being removed matters, and it is not "Express".**
+   `@modelcontextprotocol/sdk` declares `express@^5.2.1`, `cors`,
+   `express-rate-limit` and `raw-body` among its own dependencies — and also
+   `hono` and `@hono/node-server`. Two consequences:
+
+   - Express does **not** leave the tree. `express@5.2.1` stays, pulled in by
+     the SDK. What goes away is our *direct* `express@^4.18.2`, whose subtree
+     does not dedupe with the SDK's Express 5. The project has been carrying
+     two Express majors side by side; the migration drops one of them.
+   - `hono` and `@hono/node-server` were already in the tree as SDK
+     dependencies, which is why declaring them explicitly added zero packages.
+     Declaring them is still correct — depending on a transitive dependency by
+     accident is not something to rely on.
+
+   So the honest claim is narrower than "removes a web framework": it removes a
+   duplicate framework major and 32 packages of subtree. Disk saving is small
+   (2 MB) because the SDK and mathjs dominate regardless.
+
+   The corollary is a point in favour of the chosen approach: the SDK depends
+   on Hono itself, so building on its `WebStandardStreamableHTTPServerTransport`
+   puts this project on the same stack the SDK already ships rather than a
+   parallel one.
 
 2. **Dead session machinery.** The server emits **zero** server-initiated
    messages: no progress, no logging, no `listChanged` notifications
@@ -151,6 +166,7 @@ existing `src/server/transports/stdio.ts` convention:
 ```ts
 export interface HttpAppOptions {
   healthProbe: () => boolean;
+  createServer: () => McpServer; // type-only import; erased from the build
 }
 
 export function createHttpApp(options: HttpAppOptions): Hono;
@@ -161,11 +177,24 @@ signal handling. Web-standard `Request`/`Response` only. This is the file a
 future Workers entrypoint would consume unchanged via
 `export default { fetch: app.fetch }`, and it is the target of the tests.
 
-The `healthProbe` injection is load-bearing, not ceremony. Calling
-`giacEngine.isReady()` directly would pull
-`src/server/giac/index.ts → wrapper.ts → worker-host.ts → node:child_process`
-into the app module and silently destroy the portability boundary. Injection
-keeps the app layer ignorant of Giac.
+**Both injections are load-bearing, and the second one is the important one.**
+Everything reachable from this module must be Node-free, and the module's two
+natural dependencies both violate that:
+
+- `giacEngine.isReady()` for `/health` would pull in
+  `giac/index.ts → wrapper.ts → worker-host.ts → node:child_process`.
+- `createServer()` for `POST /mcp` reaches the same place by a longer route:
+  `server/index.ts → tools/verify/index.ts → giac/index.ts → wrapper.ts →
+  worker-host.ts → node:child_process`.
+
+The second chain was missed in the first draft of this design, which injected
+only the health probe and declared the boundary clean. The portability guard
+(below) caught it against the real build. That is the argument for the guard in
+one sentence: a boundary asserted in a comment had already been breached by the
+module's most important route.
+
+Both dependencies are therefore supplied by the host. The Node entrypoint knows
+about Giac; the app layer does not.
 
 ### `src/http.ts` — Node entrypoint (~30 lines)
 
@@ -320,8 +349,9 @@ wrong one. Reduce to a single source of truth.
 
 ## Expected outcome
 
-- Production dependency tree: **135 → 103 packages** (−32, −24%) — identical to
-  a build with no HTTP framework at all
+- Production dependency tree: **135 → 103 packages** (−32, −24%) — the
+  duplicate `express@4` subtree goes; `express@5` remains transitively via the
+  MCP SDK
 - HTTP transport coverage: **0% → full transport layer**
 - The Workers path stays open, enforced by a test rather than a convention
 - Docker image loses a redundant 9.7 MB layer and its phantom configuration

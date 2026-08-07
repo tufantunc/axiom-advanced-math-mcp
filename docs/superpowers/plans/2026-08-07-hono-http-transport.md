@@ -203,24 +203,40 @@ async function waitForReady(base: string, timeoutMs = 30_000): Promise<void> {
   throw new Error(`server did not become ready: ${String(lastError)}`);
 }
 
-/** POST a JSON-RPC message and return the parsed response. */
-async function rpc(base: string, body: unknown): Promise<{ status: number; contentType: string; sessionId: string | null; json: any }> {
+/**
+ * POST a JSON-RPC message and return the parsed response.
+ *
+ * `sessionId` is forwarded as `mcp-session-id` when given. A stateful server
+ * requires it on every request after `initialize`; a stateless one issues no
+ * session id, so callers pass the null they got back and no header is sent.
+ * The same helper therefore drives both transports.
+ */
+async function rpc(
+  base: string,
+  body: unknown,
+  sessionId?: string | null
+): Promise<{ status: number; contentType: string; sessionId: string | null; json: any }> {
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+    accept: 'application/json, text/event-stream',
+  };
+  if (sessionId) headers['mcp-session-id'] = sessionId;
+
   const res = await fetch(`${base}/mcp`, {
     method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      accept: 'application/json, text/event-stream',
-    },
+    headers,
     body: JSON.stringify(body),
   });
   const contentType = res.headers.get('content-type') ?? '';
-  const sessionId = res.headers.get('mcp-session-id');
+  // Named distinctly from the `sessionId` parameter above — reusing the name
+  // shadows it and fails to compile.
+  const responseSessionId = res.headers.get('mcp-session-id');
   const text = await res.text();
   // Streamable HTTP may answer either as plain JSON or as a single SSE event.
   const payload = contentType.includes('text/event-stream')
     ? JSON.parse(text.split('\n').find((l) => l.startsWith('data:'))!.slice(5).trim())
     : JSON.parse(text);
-  return { status: res.status, contentType, sessionId, json: payload };
+  return { status: res.status, contentType, sessionId: responseSessionId, json: payload };
 }
 
 const INIT = {
@@ -274,15 +290,27 @@ describe('HTTP transport contract (subprocess, real HTTP)', () => {
   //
   // src/http.ts:36 reads transport.sessionId immediately after connect(), but
   // the SDK assigns it while handling `initialize`, which happens later at
-  // handleRequest. The session map is therefore never populated (/health
-  // reports sessions: 0 after any number of initializes), so every request
-  // after initialize is rejected.
+  // handleRequest. The guard never fires, so the session map is never
+  // populated (/health reports sessions: 0 after any number of initializes).
+  //
+  // The session id MUST be forwarded here. Without it, src/http.ts builds a
+  // fresh uninitialized transport for the second request and returns the same
+  // error for an unrelated reason — the test would pass no matter what the
+  // session map does, and would pin nothing. Sending the id is what makes the
+  // assertion depend on the defect: a correct stateful server would honour it.
   //
   // Task 6 REPLACES this test with real protocol assertions. If it starts
   // failing before then, the session bug changed and this plan needs revising.
-  it('currently rejects any request after initialize (defect, fixed in Task 6)', async () => {
-    await rpc(base, INIT);
-    const { json } = await rpc(base, { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
+  it('currently rejects requests after initialize even with the session id (defect, fixed in Task 6)', async () => {
+    const init = await rpc(base, INIT);
+    expect(init.sessionId, 'Express should issue a session id on initialize').toBeTruthy();
+
+    const { json } = await rpc(
+      base,
+      { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
+      init.sessionId
+    );
+    expect(json.error, 'expected an error response, got a result').toBeDefined();
     expect(json.error.message).toContain('Server not initialized');
   });
 });
@@ -839,8 +867,10 @@ npm uninstall express @types/express
 
 - [ ] **Step 3: Confirm Express is gone from the source tree**
 
-Run: `grep -rn "express" src/ package.json`
+Run: `grep -rnE "from ..express..|require\(..express..\)|@types/express" src/ package.json`
 Expected: no matches.
+
+Do NOT use a bare `grep -rn "express"` — it matches ~150 occurrences of "expression"/"Expression" throughout the math code and tells you nothing.
 
 - [ ] **Step 4: Build and confirm the preserved contract still holds**
 
@@ -906,7 +936,9 @@ Expected: `Found 0 warnings and 0 errors.`
 
 Run: `npm ls --omit=dev --all --json | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);const seen=new Set();(function w(d){for(const [k,v] of Object.entries(d.dependencies||{})){if(seen.has(k))continue;seen.add(k);w(v);}})(j);console.log('prod packages:',seen.size);})"`
 
-Expected: roughly 32 fewer packages than before the migration — the tree should match a build with no HTTP framework at all, since `hono` and `@hono/node-server` are zero-dependency. Note the actual figure in the commit message.
+Expected: fewer packages than before. Note the actual figure in the commit message.
+
+Do not expect a dramatic drop from this particular command. `@modelcontextprotocol/sdk` itself depends on `express@^5`, `cors`, `express-rate-limit` — and on `hono` and `@hono/node-server` — so Express stays in the tree transitively and Hono was already there. What this migration removes is our *direct* `express@4`, a second Express major that does not dedupe with the SDK's. In a clean install of the production dependency set that is 135 → 103 packages; measured in this repo's already-deduped tree the delta reads much smaller. Both are correct; they count different things.
 
 - [ ] **Step 9: Commit**
 
@@ -1005,12 +1037,18 @@ describe('http-app portability boundary', () => {
     expect(violations, `Workers portability boundary broken:\n${rendered}`).toEqual([]);
   });
 
-  it('actually walks past the entry file', () => {
-    // Guards the guard: if the closure walk silently found nothing to follow,
-    // the test above would pass vacuously.
-    const source = readFileSync(resolve(ENTRY), 'utf8');
-    const relative = specifiers(source).filter((s) => s.startsWith('.'));
-    expect(relative.length).toBeGreaterThan(0);
+  it('detects a node: builtin reached transitively (positive control)', () => {
+    // Guards the guard. The entry file has no relative imports at all once
+    // both of its dependencies are injected, so the walk over it cannot
+    // demonstrate that traversal works — a broken walker would return an
+    // empty violation list and the test above would pass vacuously.
+    //
+    // dist/server/index.js is a known-positive: it reaches node:child_process
+    // six hops down, through tools/verify -> giac -> wrapper -> worker-host.
+    // If the walker stops traversing, this test fails and tells us the guard
+    // above has stopped guarding.
+    const violations = nodeImportsInClosure('dist/server/index.js');
+    expect(violations.some((v) => v.specifier === 'node:child_process')).toBe(true);
   });
 });
 ```
@@ -1055,6 +1093,7 @@ Temporarily add this line to the top of `src/server/transports/http-app.ts`:
 
 ```ts
 import { randomUUID } from 'node:crypto';
+void randomUUID; // keep the import alive — tsc elides unused imports entirely
 ```
 
 Then run:

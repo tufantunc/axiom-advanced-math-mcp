@@ -150,3 +150,6 @@ vite.config.ts.timestamp-*
 
 # Internal business/strategy notes — never publish
 docs/business/
+
+# Subagent-driven-development scratch
+.superpowers/
