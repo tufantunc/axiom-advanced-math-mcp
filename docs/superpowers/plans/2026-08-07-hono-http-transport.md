@@ -228,13 +228,15 @@ async function rpc(
     body: JSON.stringify(body),
   });
   const contentType = res.headers.get('content-type') ?? '';
-  const sessionId = res.headers.get('mcp-session-id');
+  // Named distinctly from the `sessionId` parameter above — reusing the name
+  // shadows it and fails to compile.
+  const responseSessionId = res.headers.get('mcp-session-id');
   const text = await res.text();
   // Streamable HTTP may answer either as plain JSON or as a single SSE event.
   const payload = contentType.includes('text/event-stream')
     ? JSON.parse(text.split('\n').find((l) => l.startsWith('data:'))!.slice(5).trim())
     : JSON.parse(text);
-  return { status: res.status, contentType, sessionId, json: payload };
+  return { status: res.status, contentType, sessionId: responseSessionId, json: payload };
 }
 
 const INIT = {
