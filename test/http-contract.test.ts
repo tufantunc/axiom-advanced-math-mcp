@@ -39,24 +39,38 @@ async function waitForReady(base: string, timeoutMs = 30_000): Promise<void> {
   throw new Error(`server did not become ready: ${String(lastError)}`);
 }
 
-/** POST a JSON-RPC message and return the parsed response. */
-async function rpc(base: string, body: unknown): Promise<{ status: number; contentType: string; sessionId: string | null; json: any }> {
+/**
+ * POST a JSON-RPC message and return the parsed response.
+ *
+ * `sessionId` is forwarded as `mcp-session-id` when given. A stateful server
+ * requires it on every request after `initialize`; a stateless one issues no
+ * session id, so callers pass the null they got back and no header is sent.
+ * The same helper therefore drives both transports.
+ */
+async function rpc(
+  base: string,
+  body: unknown,
+  sessionId?: string | null
+): Promise<{ status: number; contentType: string; sessionId: string | null; json: any }> {
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+    accept: 'application/json, text/event-stream',
+  };
+  if (sessionId) headers['mcp-session-id'] = sessionId;
+
   const res = await fetch(`${base}/mcp`, {
     method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      accept: 'application/json, text/event-stream',
-    },
+    headers,
     body: JSON.stringify(body),
   });
   const contentType = res.headers.get('content-type') ?? '';
-  const sessionId = res.headers.get('mcp-session-id');
+  const responseSessionId = res.headers.get('mcp-session-id');
   const text = await res.text();
   // Streamable HTTP may answer either as plain JSON or as a single SSE event.
   const payload = contentType.includes('text/event-stream')
     ? JSON.parse(text.split('\n').find((l) => l.startsWith('data:'))!.slice(5).trim())
     : JSON.parse(text);
-  return { status: res.status, contentType, sessionId, json: payload };
+  return { status: res.status, contentType, sessionId: responseSessionId, json: payload };
 }
 
 const INIT = {
@@ -110,15 +124,27 @@ describe('HTTP transport contract (subprocess, real HTTP)', () => {
   //
   // src/http.ts:36 reads transport.sessionId immediately after connect(), but
   // the SDK assigns it while handling `initialize`, which happens later at
-  // handleRequest. The session map is therefore never populated (/health
-  // reports sessions: 0 after any number of initializes), so every request
-  // after initialize is rejected.
+  // handleRequest. The guard never fires, so the session map is never
+  // populated (/health reports sessions: 0 after any number of initializes).
+  //
+  // The session id MUST be forwarded here. Without it, src/http.ts builds a
+  // fresh uninitialized transport for the second request and returns the same
+  // error for an unrelated reason — the test would pass no matter what the
+  // session map does, and would pin nothing. Sending the id is what makes the
+  // assertion depend on the defect: a correct stateful server would honour it.
   //
   // Task 6 REPLACES this test with real protocol assertions. If it starts
   // failing before then, the session bug changed and this plan needs revising.
-  it('currently rejects any request after initialize (defect, fixed in Task 6)', async () => {
-    await rpc(base, INIT);
-    const { json } = await rpc(base, { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
+  it('currently rejects requests after initialize even with the session id (defect, fixed in Task 6)', async () => {
+    const init = await rpc(base, INIT);
+    expect(init.sessionId, 'Express should issue a session id on initialize').toBeTruthy();
+
+    const { json } = await rpc(
+      base,
+      { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
+      init.sessionId
+    );
+    expect(json.error, 'expected an error response, got a result').toBeDefined();
     expect(json.error.message).toContain('Server not initialized');
   });
 });
