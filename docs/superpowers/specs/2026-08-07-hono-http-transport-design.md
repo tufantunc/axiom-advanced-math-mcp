@@ -19,19 +19,34 @@ carries three problems that the open-source context makes material:
 
    | Production dependency set | Packages | Disk |
    | --- | --- | --- |
-   | Baseline (`sdk` + `mathjs` + `zod`, no HTTP framework) | 103 | — |
+   | Baseline (`sdk` + `mathjs` + `zod`, no HTTP framework declared) | 103 | — |
    | Current (baseline + `express@4`) | **135** | 45 MB |
    | After (baseline + `hono` + `@hono/node-server`) | **103** | 43 MB |
 
-   Express contributes **32 packages**; `hono` and `@hono/node-server`
-   contribute **zero** — both are zero-dependency, so the post-migration tree
-   is byte-for-byte the baseline. Net removal: **32 packages (−24%)**.
+   Net removal: **32 packages (−24%)**.
 
-   Note the disk saving is small (2 MB): the MCP SDK and mathjs dominate the
-   tree, and no framework choice changes that. The argument here is package
-   count and supply-chain surface, not install size. Most users never touch
-   HTTP at all — `npx axiom-mcp` uses stdio — so Express's 32 packages are dead
-   weight for the majority.
+   **What is actually being removed matters, and it is not "Express".**
+   `@modelcontextprotocol/sdk` declares `express@^5.2.1`, `cors`,
+   `express-rate-limit` and `raw-body` among its own dependencies — and also
+   `hono` and `@hono/node-server`. Two consequences:
+
+   - Express does **not** leave the tree. `express@5.2.1` stays, pulled in by
+     the SDK. What goes away is our *direct* `express@^4.18.2`, whose subtree
+     does not dedupe with the SDK's Express 5. The project has been carrying
+     two Express majors side by side; the migration drops one of them.
+   - `hono` and `@hono/node-server` were already in the tree as SDK
+     dependencies, which is why declaring them explicitly added zero packages.
+     Declaring them is still correct — depending on a transitive dependency by
+     accident is not something to rely on.
+
+   So the honest claim is narrower than "removes a web framework": it removes a
+   duplicate framework major and 32 packages of subtree. Disk saving is small
+   (2 MB) because the SDK and mathjs dominate regardless.
+
+   The corollary is a point in favour of the chosen approach: the SDK depends
+   on Hono itself, so building on its `WebStandardStreamableHTTPServerTransport`
+   puts this project on the same stack the SDK already ships rather than a
+   parallel one.
 
 2. **Dead session machinery.** The server emits **zero** server-initiated
    messages: no progress, no logging, no `listChanged` notifications
@@ -320,8 +335,9 @@ wrong one. Reduce to a single source of truth.
 
 ## Expected outcome
 
-- Production dependency tree: **135 → 103 packages** (−32, −24%) — identical to
-  a build with no HTTP framework at all
+- Production dependency tree: **135 → 103 packages** (−32, −24%) — the
+  duplicate `express@4` subtree goes; `express@5` remains transitively via the
+  MCP SDK
 - HTTP transport coverage: **0% → full transport layer**
 - The Workers path stays open, enforced by a test rather than a convention
 - Docker image loses a redundant 9.7 MB layer and its phantom configuration

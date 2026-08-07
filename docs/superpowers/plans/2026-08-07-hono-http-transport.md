@@ -934,7 +934,9 @@ Expected: `Found 0 warnings and 0 errors.`
 
 Run: `npm ls --omit=dev --all --json | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);const seen=new Set();(function w(d){for(const [k,v] of Object.entries(d.dependencies||{})){if(seen.has(k))continue;seen.add(k);w(v);}})(j);console.log('prod packages:',seen.size);})"`
 
-Expected: roughly 32 fewer packages than before the migration — the tree should match a build with no HTTP framework at all, since `hono` and `@hono/node-server` are zero-dependency. Note the actual figure in the commit message.
+Expected: fewer packages than before. Note the actual figure in the commit message.
+
+Do not expect a dramatic drop from this particular command. `@modelcontextprotocol/sdk` itself depends on `express@^5`, `cors`, `express-rate-limit` — and on `hono` and `@hono/node-server` — so Express stays in the tree transitively and Hono was already there. What this migration removes is our *direct* `express@4`, a second Express major that does not dedupe with the SDK's. In a clean install of the production dependency set that is 135 → 103 packages; measured in this repo's already-deduped tree the delta reads much smaller. Both are correct; they count different things.
 
 - [ ] **Step 9: Commit**
 
