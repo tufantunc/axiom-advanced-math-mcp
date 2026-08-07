@@ -120,31 +120,28 @@ describe('HTTP transport contract (subprocess, real HTTP)', () => {
     expect(body.giac).toBe(true);
   });
 
-  // CHARACTERIZATION TEST — pins a defect, not desired behaviour.
-  //
-  // src/http.ts:36 reads transport.sessionId immediately after connect(), but
-  // the SDK assigns it while handling `initialize`, which happens later at
-  // handleRequest. The guard never fires, so the session map is never
-  // populated (/health reports sessions: 0 after any number of initializes).
-  //
-  // The session id MUST be forwarded here. Without it, src/http.ts builds a
-  // fresh uninitialized transport for the second request and returns the same
-  // error for an unrelated reason — the test would pass no matter what the
-  // session map does, and would pin nothing. Sending the id is what makes the
-  // assertion depend on the defect: a correct stateful server would honour it.
-  //
-  // Task 6 REPLACES this test with real protocol assertions. If it starts
-  // failing before then, the session bug changed and this plan needs revising.
-  it('currently rejects requests after initialize even with the session id (defect, fixed in Task 6)', async () => {
-    const init = await rpc(base, INIT);
-    expect(init.sessionId, 'Express should issue a session id on initialize').toBeTruthy();
+  it('lists the compute, verify and plot tools', async () => {
+    await rpc(base, INIT);
+    const { json } = await rpc(base, { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
+    const names = json.result.tools.map((t: { name: string }) => t.name).sort();
+    expect(names).toEqual(['compute', 'plot', 'verify']);
+  });
 
-    const { json } = await rpc(
-      base,
-      { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
-      init.sessionId
-    );
-    expect(json.error, 'expected an error response, got a result').toBeDefined();
-    expect(json.error.message).toContain('Server not initialized');
+  it('computes a symbolic integral end to end', async () => {
+    await rpc(base, INIT);
+    const { json } = await rpc(base, {
+      jsonrpc: '2.0',
+      id: 3,
+      method: 'tools/call',
+      params: { name: 'compute', arguments: { problem: 'integrate(sin(x)^3,x)' } },
+    });
+    const text = json.result.content.map((c: { text: string }) => c.text).join('\n');
+    expect(text).toContain('-cos(x)+cos(x)^3/3');
+  });
+
+  it('lists the registered prompts', async () => {
+    await rpc(base, INIT);
+    const { json } = await rpc(base, { jsonrpc: '2.0', id: 4, method: 'prompts/list', params: {} });
+    expect(json.result.prompts.length).toBeGreaterThan(0);
   });
 });
