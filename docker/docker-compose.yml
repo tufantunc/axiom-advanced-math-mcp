@@ -8,7 +8,9 @@ services:
       - NODE_ENV=production
       - MCP_HOST=0.0.0.0
       - MCP_PORT=3000
-      - AXIOM_EVAL_TIMEOUT_MS=30000
+      # No AXIOM_EVAL_TIMEOUT_MS override on purpose: the 10 s default bounds
+      # how long one unauthenticated request can hold the single shared Giac
+      # worker. Raise it only if you have a workload that genuinely needs it.
       # Required if you reach this container by its LAN IP, a hostname, or a
       # reverse-proxy domain rather than localhost/127.0.0.1 -- otherwise
       # POST /mcp gets a 403 (DNS-rebinding protection, see README.md).

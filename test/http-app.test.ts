@@ -63,6 +63,49 @@ describe('http-app /health', () => {
     expect(body.status).toBe('degraded');
     expect(body.giac).toBe(false);
   });
+
+  it('awaits an async probe (the Node entrypoint drives an engine warmup in it)', async () => {
+    // The real probe respawns a recycled Giac worker rather than reading a
+    // latched isReady() flag, so it has to be allowed to be async.
+    let calls = 0;
+    const app = createHttpApp({
+      healthProbe: async () => {
+        calls++;
+        await Promise.resolve();
+        return true;
+      },
+      createServer,
+    });
+
+    const res = await app.fetch(new Request('http://localhost/health'));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ status: 'ok', giac: true, transport: 'stateless' });
+
+    // Re-probed per request: a probe result is never cached, which is what
+    // lets a recovered engine flip /health back to 200 on its own.
+    await app.fetch(new Request('http://localhost/health'));
+    expect(calls).toBe(2);
+  });
+
+  it('returns 503 when an async probe resolves false', async () => {
+    const app = createHttpApp({ healthProbe: async () => false, createServer });
+    const res = await app.fetch(new Request('http://localhost/health'));
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as { status: string; giac: boolean };
+    expect(body).toMatchObject({ status: 'degraded', giac: false });
+  });
+
+  it('returns 500 without leaking detail when an async probe rejects', async () => {
+    const app = createHttpApp({
+      healthProbe: () => Promise.reject(new Error('warmup failed at /secret/path.ts:1:1')),
+      createServer,
+    });
+    const res = await app.fetch(new Request('http://localhost/health'));
+    expect(res.status).toBe(500);
+    const text = await res.text();
+    expect(text).not.toContain('/secret/path.ts');
+    expect(JSON.parse(text).error.code).toBe(-32603);
+  });
 });
 
 describe('http-app POST /mcp (stateless)', () => {
@@ -114,6 +157,40 @@ describe('http-app POST /mcp (stateless)', () => {
     const { contentType, json } = await post(app, INIT_MSG);
     expect(contentType).toContain('application/json');
     expect(json.result).toBeDefined();
+  });
+});
+
+describe('http-app CAS state isolation between requests', () => {
+  // The HTTP transport is stateless and multi-client, but the Giac worker is
+  // one process-wide engine with global session state. Without a reset at the
+  // tool-call boundary, one request's `sto`/`assume` silently rewrites the
+  // next request's answer — including a request from a different client —
+  // and it comes back as a confident 200.
+  const app = createHttpApp({ healthProbe: () => true, createServer });
+
+  async function compute(id: number, problem: string): Promise<string> {
+    const { json } = await post(app, {
+      jsonrpc: '2.0',
+      id,
+      method: 'tools/call',
+      params: { name: 'compute', arguments: { problem } },
+    });
+    return json.result.content.map((c: { text: string }) => c.text).join('\n');
+  }
+
+  it('does not carry a `sto` assignment into the next request', async () => {
+    await compute(30, 'sto(7,qq)');
+    const text = await compute(31, 'simplify(qq+1)');
+    // Pre-fix this is "8": qq is still bound to 7 from the previous request.
+    expect(text).toContain('qq+1');
+    expect(text).not.toMatch(/\b8\b/);
+  });
+
+  it('does not carry an `assume` hypothesis into the next request', async () => {
+    await compute(32, 'assume(bb>0)');
+    const text = await compute(33, 'integrate(sqrt(bb^2),bb)');
+    // Pre-fix this is "bb^2/2" — correct only under the leaked bb>0.
+    expect(text).toContain('sign(bb)');
   });
 });
 

@@ -143,6 +143,20 @@ export class WasmGiacEngine implements GiacEngine {
     }
   }
 
+  /**
+   * Clears Giac's global session state (`sto` bindings, `assume`
+   * hypotheses). No-op when the engine was never initialized — a fresh
+   * engine is already pristine.
+   *
+   * In the normal (worker-host) topology the host reaches this by sending
+   * `restart` down the IPC channel like any other expression; this method is
+   * what makes the engine honor the interface when used in-process.
+   */
+  async reset(): Promise<void> {
+    if (!this._ready || !_caseval) return;
+    await this.evaluate('restart');
+  }
+
   isReady(): boolean {
     return this._ready;
   }

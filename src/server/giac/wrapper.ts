@@ -11,6 +11,20 @@ export const giacEngine: GiacEngine = {
     await host.warmup();
     return host.evaluate(expression);
   },
+  /**
+   * Wipes Giac's global session state via `restart` (~1 ms measured).
+   *
+   * Goes through `host.evaluate` rather than a side channel so it inherits
+   * the same timeout / pending-map bookkeeping as any other evaluation.
+   *
+   * No-op when no worker is up: a worker that was never spawned (or was
+   * recycled) starts from a pristine engine on its next call anyway, so
+   * forcing a spawn here would cost a WASM init to accomplish nothing.
+   */
+  async reset(): Promise<void> {
+    if (!host.isReady()) return;
+    await host.evaluate('restart');
+  },
   isReady(): boolean {
     return host.isReady();
   },

@@ -45,13 +45,18 @@ export interface HttpAppOptions {
   /**
    * Reports whether the compute backend is ready to serve.
    *
+   * May be async, and is expected to be *active* rather than a flag read:
+   * the Node entrypoint's probe drives the engine's warmup so a worker that
+   * was recycled by a routine CAS timeout respawns here instead of leaving
+   * /health latched at 503 until unrelated traffic happens to revive it.
+   *
    * Injected rather than imported: reaching for `giacEngine.isReady()` here
    * would pull `node:child_process` into this module via
    * giac/index.ts -> wrapper.ts -> worker-host.ts, and this module must stay
    * free of Node APIs so it can run unchanged on Workers/Deno/Bun.
    * Enforced by test/http-portability.test.ts.
    */
-  healthProbe: () => boolean;
+  healthProbe: () => boolean | Promise<boolean>;
 
   /**
    * Builds a fresh MCP server instance for a single request.
@@ -104,8 +109,8 @@ export function createHttpApp(options: HttpAppOptions): Hono {
     (options.allowedHosts ?? DEFAULT_ALLOWED_HOSTS).map(extractHostname)
   );
 
-  app.get('/health', (c) => {
-    const ready = options.healthProbe();
+  app.get('/health', async (c) => {
+    const ready = await options.healthProbe();
     return c.json(
       { status: ready ? 'ok' : 'degraded', giac: ready, transport: 'stateless' },
       ready ? 200 : 503

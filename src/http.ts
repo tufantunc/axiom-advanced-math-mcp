@@ -25,8 +25,29 @@ const allowedHosts = (process.env.MCP_ALLOWED_HOSTS || '')
   .map((entry) => entry.trim())
   .filter((entry) => entry.length > 0);
 
+/**
+ * Active health probe.
+ *
+ * `isReady()` alone latches: it goes false on any worker recycle (a routine
+ * CAS timeout is enough) and only goes true again when the next `evaluate()`
+ * lazily respawns the worker. /health never evaluates, so a fully working
+ * server would report 503 indefinitely — and docker-compose's healthcheck
+ * (30 s interval, 3 retries) would mark the container unhealthy ~90 s after
+ * any timeout. Driving `initialize()` here makes the probe do the respawn
+ * itself, so /health reports what the engine can actually do right now.
+ */
+async function probeGiac(): Promise<boolean> {
+  try {
+    await giacEngine.initialize();
+    return giacEngine.isReady();
+  } catch (err) {
+    console.error('[http] health probe: giac warmup failed:', err);
+    return false;
+  }
+}
+
 const app = createHttpApp({
-  healthProbe: () => giacEngine.isReady(),
+  healthProbe: probeGiac,
   createServer,
   ...(allowedHosts.length > 0 ? { allowedHosts } : {}),
 });

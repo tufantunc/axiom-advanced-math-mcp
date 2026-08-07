@@ -7,19 +7,36 @@ export interface WorkerHostOptions {
 }
 
 interface Pending {
+  /** Kept so the call can be re-sent to a fresh worker after a recycle. */
+  expr: string;
   resolve: (s: string) => void;
   reject: (e: Error) => void;
   timer: NodeJS.Timeout;
+  /** How many times this call has already been moved to a fresh worker. */
+  redispatches: number;
 }
 
 const DEFAULT_TIMEOUT_MS = Number(process.env.AXIOM_EVAL_TIMEOUT_MS ?? 10_000);
 const INIT_TIMEOUT_MS = 30_000;
 
 /**
+ * How many times a single call may be re-sent to a freshly spawned worker
+ * before the host gives up on it. Without a cap, two mutually-wedging calls
+ * could bounce each other between workers indefinitely.
+ */
+const MAX_REDISPATCHES = 2;
+
+/**
  * Main-process bridge to the Giac worker (a forked child process). Enforces a
- * hard per-call timeout; on timeout (or worker crash) it kills the worker,
- * fails in-flight calls, and lazily respawns a fresh worker (fresh WASM engine)
- * on the next call. The server process never dies with a wedged evaluation.
+ * hard per-call timeout; on timeout (or worker crash) it kills the worker and
+ * respawns a fresh one (fresh WASM engine). The server process never dies with
+ * a wedged evaluation.
+ *
+ * Two recycle paths, deliberately different:
+ *   - per-call timeout  -> only the offending call fails; the other in-flight
+ *     calls are re-sent to the fresh worker (`recycleAndRedispatch`).
+ *   - worker crash/exit -> nothing is recoverable, so everything pending fails
+ *     (`recycle`).
  *
  * Uses child_process.fork (not worker_threads) because tsx's loader rewrites
  * nested `.js`->`.ts` imports correctly in a forked child but not in a worker
@@ -52,13 +69,91 @@ export function createWorkerHost(opts: WorkerHostOptions = {}) {
     pending.clear();
   }
 
-  function recycle(err: Error): void {
+  /** Detaches the current worker (so nothing else can send to it) and returns it. */
+  function detachWorker(): ChildProcess | null {
     const c = child;
     child = null;
     readyPromise = null;
     ready = false;
+    return c;
+  }
+
+  /**
+   * Unrecoverable path (worker crash/exit, init failure, dispose): nothing
+   * in flight can be salvaged, so every pending call is rejected.
+   */
+  function recycle(err: Error): void {
+    const c = detachWorker();
     failAllPending(err);
     if (c) c.kill('SIGKILL');
+  }
+
+  /**
+   * Per-call timeout path: exactly ONE call is at fault, so only that call is
+   * failed (by its own timer, before this runs). The wedged worker still has
+   * to die — it is stuck in a synchronous caseval and will never answer
+   * anything again — but the other in-flight calls are innocent, so they are
+   * re-sent to the freshly spawned worker instead of being rejected.
+   *
+   * Survivors keep their original timers: each was enqueued against its own
+   * deadline and the re-dispatch does not buy it more time.
+   */
+  function recycleAndRedispatch(): void {
+    const c = detachWorker();
+    if (c) c.kill('SIGKILL');
+    if (pending.size === 0) return;
+
+    const survivors: [number, Pending][] = [];
+    for (const [id, p] of pending) {
+      if (p.redispatches >= MAX_REDISPATCHES) {
+        // This call has already outlived two workers; treat it as the
+        // problem rather than dragging it across a third.
+        pending.delete(id);
+        clearTimeout(p.timer);
+        p.reject(new Error('Giac worker recycled repeatedly; call abandoned'));
+        continue;
+      }
+      p.redispatches++;
+      survivors.push([id, p]);
+    }
+    if (survivors.length === 0) return;
+
+    const failSurvivors = (err: Error): void => {
+      for (const [id, p] of survivors) {
+        // Skip anything that resolved, timed out, or was failed by another
+        // path in the meantime — its entry is already gone from the map.
+        if (pending.get(id) !== p) continue;
+        pending.delete(id);
+        clearTimeout(p.timer);
+        p.reject(err);
+      }
+    };
+
+    ensureWorker().then(
+      () => {
+        const fresh = child;
+        if (!fresh) {
+          failSurvivors(new Error('Giac worker unavailable'));
+          return;
+        }
+        for (const [id, p] of survivors) {
+          if (pending.get(id) !== p) continue;
+          try {
+            fresh.send({ id, expr: p.expr });
+          } catch (e) {
+            pending.delete(id);
+            clearTimeout(p.timer);
+            p.reject(e instanceof Error ? e : new Error(String(e)));
+          }
+        }
+      },
+      (e: unknown) => {
+        // ensureWorker's own failure paths already call recycle(), which
+        // fails everything pending; this only covers anything it missed and
+        // keeps the promise from rejecting unhandled.
+        failSurvivors(e instanceof Error ? e : new Error(String(e)));
+      }
+    );
   }
 
   function ensureWorker(): Promise<void> {
@@ -125,11 +220,12 @@ export function createWorkerHost(opts: WorkerHostOptions = {}) {
       return new Promise<string>((resolve, reject) => {
         const timer = setTimeout(() => {
           pending.delete(id);
-          const err = new Error('Giac evaluation timed out');
-          recycle(err); // kill the wedged worker; next call gets a fresh one
-          reject(err);
+          // Only this call is at fault: fail it, kill the worker it wedged,
+          // and move every other in-flight call to the fresh one.
+          reject(new Error('Giac evaluation timed out'));
+          recycleAndRedispatch();
         }, timeoutMs);
-        pending.set(id, { resolve, reject, timer });
+        pending.set(id, { expr, resolve, reject, timer, redispatches: 0 });
         // Re-read `child` here: a sibling call's timeout could have recycled
         // between the await above and now. Guard so this call can't send on a
         // killed child and then hang until its own timeout.

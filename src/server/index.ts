@@ -3,7 +3,28 @@ import { computeSchema, computeHandler } from './tools/compute/index.js';
 import { verifySchema, verifyHandler } from './tools/verify/index.js';
 import { registerPlotTools } from './tools/plot/index.js';
 import { registerPrompts } from './prompts/index.js';
+import { giacEngine } from './giac/index.js';
 import { VERSION } from '../version.js';
+
+/**
+ * Giac keeps global session state: `sto(7,qq)` and `assume(bb>0)` executed by
+ * one tool call are still in effect for the next one. Left alone, that leaks
+ * across MCP tool calls — and, over the stateless HTTP transport, across
+ * *different clients*: one caller's `assume(bb>0)` silently turns another's
+ * `integrate(sqrt(bb^2),bb)` into `bb^2/2` instead of `1/2*bb^2*sign(bb)`,
+ * answered with a 200. An LLM has no way to know state persisted.
+ *
+ * So the tool-call boundary is where the engine is wiped — not `evaluate()`,
+ * because a single `compute` legitimately makes several Giac calls (result,
+ * latex, verification pass) that must share one session. Measured cost of the
+ * `restart`: ~1 ms.
+ */
+function withGiacReset<A, R>(handler: (args: A) => Promise<R>): (args: A) => Promise<R> {
+  return async (args: A): Promise<R> => {
+    await giacEngine.reset();
+    return handler(args);
+  };
+}
 
 export function createServer(): McpServer {
   const server = new McpServer(
@@ -58,7 +79,7 @@ The "plot" tool renders function graphs as SVG images.`,
       'Pass a CAS-style problem string (e.g., "solve(x^2-4=0, x)", "diff(x^3, x)", ' +
       '"det([[1,2],[3,4]])", "C(10,3)", "2+3*sin(pi/4)") or any Giac/Xcas expression.',
     computeSchema.shape,
-    async (args) => computeHandler(args)
+    withGiacReset(async (args) => computeHandler(args))
   );
 
   // --- verify: independent result verification ---
@@ -68,10 +89,10 @@ The "plot" tool renders function graphs as SVG images.`,
       'Supports identity verification (e.g., "sin(x)^2+cos(x)^2 = 1"), ' +
       'solution checking (e.g., "x=2 satisfies x^2-4=0"), and computation assertions.',
     verifySchema.shape,
-    async (args) => verifyHandler(args as Record<string, unknown>)
+    withGiacReset(async (args) => verifyHandler(args as Record<string, unknown>))
   );
 
-  // --- plot: function visualization ---
+  // --- plot: mathjs only, never touches Giac, so no reset needed ---
   registerPlotTools(server);
 
   return server;
