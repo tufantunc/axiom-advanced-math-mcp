@@ -26,23 +26,18 @@
     "format": "prettier --write \"src/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\"",
     "typecheck": "tsc --noEmit",
-
     "benchmark": "cd benchmark && npm run quick",
     "benchmark:zai": "cd benchmark && npm run quick:zai",
     "benchmark:openrouter": "cd benchmark && npm run quick:openrouter",
     "benchmark:full": "cd benchmark && npm run full",
     "benchmark:full:zai": "cd benchmark && npm run full:zai",
     "benchmark:full:openrouter": "cd benchmark && npm run full:openrouter",
-
     "benchmark:math:zai": "cd benchmark && npm run math:quick:zai",
     "benchmark:math:openrouter": "cd benchmark && npm run math:quick:openrouter",
-
     "benchmark:l3:zai": "cd benchmark && npm run math-l3:quick:zai",
     "benchmark:l3:openrouter": "cd benchmark && npm run math-l3:quick:openrouter",
-
     "benchmark:l4:zai": "cd benchmark && npm run math-l4:quick:zai",
     "benchmark:l4:openrouter": "cd benchmark && npm run math-l4:quick:openrouter",
-
     "benchmark:l5:zai": "cd benchmark && npm run math-l5:quick:zai",
     "benchmark:l5:openrouter": "cd benchmark && npm run math-l5:quick:openrouter"
   },
@@ -69,8 +64,10 @@
   },
   "homepage": "https://github.com/tufantunc/axiom-advanced-math-mcp#readme",
   "dependencies": {
+    "@hono/node-server": "2.1.0",
     "@modelcontextprotocol/sdk": "^1.25.3",
     "express": "^4.18.2",
+    "hono": "4.13.1",
     "mathjs": "15.1.1",
     "zod": "^4.0.0"
   },
