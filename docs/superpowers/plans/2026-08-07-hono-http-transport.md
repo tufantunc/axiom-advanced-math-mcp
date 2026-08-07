@@ -1037,12 +1037,18 @@ describe('http-app portability boundary', () => {
     expect(violations, `Workers portability boundary broken:\n${rendered}`).toEqual([]);
   });
 
-  it('actually walks past the entry file', () => {
-    // Guards the guard: if the closure walk silently found nothing to follow,
-    // the test above would pass vacuously.
-    const source = readFileSync(resolve(ENTRY), 'utf8');
-    const relative = specifiers(source).filter((s) => s.startsWith('.'));
-    expect(relative.length).toBeGreaterThan(0);
+  it('detects a node: builtin reached transitively (positive control)', () => {
+    // Guards the guard. The entry file has no relative imports at all once
+    // both of its dependencies are injected, so the walk over it cannot
+    // demonstrate that traversal works — a broken walker would return an
+    // empty violation list and the test above would pass vacuously.
+    //
+    // dist/server/index.js is a known-positive: it reaches node:child_process
+    // six hops down, through tools/verify -> giac -> wrapper -> worker-host.
+    // If the walker stops traversing, this test fails and tells us the guard
+    // above has stopped guarding.
+    const violations = nodeImportsInClosure('dist/server/index.js');
+    expect(violations.some((v) => v.specifier === 'node:child_process')).toBe(true);
   });
 });
 ```
