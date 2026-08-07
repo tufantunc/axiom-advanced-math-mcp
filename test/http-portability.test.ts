@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import { isBuiltin } from 'node:module';
 
 const ENTRY = 'dist/server/transports/http-app.js';
 
@@ -30,7 +31,11 @@ function nodeImportsInClosure(entry: string): { file: string; specifier: string 
     seen.add(file);
 
     for (const spec of specifiers(readFileSync(file, 'utf8'))) {
-      if (spec.startsWith('node:')) {
+      // Catches both the `node:fs` form and the bare `fs` form — an
+      // unprefixed builtin specifier is a bare specifier like any npm
+      // package, so without this check it would be skipped by the `.`
+      // branch below and pass the guard silently.
+      if (isBuiltin(spec)) {
         violations.push({ file, specifier: spec });
       } else if (spec.startsWith('.')) {
         queue.push(resolve(dirname(file), spec));

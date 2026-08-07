@@ -36,7 +36,7 @@ npm run format       # prettier (semi, singleQuote, 100 char)
 
 ## Architecture notes
 
-- **Entry points:** `src/cli.ts` (STDIO), `src/http.ts` (HTTP via Express on `/mcp`)
+- **Entry points:** `src/cli.ts` (STDIO), `src/http.ts` (HTTP via Hono on `/mcp`, served with `@hono/node-server`; `src/server/transports/http-app.ts` is the portable app factory, stateless)
 - **WASM engine:** Giac lives at `src/server/giac/`. HTTP server calls `giacEngine.initialize()` before starting.
 - **Response format:** All 15 tools return `{ content: [{type:"text", text:"..."}], isError:false }` — the LLM grader parses the last text block.
 

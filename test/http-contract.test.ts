@@ -39,24 +39,15 @@ async function waitForReady(base: string, timeoutMs = 30_000): Promise<void> {
   throw new Error(`server did not become ready: ${String(lastError)}`);
 }
 
-/**
- * POST a JSON-RPC message and return the parsed response.
- *
- * `sessionId` is forwarded as `mcp-session-id` when given. A stateful server
- * requires it on every request after `initialize`; a stateless one issues no
- * session id, so callers pass the null they got back and no header is sent.
- * The same helper therefore drives both transports.
- */
+/** POST a JSON-RPC message to the running server and return the parsed response. */
 async function rpc(
   base: string,
-  body: unknown,
-  sessionId?: string | null
+  body: unknown
 ): Promise<{ status: number; contentType: string; sessionId: string | null; json: any }> {
   const headers: Record<string, string> = {
     'content-type': 'application/json',
     accept: 'application/json, text/event-stream',
   };
-  if (sessionId) headers['mcp-session-id'] = sessionId;
 
   const res = await fetch(`${base}/mcp`, {
     method: 'POST',

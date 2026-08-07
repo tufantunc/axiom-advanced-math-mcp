@@ -15,7 +15,6 @@
   ],
   "ignoreDependencies": [
     "@types/node",
-    "@types/express",
     "@vitest/coverage-v8",
     "oxlint",
     "prettier",

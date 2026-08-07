@@ -17,9 +17,10 @@ async function post(app: ReturnType<typeof createHttpApp>, body: unknown) {
   );
   const contentType = res.headers.get('content-type') ?? '';
   const text = await res.text();
-  const json = contentType.includes('text/event-stream')
-    ? JSON.parse(text.split('\n').find((l) => l.startsWith('data:'))!.slice(5).trim())
-    : JSON.parse(text);
+  // Responses from this app are always application/json — pinned by the
+  // "answers with a complete JSON body, not a stream" test below — so no
+  // SSE-framing branch is needed here.
+  const json = JSON.parse(text);
   return { res, contentType, json };
 }
 
@@ -111,13 +112,45 @@ describe('http-app method rejection and errors', () => {
   it('rejects GET /mcp with 405 (no SSE stream offered)', async () => {
     const res = await app.fetch(new Request('http://localhost/mcp', { method: 'GET' }));
     expect(res.status).toBe(405);
-    const body = (await res.json()) as { error: { code: number } };
+    expect(res.headers.get('allow')).toBe('POST');
+    const body = (await res.json()) as { error: { code: number; message: string } };
     expect(body.error.code).toBe(-32000);
+    expect(body.error.message).toContain('no SSE stream is offered');
   });
 
   it('rejects DELETE /mcp with 405 (no sessions to terminate)', async () => {
     const res = await app.fetch(new Request('http://localhost/mcp', { method: 'DELETE' }));
     expect(res.status).toBe(405);
+    expect(res.headers.get('allow')).toBe('POST');
+    const body = (await res.json()) as { error: { code: number; message: string } };
+    expect(body.error.message).toContain('no sessions to terminate');
+  });
+
+  it('rejects PUT /mcp with 405 rather than 404, with an Allow header', async () => {
+    const res = await app.fetch(new Request('http://localhost/mcp', { method: 'PUT' }));
+    expect(res.status).toBe(405);
+    expect(res.headers.get('allow')).toBe('POST');
+    const body = (await res.json()) as { error: { code: number; message: string } };
+    expect(body.error.code).toBe(-32000);
+    expect(body.error.message).toContain('method is not supported');
+  });
+
+  it('rejects a body over the 1 MB limit with 413 and a JSON-RPC error', async () => {
+    // Replaces the 100 kb cap express.json() used to provide. 2 MB comfortably
+    // clears the 1 MB limit so this can't flake on encoding overhead.
+    const oversized = 'x'.repeat(2 * 1024 * 1024);
+    const res = await app.fetch(
+      new Request('http://localhost/mcp', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping', params: { pad: oversized } }),
+      })
+    );
+    expect(res.status).toBe(413);
+    const body = (await res.json()) as { jsonrpc: string; error: { code: number; message: string } };
+    expect(body.jsonrpc).toBe('2.0');
+    expect(body.error.code).toBe(-32000);
+    expect(body.error.message).toMatch(/exceeds/i);
   });
 
   it('maps a malformed JSON body to -32700', async () => {

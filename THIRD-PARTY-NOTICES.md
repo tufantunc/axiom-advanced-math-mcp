@@ -51,9 +51,10 @@ GPL-3.0-or-later:
 
 | Package                     | License    |
 | --------------------------- | ---------- |
+| `@hono/node-server`         | MIT        |
 | `@modelcontextprotocol/sdk` | MIT        |
+| `hono`                      | MIT        |
 | `mathjs`                    | Apache-2.0 |
-| `express`                   | MIT        |
 | `zod`                       | MIT        |
 
 Full license texts ship inside each package under `node_modules/`.

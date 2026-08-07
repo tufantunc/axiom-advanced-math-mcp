@@ -3,7 +3,7 @@
 [![License: GPL v3+](https://img.shields.io/badge/License-GPLv3+-blue.svg)](LICENSE)
 [![Node.js >=20](https://img.shields.io/badge/Node.js->=20-green.svg)](https://nodejs.org/)
 [![MCP](https://img.shields.io/badge/MCP-1.25.3-blue)](https://modelcontextprotocol.io/)
-[![Tests](https://img.shields.io/badge/Tests-616%20passed-green.svg)](https://github.com/tufantunc/axiom-advanced-math-mcp)
+[![Tests](https://img.shields.io/badge/Tests-632%20passed-green.svg)](https://github.com/tufantunc/axiom-advanced-math-mcp)
 
 Advanced mathematical computation engine for LLMs powered by the Model Context Protocol.
 
@@ -88,13 +88,13 @@ npm run build
 
 ```bash
 # Build and run
-docker-compose up -d
+docker-compose -f docker/docker-compose.yml up -d
 
 # Check logs
-docker-compose logs -f
+docker-compose -f docker/docker-compose.yml logs -f
 
 # Stop
-docker-compose down
+docker-compose -f docker/docker-compose.yml down
 ```
 
 ---
@@ -149,7 +149,7 @@ scales horizontally with no shared state.
 | GET    | `/health` | `200` when ready, `503` when the CAS engine is not     |
 
 > **Security:** there is no authentication yet. The default bind address is
-> `127.0.0.1`, but `docker-compose.yml` sets `MCP_HOST=0.0.0.0`. If you expose
+> `127.0.0.1`, but `docker/docker-compose.yml` sets `MCP_HOST=0.0.0.0`. If you expose
 > the port, put it behind a reverse proxy that handles authentication.
 
 **Environment variables:**
@@ -391,21 +391,22 @@ npm run test:watch
 npm run test:coverage
 ```
 
-**Test coverage:** 616 tests, 100% pass rate.
+**Test coverage:** 632 tests, 100% pass rate.
 
 ### WASM Build (Giac)
 
 ```bash
-# Linux/Mac
-cd docker
-docker-compose -f docker-compose.wasm.win build
+npm run build:giac:wasm
 
-# Windows
-cd docker
-docker-compose -f docker-compose.windows.yml build
+# Build a specific upstream ref instead of master
+GIAC_REF=v1.9.x npm run build:giac:wasm
 ```
 
-Build creates `giac.wasm` and `giac.wasm.js` in `docker/wasm-output/`. Copy to `src/server/giac/`.
+This runs `scripts/build-giac-wasm.sh`, which builds
+`docker/build-giac-wasm/Dockerfile` with `docker build` (no Compose file
+involved) and writes `giac.wasm.js` straight into `src/server/giac/` — no
+manual copy step needed. Requires Docker Desktop (or another Docker daemon)
+running locally. Per-task build logs land under `logs/giac-build/`.
 
 ---
 

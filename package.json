@@ -19,7 +19,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "test:integration": "vitest run --config vitest.config.integration.ts",
+    "test:integration": "npm run build && vitest run --config vitest.config.integration.ts",
     "inspect": "npx @modelcontextprotocol/inspector tsx src/cli.ts",
     "lint": "oxlint src",
     "lint:fix": "oxlint src --fix",

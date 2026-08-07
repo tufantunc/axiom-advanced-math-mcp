@@ -3,7 +3,15 @@ import { createHttpApp } from './server/transports/http-app.js';
 import { giacEngine } from './server/giac/index.js';
 import { createServer } from './server/index.js';
 
-const port = parseInt(process.env.MCP_PORT || '3000', 10);
+const rawPort = process.env.MCP_PORT || '3000';
+const port = parseInt(rawPort, 10);
+if (!Number.isInteger(port) || port < 0 || port > 65535) {
+  // parseInt('garbage', 10) is NaN, and serve() silently binds an ephemeral
+  // port when given NaN — the log line below would then claim a port the
+  // process isn't actually listening on. Fail fast instead.
+  console.error(`[http] invalid MCP_PORT: ${JSON.stringify(rawPort)} (must be an integer 0-65535)`);
+  process.exit(1);
+}
 const host = process.env.MCP_HOST || '127.0.0.1';
 
 const app = createHttpApp({
