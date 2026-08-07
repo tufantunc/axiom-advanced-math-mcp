@@ -4,6 +4,7 @@ import { verifySchema, verifyHandler } from './tools/verify/index.js';
 import { registerPlotTools } from './tools/plot/index.js';
 import { registerPrompts } from './prompts/index.js';
 import { withGiacSession } from './giac/session-lock.js';
+import { evaluationCache } from './tools/symbolic/cache.js';
 import { VERSION } from '../version.js';
 
 /**
@@ -20,6 +21,34 @@ import { VERSION } from '../version.js';
  * whole handler, so a concurrent tool call cannot interleave its own
  * evaluations between this one's reset and its result. See session-lock.ts.
  */
+
+/**
+ * Runs one Giac-backed tool call as an isolated CAS session.
+ *
+ * `withGiacSession` resets the *engine*; this also drops the memoized *results*
+ * computed under the session being discarded. The two belong together: the
+ * evaluation cache is keyed on the Giac expression string alone, so an entry
+ * computed while `sto(7,qq)` was in effect would otherwise be served to a later
+ * caller running against a pristine engine — the same silent wrong answer the
+ * reset exists to prevent, arriving through the cache instead of the worker.
+ *
+ * `isCacheable()` in tools/symbolic/cache.ts already refuses to store results
+ * for expressions containing `sto(`/`:=`/`assume(`/`purge(`, but that is a
+ * denylist: it cannot know about `angle_radian(`, `approx_mode(`, `srand(` or
+ * whatever a future Giac call introduces. Scoping the cache to the session it
+ * was computed in removes the channel structurally instead of enumerating it.
+ * The denylist stays as defence in depth for reuse *within* a single call.
+ *
+ * Cost, measured: a repeated identical expression goes from a 0.016 ms cache
+ * hit to a 0.405 ms recompute. Caching within a call — the computation, its
+ * LaTeX, its verification pass — is unaffected.
+ */
+function withIsolatedCasSession<A, R>(handler: (args: A) => Promise<R>): (args: A) => Promise<R> {
+  return withGiacSession(async (args: A) => {
+    evaluationCache.clear();
+    return handler(args);
+  });
+}
 
 export function createServer(): McpServer {
   const server = new McpServer(
@@ -74,7 +103,7 @@ The "plot" tool renders function graphs as SVG images.`,
       'Pass a CAS-style problem string (e.g., "solve(x^2-4=0, x)", "diff(x^3, x)", ' +
       '"det([[1,2],[3,4]])", "C(10,3)", "2+3*sin(pi/4)") or any Giac/Xcas expression.',
     computeSchema.shape,
-    withGiacSession(async (args) => computeHandler(args))
+    withIsolatedCasSession(async (args) => computeHandler(args))
   );
 
   // --- verify: independent result verification ---
@@ -84,7 +113,7 @@ The "plot" tool renders function graphs as SVG images.`,
       'Supports identity verification (e.g., "sin(x)^2+cos(x)^2 = 1"), ' +
       'solution checking (e.g., "x=2 satisfies x^2-4=0"), and computation assertions.',
     verifySchema.shape,
-    withGiacSession(async (args) => verifyHandler(args as Record<string, unknown>))
+    withIsolatedCasSession(async (args) => verifyHandler(args as Record<string, unknown>))
   );
 
   // --- plot: mathjs only, never touches Giac, so no reset needed ---

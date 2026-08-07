@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { createHttpApp, MAX_MCP_BODY_BYTES } from '../src/server/transports/http-app.js';
 import { createServer } from '../src/server/index.js';
+import { evaluationCache } from '../src/server/tools/symbolic/cache.js';
 import { VERSION } from '../src/version.js';
 
 /**
@@ -243,6 +244,36 @@ describe('http-app CAS state isolation between requests', () => {
       expect(readers[k]).toContain(`d${k}+1`);
       expect(readers[k]).not.toMatch(/\b6\b/);
     }
+  });
+
+  // The engine reset and the session lock close the leak through the *worker*.
+  // The process-wide evaluation cache is a second channel to the same place: it
+  // memoizes Giac results keyed on the expression string alone, so a value
+  // computed under a mutated session would otherwise be handed to a later
+  // caller running against a pristine engine. The cache is therefore dropped
+  // with the session it belongs to.
+
+  it('does not serve a cached result across a tool-call boundary', async () => {
+    // Poison the cache directly rather than trying to reach it through a
+    // mutating expression: the point is that NO stale entry can survive the
+    // boundary, whatever produced it. This is what makes the fix structural
+    // instead of a denylist of state-mutating Giac constructs.
+    evaluationCache.set('simplify(qq+1)', { result: '8' });
+
+    const text = await compute(60, 'simplify(qq+1)');
+    expect(text).toContain('qq+1');
+    expect(text).not.toMatch(/\b8\b/);
+  });
+
+  it('scopes the evaluation cache to a single tool call', async () => {
+    await compute(61, 'integrate(sin(x)^3,x)');
+    const afterFirst = evaluationCache.size;
+    expect(afterFirst).toBeGreaterThan(0);
+
+    await compute(62, 'factor(x^4-1)');
+    // Entries do not accumulate across calls: the second call starts from an
+    // empty cache, so the size reflects only its own work.
+    expect(evaluationCache.size).toBeLessThanOrEqual(afterFirst);
   });
 });
 
