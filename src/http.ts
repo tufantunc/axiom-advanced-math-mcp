@@ -14,9 +14,21 @@ if (!Number.isInteger(port) || port < 0 || port > 65535) {
 }
 const host = process.env.MCP_HOST || '127.0.0.1';
 
+// Comma-separated Host-header allowlist for DNS-rebinding protection (see
+// createHttpApp's `allowedHosts` doc comment for the threat model). Reading
+// process.env belongs here, not in http-app.ts, which must stay free of
+// Node APIs. An unset or blank variable is passed through as an empty
+// array so createHttpApp falls back to its loopback-only default rather
+// than replacing it with an empty allowlist.
+const allowedHosts = (process.env.MCP_ALLOWED_HOSTS || '')
+  .split(',')
+  .map((entry) => entry.trim())
+  .filter((entry) => entry.length > 0);
+
 const app = createHttpApp({
   healthProbe: () => giacEngine.isReady(),
   createServer,
+  ...(allowedHosts.length > 0 ? { allowedHosts } : {}),
 });
 
 async function start(): Promise<void> {

@@ -17,6 +17,30 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
  */
 const MAX_MCP_BODY_BYTES = 1024 * 1024;
 
+/**
+ * Loopback-only default for `allowedHosts`. Kept as bracketed `[::1]` to
+ * match how the spec (and operators) write an IPv6 literal in a Host
+ * header; `extractHostname` strips the brackets when normalizing it into
+ * the comparison set below.
+ */
+const DEFAULT_ALLOWED_HOSTS = ['localhost', '127.0.0.1', '[::1]'];
+
+/**
+ * Pulls just the hostname out of a `Host` header value, discarding the
+ * port. Naively splitting on the first `:` would mangle a bracketed IPv6
+ * literal like `[::1]:3000` (or truncate bare `::1` to an empty string), so
+ * bracketed hosts are unwrapped explicitly before falling back to a plain
+ * `host:port` split.
+ */
+function extractHostname(hostHeader: string): string {
+  if (hostHeader.startsWith('[')) {
+    const closeBracket = hostHeader.indexOf(']');
+    return closeBracket === -1 ? hostHeader : hostHeader.slice(1, closeBracket);
+  }
+  const colonIndex = hostHeader.indexOf(':');
+  return colonIndex === -1 ? hostHeader : hostHeader.slice(0, colonIndex);
+}
+
 export interface HttpAppOptions {
   /**
    * Reports whether the compute backend is ready to serve.
@@ -40,6 +64,27 @@ export interface HttpAppOptions {
    * Enforced by test/http-portability.test.ts.
    */
   createServer: () => McpServer;
+
+  /**
+   * Hostnames permitted in the `Host` header on `POST /mcp`, compared
+   * ignoring port. Defaults to the loopback set (`localhost`, `127.0.0.1`,
+   * `[::1]`) when omitted. When provided, the list REPLACES the default
+   * rather than extending it -- an operator who names hosts explicitly is
+   * saying exactly what should be reachable, not "loopback plus this".
+   *
+   * This defends against DNS rebinding: a malicious page can make a
+   * victim's browser resolve an attacker-controlled domain to 127.0.0.1
+   * and then issue a same-origin request that reaches this server despite
+   * it never being intentionally exposed. It is NOT authentication -- it
+   * only constrains which domain names may reach this endpoint.
+   *
+   * Injected rather than read from `process.env.MCP_ALLOWED_HOSTS` here:
+   * touching `process` would pull Node-specific behavior into a module
+   * that must stay portable to Workers/Deno/Bun. `src/http.ts` reads the
+   * environment and passes the parsed result down.
+   * Enforced by test/http-portability.test.ts.
+   */
+  allowedHosts?: string[];
 }
 
 /**
@@ -52,6 +97,13 @@ export interface HttpAppOptions {
 export function createHttpApp(options: HttpAppOptions): Hono {
   const app = new Hono();
 
+  // Normalized once at app-build time; extractHostname strips the
+  // brackets off a bracketed IPv6 entry so it compares equal to whatever
+  // extractHostname produces from an incoming Host header.
+  const allowedHosts = new Set(
+    (options.allowedHosts ?? DEFAULT_ALLOWED_HOSTS).map(extractHostname)
+  );
+
   app.get('/health', (c) => {
     const ready = options.healthProbe();
     return c.json(
@@ -62,6 +114,32 @@ export function createHttpApp(options: HttpAppOptions): Hono {
 
   app.post(
     '/mcp',
+    // DNS-rebinding protection (see the `allowedHosts` doc comment above).
+    // Scoped to /mcp only, not /health: /mcp executes CAS computations --
+    // the actual threat surface -- while /health is inert and is
+    // legitimately probed by monitoring systems from outside the
+    // allowlist, so gating it too would break harmless health checks for
+    // no security benefit.
+    async (c, next) => {
+      const hostHeader = c.req.header('host');
+      // A missing or empty Host header is rejected outright (fail closed)
+      // rather than treated as "no restriction applies".
+      const hostname = hostHeader ? extractHostname(hostHeader) : '';
+      if (!hostHeader || !allowedHosts.has(hostname)) {
+        return c.json(
+          {
+            jsonrpc: '2.0',
+            id: null,
+            error: {
+              code: -32000,
+              message: `Host not allowed: ${hostHeader ?? '(missing)'}. Set MCP_ALLOWED_HOSTS to permit this host.`,
+            },
+          },
+          403
+        );
+      }
+      await next();
+    },
     bodyLimit({
       maxSize: MAX_MCP_BODY_BYTES,
       onError: (c) =>

@@ -3,7 +3,17 @@ import { createHttpApp } from '../src/server/transports/http-app.js';
 import { createServer } from '../src/server/index.js';
 import { VERSION } from '../src/version.js';
 
-/** POST a JSON-RPC message into the app in-process and parse the reply. */
+/**
+ * POST a JSON-RPC message into the app in-process and parse the reply.
+ *
+ * Sets an explicit `Host: localhost` header: unlike a real HTTP client, an
+ * in-memory `Request` never synthesizes one from the URL (confirmed: Node's
+ * `new Request('http://localhost/...').headers.get('host')` is `null`), and
+ * this app now rejects `POST /mcp` when the host is missing. `localhost` is
+ * inside the default allowlist, so this keeps the helper's behavior
+ * matching what it always conceptually represented -- a request to
+ * `http://localhost`.
+ */
 async function post(app: ReturnType<typeof createHttpApp>, body: unknown) {
   const res = await app.fetch(
     new Request('http://localhost/mcp', {
@@ -11,6 +21,7 @@ async function post(app: ReturnType<typeof createHttpApp>, body: unknown) {
       headers: {
         'content-type': 'application/json',
         accept: 'application/json, text/event-stream',
+        host: 'localhost',
       },
       body: JSON.stringify(body),
     })
@@ -142,7 +153,7 @@ describe('http-app method rejection and errors', () => {
     const res = await app.fetch(
       new Request('http://localhost/mcp', {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', host: 'localhost' },
         body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping', params: { pad: oversized } }),
       })
     );
@@ -157,7 +168,7 @@ describe('http-app method rejection and errors', () => {
     const res = await app.fetch(
       new Request('http://localhost/mcp', {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', host: 'localhost' },
         body: '{ not json',
       })
     );
@@ -190,5 +201,82 @@ describe('http-app method rejection and errors', () => {
     const body = JSON.parse(text) as { error: { code: number; message: string } };
     expect(body.error.code).toBe(-32603);
     expect(body.error.message).toBe('Internal error');
+  });
+});
+
+describe('http-app Host header validation (DNS-rebinding protection)', () => {
+  /** POST /mcp with an explicit Host header, bypassing the request's own URL host. */
+  async function postWithHost(app: ReturnType<typeof createHttpApp>, host: string | null) {
+    const headers: Record<string, string> = {
+      'content-type': 'application/json',
+      accept: 'application/json, text/event-stream',
+    };
+    if (host !== null) headers.host = host;
+    return app.fetch(
+      new Request('http://placeholder/mcp', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }),
+      })
+    );
+  }
+
+  it('allows Host: localhost (default allowlist)', async () => {
+    const app = createHttpApp({ healthProbe: () => true, createServer });
+    const res = await postWithHost(app, 'localhost');
+    expect(res.status).toBe(200);
+  });
+
+  it('allows Host: 127.0.0.1:3000 (port ignored, default allowlist)', async () => {
+    const app = createHttpApp({ healthProbe: () => true, createServer });
+    const res = await postWithHost(app, '127.0.0.1:3000');
+    expect(res.status).toBe(200);
+  });
+
+  it('allows Host: [::1]:3000 (bracketed IPv6, port ignored, default allowlist)', async () => {
+    const app = createHttpApp({ healthProbe: () => true, createServer });
+    const res = await postWithHost(app, '[::1]:3000');
+    expect(res.status).toBe(200);
+  });
+
+  it('rejects an unrecognized Host with 403 and a JSON-RPC error naming the host', async () => {
+    const app = createHttpApp({ healthProbe: () => true, createServer });
+    const res = await postWithHost(app, 'evil.example.com');
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { jsonrpc: string; error: { code: number; message: string } };
+    expect(body.jsonrpc).toBe('2.0');
+    expect(body.error.code).toBe(-32000);
+    expect(body.error.message).toContain('evil.example.com');
+    expect(body.error.message).toContain('MCP_ALLOWED_HOSTS');
+  });
+
+  it('an explicit allowedHosts list replaces the default rather than extending it', async () => {
+    const app = createHttpApp({
+      healthProbe: () => true,
+      createServer,
+      allowedHosts: ['mcp.example.com'],
+    });
+
+    const allowed = await postWithHost(app, 'mcp.example.com');
+    expect(allowed.status).toBe(200);
+
+    const nowRejected = await postWithHost(app, 'localhost');
+    expect(nowRejected.status).toBe(403);
+  });
+
+  it('rejects a missing Host header (fail closed)', async () => {
+    const app = createHttpApp({ healthProbe: () => true, createServer });
+    const res = await postWithHost(app, null);
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: { code: number; message: string } };
+    expect(body.error.code).toBe(-32000);
+  });
+
+  it('does not apply the Host check to GET /health', async () => {
+    const app = createHttpApp({ healthProbe: () => true, createServer });
+    const res = await app.fetch(
+      new Request('http://placeholder/health', { headers: { host: 'evil.example.com' } })
+    );
+    expect(res.status).toBe(200);
   });
 });

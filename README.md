@@ -151,6 +151,15 @@ scales horizontally with no shared state.
 > **Security:** there is no authentication yet. The default bind address is
 > `127.0.0.1`, but `docker/docker-compose.yml` sets `MCP_HOST=0.0.0.0`. If you expose
 > the port, put it behind a reverse proxy that handles authentication.
+>
+> `POST /mcp` also validates the `Host` header against an allowlist
+> (`localhost`, `127.0.0.1`, `[::1]` by default) to block DNS rebinding — a
+> malicious page can make a victim's browser resolve an attacker domain to
+> `127.0.0.1` and reach this server through it. If you reach the server by a
+> LAN address, hostname, or reverse-proxy domain other than loopback, set
+> `MCP_ALLOWED_HOSTS` or every `POST /mcp` request will get a `403`. This
+> check is **not** authentication — it only constrains which host names may
+> reach the endpoint, nothing about who is asking.
 
 **Environment variables:**
 
@@ -158,6 +167,7 @@ scales horizontally with no shared state.
 | ------------------------ | ----------- | --------------------------------------------------- |
 | `MCP_PORT`               | `3000`      | HTTP server port                                    |
 | `MCP_HOST`               | `127.0.0.1` | HTTP server host                                    |
+| `MCP_ALLOWED_HOSTS`      | loopback only (`localhost`, `127.0.0.1`, `[::1]`) | Comma-separated `Host` header allowlist for `POST /mcp` (DNS-rebinding protection). An explicit value replaces the default rather than extending it. |
 | `AXIOM_EVAL_TIMEOUT_MS`  | `10000`     | Per-evaluation CAS timeout, in milliseconds         |
 | `AXIOM_COMPUTE_HYGIENE`  | unset       | Set to `1` to enable compute output post-processing |
 

@@ -9,6 +9,10 @@ services:
       - MCP_HOST=0.0.0.0
       - MCP_PORT=3000
       - AXIOM_EVAL_TIMEOUT_MS=30000
+      # Required if you reach this container by its LAN IP, a hostname, or a
+      # reverse-proxy domain rather than localhost/127.0.0.1 -- otherwise
+      # POST /mcp gets a 403 (DNS-rebinding protection, see README.md).
+      # - MCP_ALLOWED_HOSTS=mcp.example.com
     ports:
       - '3000:3000'
     restart: unless-stopped
