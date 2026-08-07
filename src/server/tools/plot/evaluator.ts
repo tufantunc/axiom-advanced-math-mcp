@@ -1,6 +1,21 @@
 import { create, all } from 'mathjs';
 
 const math = create(all, {});
+// This instance only ever evaluates caller-supplied plot expressions and
+// needs no custom imports or units, so lock down `import`/`createUnit` per
+// mathjs's security guidance for instances that evaluate untrusted input:
+// https://mathjs.org/docs/expressions/security.html
+math.import(
+  {
+    import: function () {
+      throw new Error('Function import is disabled');
+    },
+    createUnit: function () {
+      throw new Error('Function createUnit is disabled');
+    },
+  },
+  { override: true }
+);
 
 export interface PlotPoint {
   x: number;

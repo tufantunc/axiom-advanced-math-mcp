@@ -3,7 +3,7 @@
 [![License: GPL v3+](https://img.shields.io/badge/License-GPLv3+-blue.svg)](LICENSE)
 [![Node.js >=20](https://img.shields.io/badge/Node.js->=20-green.svg)](https://nodejs.org/)
 [![MCP](https://img.shields.io/badge/MCP-1.25.3-blue)](https://modelcontextprotocol.io/)
-[![Tests](https://img.shields.io/badge/Tests-632%20passed-green.svg)](https://github.com/tufantunc/axiom-advanced-math-mcp)
+[![Tests](https://img.shields.io/badge/Tests-passing-green.svg)](https://github.com/tufantunc/axiom-advanced-math-mcp)
 
 Advanced mathematical computation engine for LLMs powered by the Model Context Protocol.
 
@@ -401,7 +401,7 @@ npm run test:watch
 npm run test:coverage
 ```
 
-**Test coverage:** 632 tests, 100% pass rate.
+**Test coverage:** unit + integration suite, 100% pass rate. Run `npm test` for the current count — it changes too often to keep a number here in sync.
 
 ### WASM Build (Giac)
 

@@ -41,6 +41,24 @@ export class QuickCalcService {
     this.math = create(all, {});
     // mathjs has no ln(); models write it constantly. Alias to natural log.
     this.math.import({ ln: (x: number) => Math.log(x) });
+    // Expressions handed to evaluate() below come straight from the model /
+    // caller, i.e. untrusted input. `import` and `createUnit` are reachable
+    // from the expression parser (e.g. `import({foo:...})` inside a string)
+    // and can be used to redefine trusted built-ins or fabricate fake units,
+    // so mathjs's own security guidance is to disable them on any instance
+    // that evaluates third-party expressions:
+    // https://mathjs.org/docs/expressions/security.html
+    this.math.import(
+      {
+        import: function () {
+          throw new Error('Function import is disabled');
+        },
+        createUnit: function () {
+          throw new Error('Function createUnit is disabled');
+        },
+      },
+      { override: true }
+    );
   }
 
   evaluate(options: QuickCalcOptions): QuickCalcResult {
