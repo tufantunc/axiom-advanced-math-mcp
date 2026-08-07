@@ -7,6 +7,7 @@ COPY package*.json ./
 RUN npm ci
 
 COPY tsconfig.json ./
+COPY scripts ./scripts
 COPY src ./src
 
 RUN npm run build
@@ -19,7 +20,6 @@ COPY package*.json ./
 RUN npm ci --omit=dev
 
 COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/src/server/giac ./src/server/giac
 
 ENV NODE_ENV=production
 

@@ -10,20 +10,19 @@ services:
       - NODE_ENV=production
       - MCP_HOST=0.0.0.0
       - MCP_PORT=3000
-      - GIAC_TIMEOUT=30000
-      - GIAC_MEMORY=67108864
-      - LOG_LEVEL=info
+      - AXIOM_EVAL_TIMEOUT_MS=30000
     ports:
-      - "3000:3000"
+      - '3000:3000'
     restart: unless-stopped
-    volumes:
-      - ./data:/app/data
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     networks:
       - axiom-network
 
 networks:
   axiom-network:
     driver: bridge
-
-volumes:
-  data:

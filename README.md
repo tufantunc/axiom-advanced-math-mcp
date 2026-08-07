@@ -136,12 +136,30 @@ npm run start:http
 npm run dev:http
 ```
 
+The HTTP transport is **stateless**: every `POST /mcp` is handled independently,
+no `Mcp-Session-Id` is issued, and no session state is kept between requests.
+This server sends no server-initiated notifications, so nothing is lost — and it
+scales horizontally with no shared state.
+
+| Method | Path      | Behaviour                                              |
+| ------ | --------- | ------------------------------------------------------ |
+| POST   | `/mcp`    | Handles a JSON-RPC message                             |
+| GET    | `/mcp`    | `405` — no SSE stream is offered                       |
+| DELETE | `/mcp`    | `405` — there are no sessions to terminate             |
+| GET    | `/health` | `200` when ready, `503` when the CAS engine is not     |
+
+> **Security:** there is no authentication yet. The default bind address is
+> `127.0.0.1`, but `docker-compose.yml` sets `MCP_HOST=0.0.0.0`. If you expose
+> the port, put it behind a reverse proxy that handles authentication.
+
 **Environment variables:**
 
-| Variable   | Default     | Description      |
-| ---------- | ----------- | ---------------- |
-| `MCP_PORT` | `3000`      | HTTP server port |
-| `MCP_HOST` | `127.0.0.1` | HTTP server host |
+| Variable                 | Default     | Description                                        |
+| ------------------------ | ----------- | --------------------------------------------------- |
+| `MCP_PORT`               | `3000`      | HTTP server port                                    |
+| `MCP_HOST`               | `127.0.0.1` | HTTP server host                                    |
+| `AXIOM_EVAL_TIMEOUT_MS`  | `10000`     | Per-evaluation CAS timeout, in milliseconds         |
+| `AXIOM_COMPUTE_HYGIENE`  | unset       | Set to `1` to enable compute output post-processing |
 
 ### MCP Inspector
 
