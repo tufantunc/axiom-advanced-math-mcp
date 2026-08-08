@@ -1,7 +1,8 @@
 {
   "name": "axiom-math",
   "version": "1.0.1",
-  "description": "Advanced Math MCP Server - Symbolic and numerical computation engine for LLMs",
+  "description": "Exact symbolic math for LLMs: integrals, equations, matrices, and claim verification via Giac/Xcas",
+  "mcpName": "io.github.tufantunc/axiom-math",
   "type": "module",
   "bin": {
     "axiom-math": "./dist/cli.js"
@@ -11,7 +12,7 @@
     "copy:wasm": "node scripts/copy-wasm-asset.mjs",
     "prepack": "npm run build",
     "sync:version": "node scripts/sync-version.mjs",
-    "version": "npm run sync:version && git add src/version.ts",
+    "version": "npm run sync:version && git add src/version.ts server.json",
     "build:giac:wasm": "bash scripts/build-giac-wasm.sh",
     "start": "node dist/cli.js",
     "start:http": "node dist/http.js",

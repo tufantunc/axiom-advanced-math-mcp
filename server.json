@@ -1,0 +1,22 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.tufantunc/axiom-math",
+  "title": "Axiom — Advanced Math",
+  "description": "Exact symbolic math for LLMs: integrals, equations, matrices, and claim verification via Giac/Xcas",
+  "version": "1.0.1",
+  "websiteUrl": "https://github.com/tufantunc/axiom-advanced-math-mcp",
+  "repository": {
+    "url": "https://github.com/tufantunc/axiom-advanced-math-mcp",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "axiom-math",
+      "version": "1.0.1",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}
