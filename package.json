@@ -85,6 +85,7 @@
   "files": [
     "dist",
     "scripts",
+    "skills",
     "README.md",
     "LICENSE",
     "THIRD-PARTY-NOTICES.md",

@@ -126,6 +126,32 @@ npm run dev
 }
 ```
 
+### Command line
+
+The same binary works as a one-shot CLI, so agents can use it as a skill with no
+MCP configuration. With no arguments it is the MCP server; with a subcommand it
+runs one computation and exits.
+
+```bash
+npx -y axiom-advanced-math-mcp compute 'integrate(sin(x)^3,x)'
+npx -y axiom-advanced-math-mcp compute -q 'solve(x^2-4=0,x)'     # {-2, 2}
+npx -y axiom-advanced-math-mcp verify 'sin(x)^2+cos(x)^2 = 1'    # exit 0 if true
+npx -y axiom-advanced-math-mcp plot 'sin(x)' -o wave.svg
+echo 'diff(x^3,x)' | npx -y axiom-advanced-math-mcp compute -q   # 3*x^2
+```
+
+| Flag | Meaning |
+| --- | --- |
+| `-q` | print one value only, for scripting |
+| `--json` | structured output |
+| `--latex` | LaTeX-focused text (`compute` only) |
+| `-h`, `--help` | usage, or usage for a subcommand |
+
+Exit codes: `0` success · `1` tool or usage error · `2` `verify` ran and the
+claim was **not** verified.
+
+A ready-to-use agent skill is in [skills/axiom-math/SKILL.md](skills/axiom-math/SKILL.md).
+
 ### HTTP Transport
 
 ```bash
