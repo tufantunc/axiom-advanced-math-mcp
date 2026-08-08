@@ -1,5 +1,11 @@
 # Axiom-MCP Development Plan
 
+> **Historical.** This is the original build plan, kept as a record of how the
+> project was scoped. It has not tracked the code since — the tool surface was
+> consolidated into three tools, the HTTP transport was rewritten on Hono, and a
+> CLI was added. **[README.md](README.md) is the current documentation**;
+> [AGENTS.md](AGENTS.md) is the working reference for this codebase.
+
 ## 📋 Overview
 Build an MCP server that provides advanced mathematical computation capabilities to LLMs using:
 - **mathjs** for basic arithmetic, unit conversions, and quick numerical calculations
@@ -458,8 +464,8 @@ LOG_LEVEL=info            # debug | info | warn | error
 {
   "mcpServers": {
     "axiom-math": {
-      "command": "node",
-      "args": ["/path/to/axiom-advanced-math-mcp/dist/cli.js", "--transport", "stdio"]
+      "command": "npx",
+      "args": ["-y", "axiom-math"]
     }
   }
 }
