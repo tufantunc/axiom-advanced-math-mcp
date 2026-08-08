@@ -49,13 +49,43 @@ the process itself by design.
 
 ### No authentication
 
-`POST /mcp` is unauthenticated. This is a known gap, not an oversight — an
-OAuth 2.1 resource-server layer is planned as separate work. Until then:
+`POST /mcp` is unauthenticated, and there is no rate limiting. Both are
+deliberate: the transport is stateless so it can scale horizontally, and an
+in-process rate-limit bucket would undo that. They belong at the perimeter.
 
 - The default bind is `127.0.0.1`. **`docker/docker-compose.yml` sets
   `MCP_HOST=0.0.0.0`**, which exposes the port on every interface.
 - If you expose it beyond localhost, put an authenticating reverse proxy in
   front. The server logs a warning at startup when bound to `0.0.0.0`.
+
+**A working configuration ships with the repo:**
+[`docker/reverse-proxy/`](docker/reverse-proxy/) — nginx in front of the app,
+with the app publishing no port at all, so there is no route that bypasses it.
+
+```bash
+cd docker/reverse-proxy
+htpasswd -Bc htpasswd <username>    # create credentials
+docker compose up -d                # proxy on :8080, app unreachable directly
+```
+
+Set `MCP_ALLOWED_HOSTS` in that compose file to the hostname clients use, and
+terminate TLS at the proxy (or in front of it) before sending credentials over
+anything but loopback — HTTP basic auth over plaintext hands them to anyone on
+the path.
+
+It was verified end to end, not just written: unauthenticated and
+wrong-password requests get `401`, a valid one proxies through and returns the
+computation, `/health` stays open for uptime checks, unknown paths `404`, a
+70 KB body is rejected with `413`, and of 40 simultaneous requests 4 succeeded
+and 36 got `429`.
+
+### Why rate limiting matters more than it looks
+
+Giac is a single worker and tool calls are serialised, so a caller with many
+requests in flight occupies the queue and starves everyone else. The
+per-evaluation timeout does not help — each request is legitimately waiting its
+turn. The shipped config caps concurrency per client IP at 4, which is what the
+429s above are.
 
 ### Perimeter controls that do exist
 
@@ -119,7 +149,8 @@ Named plainly, because they are the things most likely to bite you:
 ## Deployment guidance
 
 - Keep the default `127.0.0.1` bind unless something else terminates and
-  authenticates the connection.
+  authenticates the connection. [`docker/reverse-proxy/`](docker/reverse-proxy/)
+  is that something else if you do not already have one.
 - Set `MCP_ALLOWED_HOSTS` explicitly when reaching the server by hostname or
   LAN address; the loopback default will reject those.
 - Leave `AXIOM_EVAL_TIMEOUT_MS` at its default unless you have measured a need.

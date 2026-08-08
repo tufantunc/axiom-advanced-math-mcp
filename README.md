@@ -223,9 +223,12 @@ scales horizontally with no shared state.
 | DELETE | `/mcp`    | `405` — there are no sessions to terminate             |
 | GET    | `/health` | `200` when ready, `503` when the CAS engine is not     |
 
-> **Security:** there is no authentication yet. The default bind address is
-> `127.0.0.1`, but `docker/docker-compose.yml` sets `MCP_HOST=0.0.0.0`. If you expose
-> the port, put it behind a reverse proxy that handles authentication.
+> **Security:** there is no authentication and no rate limiting. The default
+> bind address is `127.0.0.1`, but `docker/docker-compose.yml` sets
+> `MCP_HOST=0.0.0.0`. If you expose the port, put it behind a reverse proxy that
+> authenticates and rate-limits — [`docker/reverse-proxy/`](docker/reverse-proxy/)
+> is a working, tested one (nginx + basic auth + per-client concurrency cap,
+> with the app publishing no port of its own).
 > [SECURITY.md](SECURITY.md) documents the full posture — what is protected,
 > what is not, and how to report a vulnerability.
 >

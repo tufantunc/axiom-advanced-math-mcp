@@ -1,0 +1,66 @@
+# Axiom behind an authenticating reverse proxy.
+#
+# Use this instead of ../docker-compose.yml when the server is reachable by
+# anything other than your own machine. The difference that matters: the app
+# publishes no port here. It is reachable only from the proxy, over the
+# internal network, so there is no way to bypass the auth and rate limits.
+#
+#   htpasswd -Bc htpasswd <username>     # create credentials first
+#   docker compose up -d
+#
+# See ../../SECURITY.md for what this does and does not protect.
+
+services:
+  axiom:
+    build:
+      context: ../..
+      dockerfile: docker/Dockerfile
+    container_name: axiom-math
+    environment:
+      - NODE_ENV=production
+      # 0.0.0.0 is safe here *because* no port is published: the only route in
+      # is the proxy on the internal network.
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=3000
+      # Must name the hostname clients use to reach the proxy — nginx forwards
+      # it as Host, and the app rejects unlisted hosts with a 403. Change this
+      # to your domain.
+      - MCP_ALLOWED_HOSTS=localhost
+    # Deliberately no `ports:` — see above.
+    expose:
+      - '3000'
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks:
+      - axiom-network
+
+  proxy:
+    image: nginx:1.27-alpine
+    container_name: axiom-proxy
+    depends_on:
+      axiom:
+        condition: service_healthy
+    ports:
+      # Override with AXIOM_PROXY_PORT if 8080 is taken.
+      - '${AXIOM_PROXY_PORT:-8080}:80'
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./htpasswd:/etc/nginx/htpasswd:ro
+    restart: unless-stopped
+    networks:
+      - axiom-network
+
+networks:
+  axiom-network:
+    driver: bridge
