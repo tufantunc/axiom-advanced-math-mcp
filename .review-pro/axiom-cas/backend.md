@@ -32,6 +32,26 @@ extends: core/skills/backend/SKILL.md
   meaning without updating the description, degrades routing quality in a way
   no test catches.
 
+- **Two surfaces, one contract.** The same three tools are reachable over MCP
+  (`src/server/index.ts`) and from the CLI (`src/cli/commands.ts`). A guard that
+  exists on only one of them is a finding, not a difference in scope. This has
+  already happened once: the 8 KB input cap is declared in the zod schemas but
+  enforced **only** by the MCP SDK's `server.tool(...)` dispatch, so the CLI
+  shipped with no bound at all until it was added to `resolveInput`. When
+  reviewing a new guard, ask which surface enforces it and check the other.
+- **`bin` is public API.** `package.json` must keep exactly one `bin`. Two bins
+  whose names do not match the package name make `npx -y axiom-advanced-math-mcp`
+  fail with "could not determine executable to run" — the line in every MCP
+  client config. Adding a second bin is a breaking change disguised as a feature.
+- **Running with no arguments must start the MCP stdio server.** Every existing
+  client config invokes the binary that way. Any change to argument dispatch
+  that could alter the no-argument path is high severity regardless of how
+  clean it looks.
+- **stdout carries only requested output.** In server mode stdout is the JSON-RPC
+  stream; in CLI mode it is the value a caller captures with `$(...)`. Hints,
+  warnings and errors go to stderr in both. A `console.log` added to a success
+  path is a contract break, not a logging preference.
+
 ## Stack-specific remedies
 
 - Inject host-specific capabilities into `createHttpApp` instead of importing
