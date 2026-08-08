@@ -228,8 +228,11 @@ Note this deliberately does not mirror `compute`'s `text|latex|json`: a verifica
 
 In `src/server/tools/verify/index.ts`, change `formatVerifyResponse` to take the format and emit JSON when asked:
 
+Note the `export`: the CLI renders text mode by calling this, so the human-readable
+layout lives in exactly one place and nothing has to parse it back.
+
 ```ts
-function formatVerifyResponse(
+export function formatVerifyResponse(
   result: VerifyResult,
   format: 'text' | 'json'
 ): {
@@ -1036,16 +1039,40 @@ describe('render', () => {
     expect(renderCompute(r, 'text')).toBe('Result: 4');
   });
 
+  // Every verify mode reads the verdict from the typed field, so the input is
+  // always the JSON envelope — text mode included.
+  const verifyEnvelope = (verified: boolean) => ({
+    content: [
+      {
+        type: 'text',
+        text: JSON.stringify({
+          verified,
+          confidence: 'high',
+          explanation: verified ? 'holds' : 'does not hold',
+          checks_performed: ['Symbolic: checked'],
+        }),
+      },
+    ],
+  });
+
   it('verify quiet mode prints the boolean and reports the verdict', () => {
-    const vr = { content: [{ type: 'text', text: JSON.stringify({ verified: false }) }] };
-    expect(renderVerify(vr, 'quiet')).toEqual({ out: 'false', verified: false });
+    expect(renderVerify(verifyEnvelope(false), 'quiet')).toEqual({
+      out: 'false',
+      verified: false,
+    });
   });
 
   it('verify json mode keeps the structure and still reports the verdict', () => {
-    const vr = { content: [{ type: 'text', text: JSON.stringify({ verified: true }) }] };
-    const rendered = renderVerify(vr, 'json');
+    const rendered = renderVerify(verifyEnvelope(true), 'json');
     expect(JSON.parse(rendered.out).verified).toBe(true);
     expect(rendered.verified).toBe(true);
+  });
+
+  it('verify text mode renders via the tool formatter, not by parsing text', () => {
+    const rendered = renderVerify(verifyEnvelope(true), 'text');
+    expect(rendered.verified).toBe(true);
+    expect(rendered.out).toContain('Verified: TRUE');
+    expect(rendered.out).toContain('Checks performed:');
   });
 
   it('plot metadata names the file it wrote', () => {
@@ -1091,6 +1118,7 @@ Create `src/cli/render.ts`:
 ```ts
 import type { OutputMode } from './parse.js';
 import type { PlotResult } from '../server/tools/plot/render.js';
+import { formatVerifyResponse, type VerifyResult } from '../server/tools/verify/index.js';
 
 export interface ToolResult {
   content: { type: string; text?: string }[];
@@ -1116,20 +1144,25 @@ export function renderCompute(r: ToolResult, mode: OutputMode): string {
   return envelope.display ?? '';
 }
 
+/**
+ * The CLI always asks `verify` for `format: 'json'`, so the verdict is read from
+ * a typed field in every mode — including text mode, whose human-readable layout
+ * is produced by calling the tool's own formatter rather than reconstructing it
+ * here. Nothing parses human-readable output anywhere.
+ */
 export function renderVerify(
   r: ToolResult,
   mode: OutputMode
 ): { out: string; verified: boolean } {
-  const text = resultText(r);
-  if (mode === 'text') {
-    // Text mode has no structured field to read, so the verdict comes from the
-    // first line the formatter emits: "Verified: TRUE ✓" / "FALSE ✗".
-    return { out: text, verified: /^Verified: TRUE/m.test(text) };
-  }
-
-  const parsed = JSON.parse(text) as { verified?: boolean };
+  const json = resultText(r);
+  const parsed = JSON.parse(json) as VerifyResult;
   const verified = parsed.verified === true;
-  return { out: mode === 'json' ? text : String(verified), verified };
+
+  if (mode === 'json') return { out: json, verified };
+  if (mode === 'quiet') return { out: String(verified), verified };
+
+  const rendered = formatVerifyResponse(parsed, 'text');
+  return { out: rendered.content.map((c) => c.text).join('\n'), verified };
 }
 
 export function renderPlotMeta(p: PlotResult, path: string | null): string {
@@ -1150,7 +1183,7 @@ export function renderPlotMeta(p: PlotResult, path: string | null): string {
 }
 ```
 
-**Note on `renderVerify` text mode:** it is the one place a verdict is read from text, and it is unavoidable — text mode has no envelope. It only affects the exit code for `verify` without `--json`/`-q`; both structured modes read the typed field. Task 7's integration test covers the text-mode exit code so this cannot rot silently.
+**`VerifyResult` must also be exported** from `src/server/tools/verify/index.ts` for the type import above — add `export` to its `interface VerifyResult` declaration (it is currently file-local).
 
 - [ ] **Step 4: Run the tests**
 
@@ -1188,7 +1221,7 @@ read; documented in place and covered by an integration test."
 
 - [ ] **Step 1: Write the implementation**
 
-There is no separate unit test for this task: it is glue whose behaviour is only meaningful end-to-end, and Task 7's integration tests cover every branch. Create `src/cli/commands.ts`:
+Create `src/cli/commands.ts`:
 
 ```ts
 import { writeFileSync } from 'node:fs';
@@ -1250,12 +1283,14 @@ async function runCompute(cmd: ComputeCommand): Promise<number> {
 
 async function runVerify(cmd: VerifyCommand): Promise<number> {
   const claim = await resolveInput(cmd.claim, 'claim');
-  const format = cmd.output === 'text' ? 'text' : 'json';
 
+  // Always json, in every mode: the verdict drives the exit code and must come
+  // from a typed field. Text mode's human-readable layout is produced by the
+  // tool's own formatter inside renderVerify, so nothing parses text back.
   const result = await verifyTool({
     claim,
     ...(cmd.method !== undefined ? { method: cmd.method } : {}),
-    format,
+    format: 'json',
   });
 
   if (result.isError) {
@@ -1317,18 +1352,123 @@ export async function runCommand(
 }
 ```
 
-- [ ] **Step 2: Typecheck**
+- [ ] **Step 2: Write the unit test**
+
+Create `test/cli-commands.test.ts`. It drives `runCommand` against the **real**
+tools — this repo has no mocking anywhere and introducing it here would let the
+mocks drift from the handlers. Real Giac costs ~300 ms per case, which is in
+line with the existing suite.
+
+```ts
+import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { runCommand } from '../src/cli/commands.js';
+import { giacEngine } from '../src/server/giac/index.js';
+
+let out: string[] = [];
+let err: string[] = [];
+let workdir: string;
+
+beforeAll(async () => {
+  await giacEngine.initialize();
+  workdir = mkdtempSync(join(tmpdir(), 'axiom-cmd-'));
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  out = [];
+  err = [];
+});
+
+/** Captures what the command writes, so we assert on stdout/stderr separately. */
+function capture(): void {
+  vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => {
+    out.push(a.map(String).join(' '));
+  });
+  vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => {
+    err.push(a.map(String).join(' '));
+  });
+}
+
+describe('runCommand — compute', () => {
+  it('prints the value and exits 0 in quiet mode', async () => {
+    capture();
+    const code = await runCommand({ kind: 'compute', expression: 'solve(x^2-4=0,x)', output: 'quiet' });
+    expect(code).toBe(0);
+    expect(out.join('\n').trim()).toBe('{-2, 2}');
+  }, 30_000);
+
+  it('exits 1 on a bad expression and writes nothing to stdout', async () => {
+    capture();
+    const code = await runCommand({ kind: 'compute', expression: 'integrate(', output: 'text' });
+    expect(code).toBe(1);
+    expect(out).toEqual([]);
+    expect(err.length).toBeGreaterThan(0);
+  }, 30_000);
+});
+
+describe('runCommand — verify', () => {
+  it('exits 0 for a true claim', async () => {
+    capture();
+    const code = await runCommand({ kind: 'verify', claim: 'sin(x)^2+cos(x)^2 = 1', output: 'quiet' });
+    expect(code).toBe(0);
+    expect(out.join('').trim()).toBe('true');
+  }, 30_000);
+
+  it('exits 2 for a false claim', async () => {
+    capture();
+    const code = await runCommand({ kind: 'verify', claim: 'sin(x)^2+cos(x)^2 = 2', output: 'quiet' });
+    expect(code).toBe(2);
+    expect(out.join('').trim()).toBe('false');
+  }, 30_000);
+
+  it('text mode still reports the verdict through the exit code', async () => {
+    capture();
+    const code = await runCommand({ kind: 'verify', claim: 'sin(x)^2+cos(x)^2 = 2', output: 'text' });
+    expect(code).toBe(2);
+    expect(out.join('\n')).toContain('Verified: FALSE');
+  }, 30_000);
+});
+
+describe('runCommand — plot', () => {
+  it('writes the file and prints its path in quiet mode', async () => {
+    capture();
+    const target = join(workdir, 'p.svg');
+    const code = await runCommand({ kind: 'plot', expression: 'sin(x)', out: target, output: 'quiet' });
+    expect(code).toBe(0);
+    expect(out.join('').trim()).toBe(target);
+    expect(readFileSync(target, 'utf8').startsWith('<svg')).toBe(true);
+  }, 30_000);
+});
+```
+
+Add a cleanup for the temp directory at the end of the file:
+
+```ts
+import { afterAll } from 'vitest';
+
+afterAll(() => {
+  rmSync(workdir, { recursive: true, force: true });
+});
+```
+
+- [ ] **Step 3: Run the tests**
+
+Run: `npx vitest run test/cli-commands.test.ts`
+Expected: PASS, 6 tests.
 
 Run: `npm run typecheck`
 Expected: no output, exit 0.
 
 Run: `npm test`
-Expected: unchanged from Task 5's count — nothing imports `commands.ts` yet.
+Expected: the Task 5 count plus 6.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add src/cli/commands.ts
+git add src/cli/commands.ts test/cli-commands.test.ts
 git commit -m "feat(cli): compute, verify and plot subcommands
 
 Giac is initialised lazily so --help and --version do not fork a worker,
