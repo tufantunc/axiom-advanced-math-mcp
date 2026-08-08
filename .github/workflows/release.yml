@@ -65,3 +65,49 @@ jobs:
       # credential, scoped to this repository and this workflow file.
       - name: Publish
         run: npm publish --provenance --access public
+
+  # Separate job, not a step, so a registry failure can be re-run on its own.
+  # npm versions are immutable — re-running the job above would fail on the
+  # second attempt, and there is no reason to couple the two.
+  registry:
+    name: list on the MCP registry
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Same mechanism as the npm publish above: mcp-publisher exchanges this
+      # for a registry token, so there is no secret here either.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install mcp-publisher
+        run: |
+          set -euo pipefail
+          curl -fsSL https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz \
+            | tar xz mcp-publisher
+          ./mcp-publisher --version
+
+      # The registry resolves server.json's packages[].version against npm and
+      # rejects a version it cannot see. npm's CDN does not serve a new version
+      # the instant publish returns, so wait for it rather than racing.
+      - name: Wait for npm to serve the new version
+        run: |
+          set -euo pipefail
+          version="$(node -p 'require("./package.json").version')"
+          for i in $(seq 1 30); do
+            if npm view "axiom-math@$version" version > /dev/null 2>&1; then
+              echo "axiom-math@$version is visible on npm"
+              exit 0
+            fi
+            echo "attempt $i: not yet visible, waiting"
+            sleep 10
+          done
+          echo "::error::axiom-math@$version never became visible on npm"
+          exit 1
+
+      - name: Publish to the registry
+        run: |
+          set -euo pipefail
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish
