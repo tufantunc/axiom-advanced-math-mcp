@@ -92,7 +92,7 @@ describe('CLI — the MCP server still starts with no arguments', () => {
       });
 
       const parsed = JSON.parse(response);
-      expect(parsed.result.serverInfo.name).toBe('axiom-advanced-math-mcp');
+      expect(parsed.result.serverInfo.name).toBe('axiom-math');
     } finally {
       child.kill('SIGKILL');
     }
@@ -145,7 +145,7 @@ describe('CLI — compute', () => {
     // the success path, which does not drain an async pipe. This exact
     // expression came out at 65,728 of 181,227 bytes — cut mid-number, exit 0.
     // A silently truncated number is the worst failure this product has, and
-    // `ANSWER=$(axiom-mcp compute -q ...)` is what the agent skill teaches.
+    // `ANSWER=$(axiom-math compute -q ...)` is what the agent skill teaches.
     const r = await cli(['compute', '-q', 'expand((x+1)^900)']);
     expect(r.code).toBe(0);
     expect(r.stdout.length).toBeGreaterThan(180_000);
@@ -187,7 +187,7 @@ describe('CLI — verify', () => {
   }, 30_000);
 
   // Exit 2 is a mathematical verdict. A claim that never got checked must not
-  // borrow it: `if axiom-mcp verify "$c"; then ... else echo "disproved"; fi`
+  // borrow it: `if axiom-math verify "$c"; then ... else echo "disproved"; fi`
   // would otherwise report a syntax error as a refuted theorem.
   it('exits 1, not 2, for a claim it cannot parse', async () => {
     const r = await cli(['verify', '(((']);
@@ -259,13 +259,13 @@ describe('CLI — meta', () => {
   it('--help exits 0 and writes usage to stdout', async () => {
     const r = await cli(['--help']);
     expect(r.code).toBe(0);
-    expect(r.stdout).toContain('axiom-mcp compute');
+    expect(r.stdout).toContain('axiom-math compute');
   });
 
   it('compute --help exits 0 and documents only compute\'s own flags', async () => {
     const r = await cli(['compute', '--help']);
     expect(r.code).toBe(0);
-    expect(r.stdout).toContain('axiom-mcp compute');
+    expect(r.stdout).toContain('axiom-math compute');
     expect(r.stdout).toContain('--domain');
     expect(r.stdout).toContain('--precision');
     expect(r.stdout).not.toContain('--method');
@@ -276,7 +276,7 @@ describe('CLI — meta', () => {
   it('verify --help exits 0 and documents only verify\'s own flags', async () => {
     const r = await cli(['verify', '--help']);
     expect(r.code).toBe(0);
-    expect(r.stdout).toContain('axiom-mcp verify');
+    expect(r.stdout).toContain('axiom-math verify');
     expect(r.stdout).toContain('--method');
     expect(r.stdout).not.toContain('--domain');
     expect(r.stdout).not.toContain('--precision');
@@ -286,7 +286,7 @@ describe('CLI — meta', () => {
   it('plot --help exits 0 and documents only plot\'s own flags', async () => {
     const r = await cli(['plot', '--help']);
     expect(r.code).toBe(0);
-    expect(r.stdout).toContain('axiom-mcp plot');
+    expect(r.stdout).toContain('axiom-math plot');
     expect(r.stdout).toContain('--variable');
     expect(r.stdout).toContain('--x-min');
     expect(r.stdout).not.toContain('--domain');

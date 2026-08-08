@@ -56,19 +56,19 @@ export interface VersionCommand {
 export type Command =
   ComputeCommand | VerifyCommand | PlotCommand | ServerCommand | HelpCommand | VersionCommand;
 
-export const USAGE = `axiom-mcp — symbolic math over MCP, or straight from the shell
+export const USAGE = `axiom-math — symbolic math over MCP, or straight from the shell
 
 With no arguments it runs as an MCP stdio server (what MCP clients invoke).
 With a subcommand it runs that computation and exits.
 
-  axiom-mcp compute <expr>  [--domain real|complex|numeric|exact]
-                            [--precision 1..50] [--json | --latex | -q]
+  axiom-math compute <expr>  [--domain real|complex|numeric|exact]
+                             [--precision 1..50] [--json | --latex | -q]
 
-  axiom-mcp verify  <claim> [--method numeric|symbolic|both] [--json | -q]
+  axiom-math verify  <claim> [--method numeric|symbolic|both] [--json | -q]
 
-  axiom-mcp plot    <expr>  [-o|--out file.svg] [--variable x]
-                            [--x-min n] [--x-max n] [--y-min n] [--y-max n]
-                            [--width n] [--height n] [--title s] [--json | -q]
+  axiom-math plot    <expr>  [-o|--out file.svg] [--variable x]
+                             [--x-min n] [--x-max n] [--y-min n] [--y-max n]
+                             [--width n] [--height n] [--title s] [--json | -q]
 
   -q, --quiet   print one value only (for scripting)
   --json        structured output
@@ -77,22 +77,22 @@ With a subcommand it runs that computation and exits.
 
 The expression is read from stdin when no positional argument is given.
 Use \`--\` before an expression that starts with a minus sign, e.g.
-\`axiom-mcp compute -- '-2+2'\`.
+\`axiom-math compute -- '-2+2'\`.
 Set AXIOM_EVAL_TIMEOUT_MS to change the per-evaluation timeout (default 10000).
 
 Examples:
-  axiom-mcp compute 'integrate(sin(x)^3,x)'
-  axiom-mcp compute -q 'solve(x^2-4=0,x)'
-  axiom-mcp verify 'sin(x)^2+cos(x)^2 = 1' --json
-  echo 'diff(x^3,x)' | axiom-mcp compute
-  axiom-mcp plot 'sin(x)' -o wave.svg
+  axiom-math compute 'integrate(sin(x)^3,x)'
+  axiom-math compute -q 'solve(x^2-4=0,x)'
+  axiom-math verify 'sin(x)^2+cos(x)^2 = 1' --json
+  echo 'diff(x^3,x)' | axiom-math compute
+  axiom-math plot 'sin(x)' -o wave.svg
 
-Run \`axiom-mcp <command> --help\` for a subcommand's own flags and examples.`;
+Run \`axiom-math <command> --help\` for a subcommand's own flags and examples.`;
 
-export const USAGE_COMPUTE = `axiom-mcp compute — evaluate a math expression or CAS-style problem
+export const USAGE_COMPUTE = `axiom-math compute — evaluate a math expression or CAS-style problem
 
-  axiom-mcp compute <expr> [--domain real|complex|numeric|exact]
-                           [--precision 1..50] [--json | --latex | -q]
+  axiom-math compute <expr> [--domain real|complex|numeric|exact]
+                            [--precision 1..50] [--json | --latex | -q]
 
 Flags:
   --domain <d>     real|complex|numeric|exact — solution domain
@@ -106,13 +106,13 @@ The expression is read from stdin when no positional argument is given.
 Use \`--\` before an expression that starts with a minus sign.
 
 Examples:
-  axiom-mcp compute 'integrate(sin(x)^3,x)'
-  axiom-mcp compute -q 'solve(x^2-4=0,x)'
-  axiom-mcp compute --domain complex 'solve(x^2+1=0,x)'`;
+  axiom-math compute 'integrate(sin(x)^3,x)'
+  axiom-math compute -q 'solve(x^2-4=0,x)'
+  axiom-math compute --domain complex 'solve(x^2+1=0,x)'`;
 
-export const USAGE_VERIFY = `axiom-mcp verify — check a mathematical claim
+export const USAGE_VERIFY = `axiom-math verify — check a mathematical claim
 
-  axiom-mcp verify <claim> [--method numeric|symbolic|both] [--json | -q]
+  axiom-math verify <claim> [--method numeric|symbolic|both] [--json | -q]
 
 Flags:
   --method <m>   numeric|symbolic|both — verification method
@@ -124,15 +124,15 @@ The claim is read from stdin when no positional argument is given.
 Exit codes: 0 verified, 2 not verified, 1 could not run.
 
 Examples:
-  axiom-mcp verify 'sin(x)^2+cos(x)^2 = 1'
-  axiom-mcp verify -q 'x=2 satisfies x^2-4=0'
-  axiom-mcp verify --method numeric --json 'sin(x)^2+cos(x)^2 = 1'`;
+  axiom-math verify 'sin(x)^2+cos(x)^2 = 1'
+  axiom-math verify -q 'x=2 satisfies x^2-4=0'
+  axiom-math verify --method numeric --json 'sin(x)^2+cos(x)^2 = 1'`;
 
-export const USAGE_PLOT = `axiom-mcp plot — render a function graph as SVG
+export const USAGE_PLOT = `axiom-math plot — render a function graph as SVG
 
-  axiom-mcp plot <expr> [-o|--out file.svg] [--variable x]
-                        [--x-min n] [--x-max n] [--y-min n] [--y-max n]
-                        [--width n] [--height n] [--title s] [--json | -q]
+  axiom-math plot <expr> [-o|--out file.svg] [--variable x]
+                         [--x-min n] [--x-max n] [--y-min n] [--y-max n]
+                         [--width n] [--height n] [--title s] [--json | -q]
 
 Flags:
   -o, --out <file>       write the SVG to a file instead of stdout
@@ -149,9 +149,9 @@ The expression is read from stdin when no positional argument is given.
 Without \`-o\` the SVG itself is written to stdout, so it can be piped.
 
 Examples:
-  axiom-mcp plot 'sin(x)' -o wave.svg
-  axiom-mcp plot 'x^2-4' --x-min -5 --x-max 5 -o parabola.svg
-  axiom-mcp plot 'sin(x)' --json`;
+  axiom-math plot 'sin(x)' -o wave.svg
+  axiom-math plot 'x^2-4' --x-min -5 --x-max 5 -o parabola.svg
+  axiom-math plot 'sin(x)' --json`;
 
 /** Returns the usage text for a subcommand, or the global text when omitted. */
 export function topicUsage(topic?: 'compute' | 'verify' | 'plot'): string {

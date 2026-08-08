@@ -120,10 +120,17 @@ npm run dev
     {
       "name": "axiom-math",
       "command": "npx",
-      "args": ["-y", "/path/to/axiom-advanced-math-mcp/dist/cli.js"]
+      "args": ["-y", "axiom-math"]
     }
   ]
 }
+```
+
+Running from a local checkout instead of npm — point `args` at the built entry
+point:
+
+```json
+"args": ["/path/to/axiom-advanced-math-mcp/dist/cli.js"]
 ```
 
 ### Command line
@@ -133,11 +140,11 @@ MCP configuration. With no arguments it is the MCP server; with a subcommand it
 runs one computation and exits.
 
 ```bash
-npx -y axiom-advanced-math-mcp compute 'integrate(sin(x)^3,x)'
-npx -y axiom-advanced-math-mcp compute -q 'solve(x^2-4=0,x)'     # {-2, 2}
-npx -y axiom-advanced-math-mcp verify 'sin(x)^2+cos(x)^2 = 1'    # exit 0 if true
-npx -y axiom-advanced-math-mcp plot 'sin(x)' -o wave.svg
-echo 'diff(x^3,x)' | npx -y axiom-advanced-math-mcp compute -q   # 3*x^2
+npx -y axiom-math compute 'integrate(sin(x)^3,x)'
+npx -y axiom-math compute -q 'solve(x^2-4=0,x)'     # {-2, 2}
+npx -y axiom-math verify 'sin(x)^2+cos(x)^2 = 1'    # exit 0 if true
+npx -y axiom-math plot 'sin(x)' -o wave.svg
+echo 'diff(x^3,x)' | npx -y axiom-math compute -q   # 3*x^2
 ```
 
 | Flag | Meaning |

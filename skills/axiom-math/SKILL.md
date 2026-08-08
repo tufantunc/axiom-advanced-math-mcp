@@ -12,20 +12,20 @@ exit code.
 ## Compute
 
 ```bash
-npx -y axiom-advanced-math-mcp compute 'integrate(sin(x)^3,x)'
+npx -y axiom-math compute 'integrate(sin(x)^3,x)'
 ```
 
 Full output includes the result, its LaTeX, the CAS command used, and a
 verification line. For one value to put in a variable:
 
 ```bash
-ANSWER=$(npx -y axiom-advanced-math-mcp compute -q 'solve(x^2-4=0,x)')   # {-2, 2}
+ANSWER=$(npx -y axiom-math compute -q 'solve(x^2-4=0,x)')   # {-2, 2}
 ```
 
 For structured output:
 
 ```bash
-npx -y axiom-advanced-math-mcp compute --json 'solve(x^2-4=0,x)'
+npx -y axiom-math compute --json 'solve(x^2-4=0,x)'
 ```
 
 ```json
@@ -46,15 +46,15 @@ that the CAS cannot evaluate, exits `1` — never `2` — so `verify ... && ...`
 never reads a syntax error as a disproof.
 
 ```bash
-npx -y axiom-advanced-math-mcp verify 'sin(x)^2+cos(x)^2 = 1' && echo "holds"
-npx -y axiom-advanced-math-mcp verify -q 'diff(x^3,x) = 3*x^2'   # true
-npx -y axiom-advanced-math-mcp verify --json 'x=2 satisfies x^2-4=0'
+npx -y axiom-math verify 'sin(x)^2+cos(x)^2 = 1' && echo "holds"
+npx -y axiom-math verify -q 'diff(x^3,x) = 3*x^2'   # true
+npx -y axiom-math verify --json 'x=2 satisfies x^2-4=0'
 ```
 
 ## Plot
 
 ```bash
-npx -y axiom-advanced-math-mcp plot 'sin(x)' -o wave.svg
+npx -y axiom-math plot 'sin(x)' -o wave.svg
 ```
 
 Options: `--variable`, `--x-min`, `--x-max`, `--y-min`, `--y-max`, `--width`,
@@ -63,10 +63,10 @@ Options: `--variable`, `--x-min`, `--x-max`, `--y-min`, `--y-max`, `--width`,
 ## Notes
 
 - Expressions can be piped instead of quoted, which avoids shell-escaping pain:
-  `echo 'diff(x^3,x)' | npx -y axiom-advanced-math-mcp compute -q`
+  `echo 'diff(x^3,x)' | npx -y axiom-math compute -q`
 - An expression starting with `-` (e.g. `-x^2+1`, `-2+2`) looks like a flag to
   the parser — put `--` before it:
-  `npx -y axiom-advanced-math-mcp compute -- '-2+2'`.
+  `npx -y axiom-math compute -- '-2+2'`.
 - **The first invocation downloads about 3.8 MB** (the CAS engine, compiled to
   WebAssembly) and takes a few seconds. Later calls come from the npx cache and
   take roughly 300 ms.

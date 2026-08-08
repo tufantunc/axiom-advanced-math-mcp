@@ -9,7 +9,7 @@ import { VERSION } from '../version.js';
 export function createServer(): McpServer {
   const server = new McpServer(
     {
-      name: 'axiom-advanced-math-mcp',
+      name: 'axiom-math',
       version: VERSION,
     },
     {

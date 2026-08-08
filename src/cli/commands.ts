@@ -10,7 +10,7 @@ import { renderCompute, renderVerify, renderPlotMeta, resultText } from './rende
  * Byte ceiling on piped input.
  *
  * `MAX_EXPRESSION_LENGTH` is a *character* cap and can only be applied after
- * decoding, so reading first and checking after would let `yes | axiom-mcp
+ * decoding, so reading first and checking after would let `yes | axiom-math
  * compute` grow the buffer without bound. Four bytes is the widest UTF-8 code
  * point, so this can never reject an input the character cap would accept —
  * anything past it is refused before it is buffered.
@@ -120,7 +120,7 @@ async function runVerify(cmd: VerifyCommand): Promise<number> {
   // failure to run — otherwise `verify '((('` tells a script the mathematics
   // was refuted. stdout stays clean so nothing captures a bogus verdict.
   if (!evaluated) {
-    console.error(`axiom-mcp: could not check the claim\n${out}`);
+    console.error(`axiom-math: could not check the claim\n${out}`);
     return 1;
   }
 

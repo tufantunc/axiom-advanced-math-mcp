@@ -10,10 +10,12 @@ import { VERSION } from './version.js';
  * No arguments starts the MCP stdio server — the behaviour every MCP client
  * config depends on, unchanged. A subcommand runs that computation and exits.
  *
- * There is deliberately only one `bin`: two bins whose names do not match the
- * package name make `npx -y axiom-advanced-math-mcp` fail outright with
- * "could not determine executable to run", and that is the line in every MCP
- * client config.
+ * There is deliberately only one `bin`, and it is named after the package.
+ * `npx -y axiom-math` is the line in every MCP client config, so how npm
+ * resolves it is part of this project's public contract: with a single bin npx
+ * runs it whatever it is called (measured), but adding a second one makes the
+ * choice ambiguous. Matching the package name removes the ambiguity entirely
+ * and keeps one name for the package, the command and the MCP server identity.
  */
 async function main(): Promise<number | null> {
   let command;
@@ -21,7 +23,7 @@ async function main(): Promise<number | null> {
     command = parseArgs(process.argv.slice(2));
   } catch (err) {
     if (err instanceof UsageError) {
-      console.error(`axiom-mcp: ${err.message}\n`);
+      console.error(`axiom-math: ${err.message}\n`);
       console.error(USAGE);
       return 1;
     }
@@ -44,8 +46,8 @@ async function main(): Promise<number | null> {
         // A human ran this by hand. stdout belongs to the protocol, so the hint
         // goes to stderr where it cannot corrupt a client's stream.
         console.error(
-          'axiom-mcp: starting as an MCP stdio server (waiting for JSON-RPC on stdin).\n' +
-            "For one-off computations try: axiom-mcp compute '2+2'   ·   axiom-mcp --help"
+          'axiom-math: starting as an MCP stdio server (waiting for JSON-RPC on stdin).\n' +
+            "For one-off computations try: axiom-math compute '2+2'   ·   axiom-math --help"
         );
       }
       await startStdioServer();
@@ -82,6 +84,6 @@ main()
     if (code !== null) finish(code);
   })
   .catch((err) => {
-    console.error(`axiom-mcp: ${err instanceof Error ? err.message : String(err)}`);
+    console.error(`axiom-math: ${err instanceof Error ? err.message : String(err)}`);
     finish(1);
   });

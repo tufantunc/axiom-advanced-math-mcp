@@ -37,8 +37,19 @@ extends: core/skills/correctness/SKILL.md
 - **Exit codes carrying meaning.** `0` success (and for `verify`, verified), `1`
   tool or usage error, `2` `verify` ran and the claim was **not** verified. A
   change that collapses `2` into `1`, or lets a thrown error reach the caller as
-  `0`, silently breaks `axiom-mcp verify '...' && ...` in every script and skill
+  `0`, silently breaks `axiom-math verify '...' && ...` in every script and skill
   built on it.
+  The subtle direction is the one that shipped: `2` is a *mathematical* verdict,
+  so a claim that never got checked must not borrow it. `verify '((('` and
+  `verify 'x + = 1'` both exited `2` — "refuted" — until `VerifyResult.evaluated`
+  separated "checked and false" from "could not check". Any new code path that
+  produces a verdict must set `evaluated` deliberately; defaulting it to `true`
+  turns a syntax error back into a disproof.
+  Related trap in the same area: Giac swallows syntax errors and answers with
+  `undef` inside an otherwise well-formed structure — `lname(x +)` returns
+  `[undef]`. Code that treats such output as data (a variable list, a value)
+  will compute confidently on nonsense. Filter Giac's undefined marker at every
+  parse site.
 - **A quiet-mode success that prints nothing.** An empty value on stdout with
   exit `0` hands a script an empty capture that looks like a legitimate answer.
   Prefer erroring over emitting an empty line.

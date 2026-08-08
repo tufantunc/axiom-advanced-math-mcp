@@ -229,7 +229,7 @@ describe('HTTP transport contract (subprocess, real HTTP)', () => {
   it('reports the correct serverInfo on initialize, with no session id (stateless transport)', async () => {
     const { status, json, sessionId } = await rpc(base, INIT);
     expect(status).toBe(200);
-    expect(json.result.serverInfo.name).toBe('axiom-advanced-math-mcp');
+    expect(json.result.serverInfo.name).toBe('axiom-math');
     expect(json.result.serverInfo.version).toBe(VERSION);
     // Real HTTP stack + adapter, not just the in-process app: this is the
     // layer that would actually catch a session header sneaking back in
@@ -302,7 +302,7 @@ describe('Node entrypoint environment wiring (subprocess)', () => {
     try {
       const allowed = await rpcWithHost(base, 'mcp.example.com', INIT);
       expect(allowed.status).toBe(200);
-      expect(allowed.json.result.serverInfo.name).toBe('axiom-advanced-math-mcp');
+      expect(allowed.json.result.serverInfo.name).toBe('axiom-math');
 
       // The loopback default is *replaced*, not extended, by an explicit
       // MCP_ALLOWED_HOSTS — so a request that would have passed under the

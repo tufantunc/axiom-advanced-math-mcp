@@ -1,10 +1,10 @@
 {
-  "name": "axiom-advanced-math-mcp",
+  "name": "axiom-math",
   "version": "0.2.0",
   "description": "Advanced Math MCP Server - Symbolic and numerical computation engine for LLMs",
   "type": "module",
   "bin": {
-    "axiom-mcp": "./dist/cli.js"
+    "axiom-math": "./dist/cli.js"
   },
   "scripts": {
     "build": "tsc && npm run copy:wasm",
