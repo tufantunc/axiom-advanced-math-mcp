@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { parseArgs, UsageError } from '../src/cli/parse.js';
+import {
+  resultText,
+  renderCompute,
+  renderVerify,
+  renderPlotMeta,
+} from '../src/cli/render.js';
 
 describe('parseArgs — dispatch', () => {
   it('treats no arguments as the MCP server', () => {
@@ -124,5 +130,100 @@ describe('parseArgs — plot', () => {
 
   it('rejects a non-numeric range value', () => {
     expect(() => parseArgs(['plot', 'sin(x)', '--x-min', 'left'])).toThrow(UsageError);
+  });
+});
+
+describe('render', () => {
+  const envelope = {
+    content: [
+      {
+        type: 'text',
+        text: JSON.stringify({ success: true, display: '{-2, 2}', latex: '\\{-2,2\\}' }),
+      },
+    ],
+  };
+
+  it('joins content blocks into text', () => {
+    expect(resultText({ content: [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }] })).toBe(
+      'a\nb'
+    );
+  });
+
+  it('quiet mode prints the envelope display field, not scraped text', () => {
+    expect(renderCompute(envelope, 'quiet')).toBe('{-2, 2}');
+  });
+
+  it('json mode prints the envelope as-is', () => {
+    expect(JSON.parse(renderCompute(envelope, 'json')).display).toBe('{-2, 2}');
+  });
+
+  it('text mode passes the handler text through', () => {
+    const r = { content: [{ type: 'text', text: 'Result: 4' }] };
+    expect(renderCompute(r, 'text')).toBe('Result: 4');
+  });
+
+  // Every verify mode reads the verdict from the typed field, so the input is
+  // always the JSON envelope — text mode included.
+  const verifyEnvelope = (verified: boolean) => ({
+    content: [
+      {
+        type: 'text',
+        text: JSON.stringify({
+          verified,
+          confidence: 'high',
+          explanation: verified ? 'holds' : 'does not hold',
+          checks_performed: ['Symbolic: checked'],
+        }),
+      },
+    ],
+  });
+
+  it('verify quiet mode prints the boolean and reports the verdict', () => {
+    expect(renderVerify(verifyEnvelope(false), 'quiet')).toEqual({
+      out: 'false',
+      verified: false,
+    });
+  });
+
+  it('verify json mode keeps the structure and still reports the verdict', () => {
+    const rendered = renderVerify(verifyEnvelope(true), 'json');
+    expect(JSON.parse(rendered.out).verified).toBe(true);
+    expect(rendered.verified).toBe(true);
+  });
+
+  it('verify text mode renders via the tool formatter, not by parsing text', () => {
+    const rendered = renderVerify(verifyEnvelope(true), 'text');
+    expect(rendered.verified).toBe(true);
+    expect(rendered.out).toContain('Verified: TRUE');
+    expect(rendered.out).toContain('Checks performed:');
+  });
+
+  it('plot metadata names the file it wrote', () => {
+    const meta = JSON.parse(
+      renderPlotMeta(
+        {
+          svg: '<svg/>',
+          expression: 'sin(x)',
+          variable: 'x',
+          xMin: -10,
+          xMax: 10,
+          yMin: -1,
+          yMax: 1,
+          segments: 1,
+          points: 200,
+        },
+        'out.svg'
+      )
+    );
+    expect(meta).toEqual({
+      ok: true,
+      path: 'out.svg',
+      expression: 'sin(x)',
+      variable: 'x',
+      x_range: [-10, 10],
+      y_range: [-1, 1],
+      segments: 1,
+      points: 200,
+    });
   });
 });
