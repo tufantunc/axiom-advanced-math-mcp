@@ -1,6 +1,6 @@
 {
   "name": "axiom-math",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Advanced Math MCP Server - Symbolic and numerical computation engine for LLMs",
   "type": "module",
   "bin": {
