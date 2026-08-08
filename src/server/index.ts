@@ -6,21 +6,6 @@ import { registerPrompts } from './prompts/index.js';
 import { computeTool, verifyTool } from './tools.js';
 import { VERSION } from '../version.js';
 
-/**
- * Giac keeps global session state: `sto(7,qq)` and `assume(bb>0)` executed by
- * one tool call are still in effect for the next one. Left alone, that leaks
- * across MCP tool calls — and, over the stateless HTTP transport, across
- * *different clients*: one caller's `assume(bb>0)` silently turns another's
- * `integrate(sqrt(bb^2),bb)` into `bb^2/2` instead of `1/2*bb^2*sign(bb)`,
- * answered with a 200. An LLM has no way to know state persisted.
- *
- * `withGiacSession` closes both halves of that: it resets the engine at the
- * tool-call boundary (not per-`evaluate()` — one `compute` legitimately makes
- * several Giac calls that must share a session) AND holds a mutex for the
- * whole handler, so a concurrent tool call cannot interleave its own
- * evaluations between this one's reset and its result. See session-lock.ts.
- */
-
 export function createServer(): McpServer {
   const server = new McpServer(
     {

@@ -116,6 +116,12 @@ describe('CLI — compute', () => {
     expect(r.stdout).toBe('');
     expect(r.stderr).not.toBe('');
   }, 30_000);
+
+  it('-- lets an expression that starts with a minus sign through', async () => {
+    const r = await cli(['compute', '-q', '--', '-2+2']);
+    expect(r.code).toBe(0);
+    expect(r.stdout.trim()).toBe('0');
+  }, 30_000);
 });
 
 describe('CLI — verify', () => {
@@ -171,6 +177,14 @@ describe('CLI — plot', () => {
     expect(r.code).toBe(0);
     expect(r.stdout.startsWith('<svg')).toBe(true);
   }, 30_000);
+
+  it('--json without -o succeeds and emits parseable metadata with a null path', async () => {
+    const r = await cli(['plot', 'sin(x)', '--json']);
+    expect(r.code).toBe(0);
+    const meta = JSON.parse(r.stdout);
+    expect(meta.ok).toBe(true);
+    expect(meta.path).toBeNull();
+  }, 30_000);
 });
 
 describe('CLI — meta', () => {
@@ -184,6 +198,37 @@ describe('CLI — meta', () => {
     const r = await cli(['--help']);
     expect(r.code).toBe(0);
     expect(r.stdout).toContain('axiom-mcp compute');
+  });
+
+  it('compute --help exits 0 and documents only compute\'s own flags', async () => {
+    const r = await cli(['compute', '--help']);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('axiom-mcp compute');
+    expect(r.stdout).toContain('--domain');
+    expect(r.stdout).toContain('--precision');
+    expect(r.stdout).not.toContain('--method');
+    expect(r.stdout).not.toContain('--variable');
+    expect(r.stdout).not.toContain('--x-min');
+  });
+
+  it('verify --help exits 0 and documents only verify\'s own flags', async () => {
+    const r = await cli(['verify', '--help']);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('axiom-mcp verify');
+    expect(r.stdout).toContain('--method');
+    expect(r.stdout).not.toContain('--domain');
+    expect(r.stdout).not.toContain('--precision');
+    expect(r.stdout).not.toContain('--variable');
+  });
+
+  it('plot --help exits 0 and documents only plot\'s own flags', async () => {
+    const r = await cli(['plot', '--help']);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('axiom-mcp plot');
+    expect(r.stdout).toContain('--variable');
+    expect(r.stdout).toContain('--x-min');
+    expect(r.stdout).not.toContain('--domain');
+    expect(r.stdout).not.toContain('--method');
   });
 
   it('rejects an unknown subcommand with usage on stderr, not stdout', async () => {

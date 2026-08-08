@@ -84,6 +84,10 @@ async function runVerify(cmd: VerifyCommand): Promise<number> {
     format: 'json',
   });
 
+  // Defensive: verifyHandler currently catches every internal failure itself
+  // and downgrades it to `verified: false` rather than setting isError, so
+  // this branch is unreachable today. verifyTool is typed generically enough
+  // that a future change could start setting it — do not delete this.
   if (result.isError) {
     console.error(resultText(result));
     return 1;
@@ -117,12 +121,18 @@ async function runPlot(cmd: PlotCommand): Promise<number> {
     return 0;
   }
 
-  // No -o: the SVG itself is the output, which only makes sense when piped.
+  // No -o: --json prints ~200 bytes of metadata either way, so it is exempt
+  // from the TTY guard below — only raw SVG on a terminal is refused.
+  if (cmd.output === 'json') {
+    console.log(renderPlotMeta(result, null));
+    return 0;
+  }
+
+  // The SVG itself is the output, which only makes sense when piped.
   if (process.stdout.isTTY) {
     throw new Error('refusing to write SVG to a terminal — use -o <file> or pipe stdout');
   }
-  if (cmd.output === 'json') console.log(renderPlotMeta(result, null));
-  else process.stdout.write(result.svg);
+  process.stdout.write(result.svg);
   return 0;
 }
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { startStdioServer } from './server/transports/stdio.js';
-import { parseArgs, UsageError, USAGE } from './cli/parse.js';
+import { parseArgs, UsageError, USAGE, topicUsage } from './cli/parse.js';
 import { runCommand } from './cli/commands.js';
 import { VERSION } from './version.js';
 
@@ -30,8 +30,9 @@ async function main(): Promise<number> {
 
   switch (command.kind) {
     case 'help':
-      // Help is requested output, so it goes to stdout.
-      console.log(USAGE);
+      // Help is requested output, so it goes to stdout. A subcommand topic
+      // gets its own focused text; otherwise the global usage.
+      console.log(topicUsage(command.topic));
       return 0;
 
     case 'version':

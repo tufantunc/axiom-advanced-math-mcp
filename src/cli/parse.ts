@@ -71,16 +71,18 @@ With a subcommand it runs that computation and exits.
 
   axiom-mcp verify  <claim> [--method numeric|symbolic|both] [--json | -q]
 
-  axiom-mcp plot    <expr>  [-o file.svg] [--variable x]
+  axiom-mcp plot    <expr>  [-o|--out file.svg] [--variable x]
                             [--x-min n] [--x-max n] [--y-min n] [--y-max n]
                             [--width n] [--height n] [--title s] [--json | -q]
 
-  -q            print one value only (for scripting)
+  -q, --quiet   print one value only (for scripting)
   --json        structured output
   -h, --help    this text, or help for a subcommand
   -V, --version print the version
 
 The expression is read from stdin when no positional argument is given.
+Use \`--\` before an expression that starts with a minus sign, e.g.
+\`axiom-mcp compute -- '-2+2'\`.
 Set AXIOM_EVAL_TIMEOUT_MS to change the per-evaluation timeout (default 10000).
 
 Examples:
@@ -88,7 +90,81 @@ Examples:
   axiom-mcp compute -q 'solve(x^2-4=0,x)'
   axiom-mcp verify 'sin(x)^2+cos(x)^2 = 1' --json
   echo 'diff(x^3,x)' | axiom-mcp compute
-  axiom-mcp plot 'sin(x)' -o wave.svg`;
+  axiom-mcp plot 'sin(x)' -o wave.svg
+
+Run \`axiom-mcp <command> --help\` for a subcommand's own flags and examples.`;
+
+export const USAGE_COMPUTE = `axiom-mcp compute — evaluate a math expression or CAS-style problem
+
+  axiom-mcp compute <expr> [--domain real|complex|numeric|exact]
+                           [--precision 1..50] [--json | --latex | -q]
+
+Flags:
+  --domain <d>     real|complex|numeric|exact — solution domain
+  --precision <n>  decimal places, 1..50
+  --json           structured output (parseable envelope)
+  --latex          LaTeX-formatted result
+  -q, --quiet      print one value only (for scripting)
+  -h, --help       show this text
+
+The expression is read from stdin when no positional argument is given.
+Use \`--\` before an expression that starts with a minus sign.
+
+Examples:
+  axiom-mcp compute 'integrate(sin(x)^3,x)'
+  axiom-mcp compute -q 'solve(x^2-4=0,x)'
+  axiom-mcp compute --domain complex 'solve(x^2+1=0,x)'`;
+
+export const USAGE_VERIFY = `axiom-mcp verify — check a mathematical claim
+
+  axiom-mcp verify <claim> [--method numeric|symbolic|both] [--json | -q]
+
+Flags:
+  --method <m>   numeric|symbolic|both — verification method
+  --json         structured output (parseable envelope)
+  -q, --quiet    print "true" or "false" only (for scripting)
+  -h, --help     show this text
+
+The claim is read from stdin when no positional argument is given.
+Exit codes: 0 verified, 2 not verified, 1 could not run.
+
+Examples:
+  axiom-mcp verify 'sin(x)^2+cos(x)^2 = 1'
+  axiom-mcp verify -q 'x=2 satisfies x^2-4=0'
+  axiom-mcp verify --method numeric --json 'sin(x)^2+cos(x)^2 = 1'`;
+
+export const USAGE_PLOT = `axiom-mcp plot — render a function graph as SVG
+
+  axiom-mcp plot <expr> [-o|--out file.svg] [--variable x]
+                        [--x-min n] [--x-max n] [--y-min n] [--y-max n]
+                        [--width n] [--height n] [--title s] [--json | -q]
+
+Flags:
+  -o, --out <file>       write the SVG to a file instead of stdout
+  --variable <v>         the free variable to plot over (default x)
+  --x-min, --x-max <n>   horizontal range
+  --y-min, --y-max <n>   vertical range (auto-fit if omitted)
+  --width, --height <n>  SVG pixel dimensions
+  --title <s>            plot title
+  --json                 structured metadata instead of the SVG
+  -q, --quiet            print the written path only (requires -o)
+  -h, --help             show this text
+
+The expression is read from stdin when no positional argument is given.
+Without \`-o\` the SVG itself is written to stdout, so it can be piped.
+
+Examples:
+  axiom-mcp plot 'sin(x)' -o wave.svg
+  axiom-mcp plot 'x^2-4' --x-min -5 --x-max 5 -o parabola.svg
+  axiom-mcp plot 'sin(x)' --json`;
+
+/** Returns the usage text for a subcommand, or the global text when omitted. */
+export function topicUsage(topic?: 'compute' | 'verify' | 'plot'): string {
+  if (topic === 'compute') return USAGE_COMPUTE;
+  if (topic === 'verify') return USAGE_VERIFY;
+  if (topic === 'plot') return USAGE_PLOT;
+  return USAGE;
+}
 
 const DOMAINS = ['real', 'complex', 'numeric', 'exact'];
 const METHODS = ['numeric', 'symbolic', 'both'];
@@ -134,7 +210,11 @@ export function parseArgs(argv: string[]): Command {
   }
   const kind = first;
 
-  if (rest.includes('-h') || rest.includes('--help')) {
+  // `-h`/`--help` only counts before a `--` sentinel: `compute -- --help` must
+  // compute the literal expression `--help`, not print help.
+  const doubleDashIndex = rest.indexOf('--');
+  const beforeDoubleDash = doubleDashIndex === -1 ? rest : rest.slice(0, doubleDashIndex);
+  if (beforeDoubleDash.includes('-h') || beforeDoubleDash.includes('--help')) {
     return { kind: 'help', topic: kind };
   }
 
@@ -153,10 +233,20 @@ export function parseArgs(argv: string[]): Command {
   let height: number | undefined;
   let title: string | undefined;
 
+  let sawDoubleDash = false;
+
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i];
 
-    if (!arg.startsWith('-')) {
+    if (!sawDoubleDash && arg === '--') {
+      sawDoubleDash = true;
+      continue;
+    }
+
+    // After `--`, every remaining argument is positional — this is the escape
+    // for expressions that begin with `-` (`-x^2+1`, `-2+2`), which would
+    // otherwise be sent into the flag switch below and rejected.
+    if (sawDoubleDash || !arg.startsWith('-')) {
       if (positional !== undefined) {
         throw new UsageError(`unexpected extra argument: ${arg}`);
       }

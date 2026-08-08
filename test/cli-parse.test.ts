@@ -82,6 +82,22 @@ describe('parseArgs — compute', () => {
   it('rejects --latex on verify, which has no LaTeX form', () => {
     expect(() => parseArgs(['verify', 'x=x', '--latex'])).toThrow(UsageError);
   });
+
+  it('-- treats a leading-minus expression as positional, not a flag', () => {
+    expect(parseArgs(['compute', '--', '-2+2'])).toEqual({
+      kind: 'compute',
+      expression: '-2+2',
+      output: 'text',
+    });
+  });
+
+  it('-- makes --help a literal expression instead of a help request', () => {
+    expect(parseArgs(['compute', '--', '--help'])).toEqual({
+      kind: 'compute',
+      expression: '--help',
+      output: 'text',
+    });
+  });
 });
 
 describe('parseArgs — verify', () => {

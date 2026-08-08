@@ -38,7 +38,13 @@ export function renderCompute(r: ToolResult, mode: OutputMode): string {
 
   if (mode === 'json') return text;
   const envelope = parseEnvelope<{ display?: string }>(text);
-  return envelope.display ?? '';
+  // An empty display would hand a script a silent, successful empty capture —
+  // exactly the wrong-answer failure mode this CLI treats as worst-case. Throw
+  // instead; the dispatcher turns a throw into stderr + exit 1.
+  if (!envelope.display) {
+    throw new Error('compute produced no displayable result');
+  }
+  return envelope.display;
 }
 
 /**

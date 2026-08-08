@@ -140,6 +140,22 @@ describe('runCommand — plot', () => {
     expect(out).toEqual([]);
     expect(stdoutRaw.join('').startsWith('<svg')).toBe(true);
   }, 30_000);
+
+  it('--json succeeds without -o even when stdout is a TTY, since it prints metadata not SVG', async () => {
+    capture();
+    const restore = withStdoutTTY(true);
+    try {
+      const code = await runCommand({ kind: 'plot', expression: 'sin(x)', output: 'json' });
+      expect(code).toBe(0);
+    } finally {
+      restore();
+    }
+    expect(stdoutRaw).toEqual([]);
+    const meta = JSON.parse(out.join('\n'));
+    expect(meta.ok).toBe(true);
+    expect(meta.path).toBeNull();
+    expect(meta.expression).toBe('sin(x)');
+  }, 30_000);
 });
 
 describe('runCommand — stdin input', () => {
@@ -170,7 +186,7 @@ describe('runCommand — stdin input', () => {
   }, 30_000);
 });
 
-describe('runCommand — input length cap', () => {
+describe('resolveInput — input length cap (shared by compute, verify and plot)', () => {
   it('rejects an over-limit expression before evaluating it, writing nothing to stdout', async () => {
     capture();
     const tooLong = '1+'.repeat(MAX_EXPRESSION_LENGTH); // well past the 8192-char cap
