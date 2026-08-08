@@ -10,6 +10,8 @@
     "build": "tsc && npm run copy:wasm",
     "copy:wasm": "node scripts/copy-wasm-asset.mjs",
     "prepack": "npm run build",
+    "sync:version": "node scripts/sync-version.mjs",
+    "version": "npm run sync:version && git add src/version.ts",
     "build:giac:wasm": "bash scripts/build-giac-wasm.sh",
     "start": "node dist/cli.js",
     "start:http": "node dist/http.js",
