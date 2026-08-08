@@ -2,6 +2,7 @@ import { writeFileSync } from 'node:fs';
 import { computeTool, verifyTool } from '../server/tools.js';
 import { plotToSvg } from '../server/tools/plot/render.js';
 import { giacEngine } from '../server/giac/index.js';
+import { MAX_EXPRESSION_LENGTH } from '../server/tools/limits.js';
 import type { ComputeCommand, VerifyCommand, PlotCommand } from './parse.js';
 import { renderCompute, renderVerify, renderPlotMeta, resultText } from './render.js';
 
@@ -17,15 +18,31 @@ async function readStdin(): Promise<string> {
  *
  * Never blocks on an interactive terminal: with no argument and a TTY on stdin
  * there is nothing coming, so say so instead of hanging.
+ *
+ * Also enforces the same input-length cap the MCP surface's zod schemas apply
+ * (`MAX_EXPRESSION_LENGTH`). The CLI calls the tool handlers directly rather
+ * than through the MCP SDK's schema validation, so that cap has to be
+ * enforced here — the mathjs evaluation path runs synchronously on the event
+ * loop with no timeout, and input length is its only bound.
  */
 async function resolveInput(positional: string | undefined, label: string): Promise<string> {
-  if (positional !== undefined && positional !== '') return positional;
-  if (process.stdin.isTTY) {
+  let value: string;
+  if (positional !== undefined && positional !== '') {
+    value = positional;
+  } else if (process.stdin.isTTY) {
     throw new Error(`no ${label} given — pass it as an argument or pipe it on stdin`);
+  } else {
+    const piped = await readStdin();
+    if (piped === '') throw new Error(`no ${label} given on stdin`);
+    value = piped;
   }
-  const piped = await readStdin();
-  if (piped === '') throw new Error(`no ${label} given on stdin`);
-  return piped;
+
+  if (value.length > MAX_EXPRESSION_LENGTH) {
+    throw new Error(
+      `${label} exceeds the ${MAX_EXPRESSION_LENGTH}-character limit (got ${value.length} characters)`
+    );
+  }
+  return value;
 }
 
 async function runCompute(cmd: ComputeCommand): Promise<number> {
