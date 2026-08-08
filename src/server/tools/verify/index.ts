@@ -20,9 +20,17 @@ export const verifySchema = z.object({
     .enum(['numeric', 'symbolic', 'both'])
     .optional()
     .describe('Verification method (default: "both")'),
+  format: z
+    .enum(['text', 'json'])
+    .optional()
+    .describe(
+      'Output format:\n' +
+        '  text (default) — human-readable verdict\n' +
+        '  json — structured VerifyResult'
+    ),
 });
 
-interface VerifyResult {
+export interface VerifyResult {
   verified: boolean;
   confidence: 'high' | 'medium' | 'low';
   explanation: string;
@@ -330,6 +338,7 @@ export async function verifyHandler(
 ): Promise<{ content: { type: 'text'; text: string }[]; isError: boolean }> {
   const claim = rewriteCombinatorics(unicodeToAscii(String(args.claim ?? '')));
   const method = (args.method as string) || 'both';
+  const format = args.format === 'json' ? 'json' : 'text';
 
   try {
     const parsed = parseClaim(claim);
@@ -352,7 +361,7 @@ export async function verifyHandler(
         };
     }
 
-    return formatVerifyResponse(result);
+    return formatVerifyResponse(result, format);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return {
@@ -439,10 +448,20 @@ async function handleSolutionVerification(
   };
 }
 
-function formatVerifyResponse(result: VerifyResult): {
+export function formatVerifyResponse(
+  result: VerifyResult,
+  format: 'text' | 'json'
+): {
   content: { type: 'text'; text: string }[];
   isError: boolean;
 } {
+  if (format === 'json') {
+    return {
+      content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+      isError: false,
+    };
+  }
+
   const lines: string[] = [
     `Verified: ${result.verified ? 'TRUE ✓' : 'FALSE ✗'}`,
     `Confidence: ${result.confidence}`,
