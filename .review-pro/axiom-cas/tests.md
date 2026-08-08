@@ -29,6 +29,18 @@ extends: core/skills/tests/SKILL.md
   say so in its name and carry a comment explaining what will make it flip.
   Otherwise a future reader "fixes" the test instead of the defect.
 
+- **Subprocess tests that leak their child.** A test that spawns the server or
+  the CLI must kill it on **every** path, including the assertion failure it
+  exists to detect. Putting `child.kill()` after the `await` means a timeout
+  leaks the process — and the server blocks on stdin by design, so the orphan
+  never exits and can stall the runner. This shipped once and was caught only
+  by a whole-branch review; a `try/finally` is the fix, and a deliberate forced
+  failure plus a `ps` check is the proof.
+- **A test whose assertion is satisfied by the wrong half of a feature.** The
+  parser's `--help` handling was tested and passing while the dispatcher
+  discarded the result, so per-subcommand help never rendered. When a feature
+  spans two modules, at least one test must cross the seam end to end.
+
 ## Stack-specific remedies
 
 - Assert the exact expected CAS output; where multiple equivalent forms are

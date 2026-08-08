@@ -20,13 +20,35 @@ export const verifySchema = z.object({
     .enum(['numeric', 'symbolic', 'both'])
     .optional()
     .describe('Verification method (default: "both")'),
+  format: z
+    .enum(['text', 'json'])
+    .optional()
+    .describe(
+      'Output format:\n' +
+        '  text (default) — human-readable verdict\n' +
+        '  json — structured VerifyResult'
+    ),
 });
 
-interface VerifyResult {
+export interface VerifyResult {
   verified: boolean;
   confidence: 'high' | 'medium' | 'low';
   explanation: string;
   checks_performed: string[];
+  /**
+   * Whether the claim was actually checked.
+   *
+   * `false` means no check produced a usable answer — the claim did not parse,
+   * or every strategy failed on it. That is NOT the same as "checked and found
+   * false", and collapsing the two is a wrong answer: `verify '((('` and
+   * `verify 'x + = 1'` both used to report `verified: false`, which the CLI
+   * turned into exit 2 ("ran and disproved"). A script reading that exit code
+   * treats a syntax error as a refuted theorem.
+   *
+   * `verified: true` implies `evaluated: true` — a check that returned true
+   * necessarily ran.
+   */
+  evaluated: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -84,6 +106,7 @@ async function verifySymbolic(
   rhs: string
 ): Promise<{
   verified: boolean;
+  evaluated: boolean;
   detail: string;
 }> {
   try {
@@ -91,7 +114,7 @@ async function verifySymbolic(
     const result = await giacEngine.evaluate(expr);
 
     if (!result || result === 'undef') {
-      return { verified: false, detail: 'Simplification returned undefined' };
+      return { verified: false, evaluated: false, detail: 'Simplification returned undefined' };
     }
 
     const trimmed = result.trim();
@@ -99,13 +122,16 @@ async function verifySymbolic(
 
     return {
       verified: isZero,
+      evaluated: true,
       detail: isZero
         ? `simplify(LHS - RHS) = 0 ✓`
         : `simplify(LHS - RHS) = ${trimmed} (expected 0)`,
     };
   } catch (error) {
+    // A Giac error here is a malformed claim, not a false one.
     return {
       verified: false,
+      evaluated: false,
       detail: `Symbolic check failed: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
@@ -120,6 +146,7 @@ async function verifyNumeric(
   rhs: string
 ): Promise<{
   verified: boolean;
+  evaluated: boolean;
   detail: string;
 }> {
   try {
@@ -132,9 +159,19 @@ async function verifyNumeric(
       const lhsVal = await giacEngine.evaluate(`evalf(${lhs})`);
       const rhsVal = await giacEngine.evaluate(`evalf(${rhs})`);
       const diff = Math.abs(parseFloat(lhsVal) - parseFloat(rhsVal));
+      // A non-numeric side leaves diff NaN: nothing was compared, so this is
+      // "could not check", not "checked and unequal".
+      if (Number.isNaN(diff)) {
+        return {
+          verified: false,
+          evaluated: false,
+          detail: `Direct evaluation produced no number: ${lhsVal} / ${rhsVal}`,
+        };
+      }
       const verified = diff < 1e-8;
       return {
         verified,
+        evaluated: true,
         detail: verified
           ? `Direct evaluation: ${lhsVal} ≈ ${rhsVal} ✓`
           : `Direct evaluation: ${lhsVal} ≠ ${rhsVal} (diff = ${diff})`,
@@ -172,12 +209,13 @@ async function verifyNumeric(
     }
 
     if (totalTested === 0) {
-      return { verified: false, detail: 'Could not evaluate at any test point' };
+      return { verified: false, evaluated: false, detail: 'Could not evaluate at any test point' };
     }
 
     const verified = passCount === totalTested;
     return {
       verified,
+      evaluated: true,
       detail: verified
         ? `Passed ${passCount}/${totalTested} numeric checks ✓`
         : `Failed: ${failures.join('; ')}`,
@@ -185,6 +223,7 @@ async function verifyNumeric(
   } catch (error) {
     return {
       verified: false,
+      evaluated: false,
       detail: `Numeric check failed: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
@@ -198,7 +237,7 @@ async function verifySolution(
   variable: string,
   value: string,
   equation: string
-): Promise<{ verified: boolean; detail: string }> {
+): Promise<{ verified: boolean; evaluated: boolean; detail: string }> {
   try {
     // Parse equation into expression = 0 form
     let expr: string;
@@ -212,10 +251,21 @@ async function verifySolution(
     const substituted = `evalf(subst(${expr}, ${variable}=${value}))`;
     const result = await giacEngine.evaluate(substituted);
     const numResult = parseFloat(result);
-    const verified = !isNaN(numResult) && Math.abs(numResult) < 1e-8;
 
+    // No number back means the substitution did not produce something
+    // comparable to zero — nothing was checked.
+    if (isNaN(numResult)) {
+      return {
+        verified: false,
+        evaluated: false,
+        detail: `Substituting ${variable}=${value} produced no number: ${result}`,
+      };
+    }
+
+    const verified = Math.abs(numResult) < 1e-8;
     return {
       verified,
+      evaluated: true,
       detail: verified
         ? `Substituting ${variable}=${value}: equation evaluates to ${result} ≈ 0 ✓`
         : `Substituting ${variable}=${value}: equation evaluates to ${result} ≠ 0`,
@@ -223,6 +273,7 @@ async function verifySolution(
   } catch (error) {
     return {
       verified: false,
+      evaluated: false,
       detail: `Solution check failed: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
@@ -239,10 +290,17 @@ function parseVariableList(giacOutput: string): string[] {
   // Parse [x, y, z] or list(x, y, z)
   const inner =
     giacOutput.match(/^\[(.+)\]$/)?.[1] || giacOutput.match(/^list\((.+)\)$/)?.[1] || '';
-  return inner
-    .split(',')
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0 && /^[a-zA-Z_]\w*$/.test(s));
+  return (
+    inner
+      .split(',')
+      .map((s) => s.trim())
+      // `undef` is Giac's undefined marker, not an identifier. It comes back
+      // inside a list when Giac swallows a syntax error — `lname(x +)` returns
+      // `[undef]` — and treating it as a free variable makes the numeric check
+      // substitute values into nonsense and report real-looking differences,
+      // turning a malformed claim into a refuted one.
+      .filter((s) => s.length > 0 && s !== 'undef' && /^[a-zA-Z_]\w*$/.test(s))
+  );
 }
 
 interface ParsedClaim {
@@ -330,6 +388,7 @@ export async function verifyHandler(
 ): Promise<{ content: { type: 'text'; text: string }[]; isError: boolean }> {
   const claim = rewriteCombinatorics(unicodeToAscii(String(args.claim ?? '')));
   const method = (args.method as string) || 'both';
+  const format = args.format === 'json' ? 'json' : 'text';
 
   try {
     const parsed = parseClaim(claim);
@@ -345,6 +404,7 @@ export async function verifyHandler(
       default:
         result = {
           verified: false,
+          evaluated: false,
           confidence: 'low',
           explanation:
             'Could not parse the claim. Use format: "LHS = RHS" for identities, or "x=2 satisfies equation" for solutions.',
@@ -352,7 +412,7 @@ export async function verifyHandler(
         };
     }
 
-    return formatVerifyResponse(result);
+    return formatVerifyResponse(result, format);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return {
@@ -371,16 +431,19 @@ async function handleIdentityVerification(
   const checks: string[] = [];
   let symbolicOk: boolean | null = null;
   let numericOk: boolean | null = null;
+  let anyEvaluated = false;
 
   if (method === 'symbolic' || method === 'both') {
     const symbolic = await verifySymbolic(lhs, rhs);
     symbolicOk = symbolic.verified;
+    anyEvaluated ||= symbolic.evaluated;
     checks.push(`Symbolic: ${symbolic.detail}`);
   }
 
   if (method === 'numeric' || method === 'both') {
     const numeric = await verifyNumeric(lhs, rhs);
     numericOk = numeric.verified;
+    anyEvaluated ||= numeric.evaluated;
     checks.push(`Numeric: ${numeric.detail}`);
   }
 
@@ -393,12 +456,18 @@ async function handleIdentityVerification(
   else if (numericOk === true && symbolicOk === false) confidence = 'low';
   else confidence = verified ? 'medium' : 'low';
 
+  // One strategy succeeding is enough to call the claim checked: with
+  // `method: 'both'`, symbolic can legitimately fail on a claim numeric
+  // settles. Only when neither produced anything is the verdict meaningless.
   return {
     verified,
+    evaluated: anyEvaluated,
     confidence,
-    explanation: verified
-      ? `Identity verified: ${lhs} = ${rhs}`
-      : `Identity NOT verified: ${lhs} ≠ ${rhs}`,
+    explanation: anyEvaluated
+      ? verified
+        ? `Identity verified: ${lhs} = ${rhs}`
+        : `Identity NOT verified: ${lhs} ≠ ${rhs}`
+      : `Could not evaluate the claim: ${lhs} = ${rhs}`,
     checks_performed: checks,
   };
 }
@@ -411,6 +480,7 @@ async function handleSolutionVerification(
   if (!variable || !value || !equation) {
     return {
       verified: false,
+      evaluated: false,
       confidence: 'low',
       explanation: 'Missing variable, value, or equation in solution claim.',
       checks_performed: [],
@@ -431,20 +501,41 @@ async function handleSolutionVerification(
 
   return {
     verified: solution.verified,
+    evaluated: solution.evaluated,
     confidence: solution.verified ? 'high' : 'medium',
-    explanation: solution.verified
-      ? `Verified: ${variable}=${value} satisfies ${equation}`
-      : `NOT verified: ${variable}=${value} does not satisfy ${equation}`,
+    explanation: solution.evaluated
+      ? solution.verified
+        ? `Verified: ${variable}=${value} satisfies ${equation}`
+        : `NOT verified: ${variable}=${value} does not satisfy ${equation}`
+      : `Could not evaluate ${equation} at ${variable}=${value}`,
     checks_performed: checks,
   };
 }
 
-function formatVerifyResponse(result: VerifyResult): {
+export function formatVerifyResponse(
+  result: VerifyResult,
+  format: 'text' | 'json'
+): {
   content: { type: 'text'; text: string }[];
   isError: boolean;
 } {
+  if (format === 'json') {
+    return {
+      content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+      isError: false,
+    };
+  }
+
+  // UNKNOWN, not FALSE, when nothing could be checked: reporting a malformed
+  // claim as FALSE tells a reader the mathematics was refuted.
+  const verdict = !result.evaluated
+    ? 'UNKNOWN — could not be checked'
+    : result.verified
+      ? 'TRUE ✓'
+      : 'FALSE ✗';
+
   const lines: string[] = [
-    `Verified: ${result.verified ? 'TRUE ✓' : 'FALSE ✗'}`,
+    `Verified: ${verdict}`,
     `Confidence: ${result.confidence}`,
     `Explanation: ${result.explanation}`,
     '',

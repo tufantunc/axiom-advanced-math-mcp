@@ -32,6 +32,42 @@ extends: core/skills/backend/SKILL.md
   meaning without updating the description, degrades routing quality in a way
   no test catches.
 
+- **Two surfaces, one contract.** The same three tools are reachable over MCP
+  (`src/server/index.ts`) and from the CLI (`src/cli/commands.ts`). A guard that
+  exists on only one of them is a finding, not a difference in scope. This has
+  already happened once: the 8 KB input cap is declared in the zod schemas but
+  enforced **only** by the MCP SDK's `server.tool(...)` dispatch, so the CLI
+  shipped with no bound at all until it was added to `resolveInput`. When
+  reviewing a new guard, ask which surface enforces it and check the other.
+- **`bin` is public API.** `package.json` keeps exactly one `bin`, named
+  `axiom-math` — the same string as the package and as `serverInfo.name`. One
+  name for all three is the point; a change that reintroduces a second name is
+  a finding even when everything still runs.
+  Measured, so the rationale is not folklore: npx runs a package's single bin
+  whatever it is called, and with two bins it silently picks one rather than
+  erroring. So a second bin does not break `npx -y axiom-math` loudly — it makes
+  which executable runs ambiguous, which is worse. `npx -y axiom-math` is the
+  line in every MCP client config.
+  The name also had to avoid a live collision: `axiom-mcp` is a *different*
+  published MCP server (Apple-platform tooling) whose bin is also `axiom-mcp`.
+  Check npm before proposing any rename.
+- **Running with no arguments must start the MCP stdio server.** Every existing
+  client config invokes the binary that way. Any change to argument dispatch
+  that could alter the no-argument path is high severity regardless of how
+  clean it looks.
+- **stdout carries only requested output.** In server mode stdout is the JSON-RPC
+  stream; in CLI mode it is the value a caller captures with `$(...)`. Hints,
+  warnings and errors go to stderr in both. A `console.log` added to a success
+  path is a contract break, not a logging preference.
+- **Never `process.exit()` on a path that has written to stdout.** Writes to a
+  pipe are asynchronous, and `exit()` discards whatever has not flushed. This
+  shipped: `expand((x+1)^900)` wrote 181,227 bytes to a file and 65,728 through
+  `$(...)` — truncated mid-number, exit `0`. Set `process.exitCode` and let Node
+  drain. Nothing in this process needs forcing: the Giac worker child is
+  `unref()`d. A CLI that returns a silently truncated number is this product's
+  worst failure mode arriving through its own plumbing, so treat any new
+  `process.exit()` as **Critical** until proven to be on an error-only path.
+
 ## Stack-specific remedies
 
 - Inject host-specific capabilities into `createHttpApp` instead of importing

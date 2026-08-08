@@ -119,5 +119,35 @@ describe('Verify Tool', () => {
       expect(res.isError).toBe(false);
       expect(text).toContain('Could not parse');
     });
+
+    // `evaluated` is what separates "checked and refuted" from "never checked".
+    // The CLI turns the first into exit 2 and the second into exit 1, so a
+    // claim that reported evaluated: true here would be read as a refutation.
+    it('reports evaluated: false for a claim that does not parse', async () => {
+      const res = await verifyHandler({ claim: 'this is not a math claim', format: 'json' });
+      const parsed = JSON.parse(getText(res));
+      expect(parsed.verified).toBe(false);
+      expect(parsed.evaluated).toBe(false);
+    });
+
+    it('reports evaluated: false for a parseable claim Giac cannot evaluate', async () => {
+      const res = await verifyHandler({ claim: 'x + = 1', format: 'json' });
+      const parsed = JSON.parse(getText(res));
+      expect(parsed.verified).toBe(false);
+      expect(parsed.evaluated).toBe(false);
+    });
+
+    it('says UNKNOWN rather than FALSE in text mode when nothing was checked', async () => {
+      const text = getText(await verifyHandler({ claim: 'this is not a math claim' }));
+      expect(text).toContain('UNKNOWN');
+      expect(text).not.toContain('FALSE');
+    });
+
+    it('reports evaluated: true for a claim that really was refuted', async () => {
+      const res = await verifyHandler({ claim: 'sin(x)^2+cos(x)^2 = 2', format: 'json' });
+      const parsed = JSON.parse(getText(res));
+      expect(parsed.verified).toBe(false);
+      expect(parsed.evaluated).toBe(true);
+    });
   });
 });

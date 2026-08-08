@@ -89,11 +89,10 @@ export async function calculusHandler(args: Record<string, unknown>) {
 
     const giacExpr = buildGiacExpression(operation, args);
     const isIndefiniteIntegral =
-      operation === 'integrate' &&
-      args.lower_bound === undefined &&
-      args.upper_bound === undefined;
+      operation === 'integrate' && args.lower_bound === undefined && args.upper_bound === undefined;
     const verify = isIndefiniteIntegral
-      ? (result: string) => verifyIntegrate(args.expression as string, args.variable as string, result)
+      ? (result: string) =>
+          verifyIntegrate(args.expression as string, args.variable as string, result)
       : undefined;
     return evalWithLatex({ giacExpr, operation, verify });
   } catch (error) {

@@ -17,6 +17,9 @@ math.import(
   { override: true }
 );
 
+/** Samples taken across the x range when a caller does not say otherwise. */
+export const DEFAULT_PLOT_POINTS = 200;
+
 export interface PlotPoint {
   x: number;
   y: number;
@@ -41,7 +44,7 @@ export function evaluateFunction(
   variable: string,
   xMin: number,
   xMax: number,
-  numPoints: number = 200
+  numPoints: number = DEFAULT_PLOT_POINTS
 ): EvaluationResult {
   const compiled = math.compile(expression);
   const step = (xMax - xMin) / (numPoints - 1);

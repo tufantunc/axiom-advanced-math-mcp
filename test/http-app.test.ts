@@ -115,7 +115,7 @@ describe('http-app POST /mcp (stateless)', () => {
   it('answers initialize with the correct serverInfo', async () => {
     const { res, json } = await post(app, INIT_MSG);
     expect(res.status).toBe(200);
-    expect(json.result.serverInfo.name).toBe('axiom-advanced-math-mcp');
+    expect(json.result.serverInfo.name).toBe('axiom-math');
     expect(json.result.serverInfo.version).toBe(VERSION);
   });
 

@@ -202,8 +202,7 @@ const rules: RouterRule[] = [
   // Multiple integrals — MUST precede single integrate (nested int starts with "int(").
   {
     name: 'multivariable:multiple_integral',
-    test: (p) =>
-      startsWith(p, 'iint', 'iiint') || /int\s*\(\s*int\s*\(/i.test(p),
+    test: (p) => startsWith(p, 'iint', 'iiint') || /int\s*\(\s*int\s*\(/i.test(p),
     extract: extractMultivariable,
   },
 
@@ -338,8 +337,7 @@ const rules: RouterRule[] = [
       // computes the whole expression (this handler would silently drop
       // everything after the first call).
       const callForm =
-        /^[cp]\s*\(\s*\d/i.test(t) ||
-        startsWith(p, 'comb', 'perm', 'combinations', 'permutations');
+        /^[cp]\s*\(\s*\d/i.test(t) || startsWith(p, 'comb', 'perm', 'combinations', 'permutations');
       if (callForm) return /^[A-Za-z]+\s*\([^()]*\)$/.test(t);
       return hasKeyword(
         p,

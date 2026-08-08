@@ -3,7 +3,7 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    container_name: axiom-advanced-math-mcp
+    container_name: axiom-math
     environment:
       - NODE_ENV=production
       - MCP_HOST=0.0.0.0
