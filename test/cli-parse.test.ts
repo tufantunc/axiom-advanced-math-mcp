@@ -226,4 +226,25 @@ describe('render', () => {
       points: 200,
     });
   });
+
+  it('renderCompute in quiet mode with non-JSON input throws a legible error', () => {
+    const nonJsonResult = {
+      content: [{ type: 'text', text: 'Error: something went wrong' }],
+    };
+    expect(() => renderCompute(nonJsonResult, 'quiet')).toThrow(/something went wrong/);
+  });
+
+  it('renderVerify in quiet mode with non-JSON input throws a legible error', () => {
+    const nonJsonResult = {
+      content: [{ type: 'text', text: 'Error: something went wrong' }],
+    };
+    expect(() => renderVerify(nonJsonResult, 'quiet')).toThrow(/something went wrong/);
+  });
+
+  it('renderCompute in text mode with non-JSON input returns it unchanged', () => {
+    const nonJsonResult = {
+      content: [{ type: 'text', text: 'Error: something went wrong' }],
+    };
+    expect(renderCompute(nonJsonResult, 'text')).toBe('Error: something went wrong');
+  });
 });
