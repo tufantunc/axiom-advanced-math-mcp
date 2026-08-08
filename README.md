@@ -503,6 +503,14 @@ running locally. Per-task build logs land under `logs/giac-build/`.
 
 ---
 
+## Contributing
+
+Bug reports and pull requests are welcome — see
+[CONTRIBUTING.md](CONTRIBUTING.md) for the setup, the checks CI runs, and the
+few things about this codebase that are not obvious from reading it.
+
+---
+
 ## License
 
 **GNU General Public License v3.0 or later** — see [LICENSE](LICENSE).
