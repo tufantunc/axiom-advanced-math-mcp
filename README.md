@@ -1,11 +1,32 @@
-# Axiom Advanced Math MCP Server
+# Axiom — Advanced Math MCP Server
 
+[![npm](https://img.shields.io/npm/v/axiom-math)](https://www.npmjs.com/package/axiom-math)
 [![License: GPL v3+](https://img.shields.io/badge/License-GPLv3+-blue.svg)](LICENSE)
 [![Node.js >=20](https://img.shields.io/badge/Node.js->=20-green.svg)](https://nodejs.org/)
 [![MCP](https://img.shields.io/badge/MCP-1.25.3-blue)](https://modelcontextprotocol.io/)
 [![Tests](https://img.shields.io/badge/Tests-passing-green.svg)](https://github.com/tufantunc/axiom-advanced-math-mcp)
 
-Advanced mathematical computation engine for LLMs powered by the Model Context Protocol.
+Exact symbolic and numerical mathematics for LLMs — a real computer algebra
+system (Giac/Xcas) behind the Model Context Protocol, and behind a shell
+command. Published as **`axiom-math`**.
+
+## Quick start
+
+As a CLI, straight away:
+
+```bash
+npx -y axiom-math compute 'integrate(sin(x)^3,x)'   # -cos(x)+cos(x)^3/3
+npx -y axiom-math verify 'diff(x^3,x) = 3*x^2'      # exit 0 — it holds
+```
+
+As an MCP server, in any client's config:
+
+```json
+{ "command": "npx", "args": ["-y", "axiom-math"] }
+```
+
+As an agent skill — drop in [skills/axiom-math/SKILL.md](skills/axiom-math/SKILL.md),
+which teaches an agent the three commands and their exit codes.
 
 ## Why Axiom?
 
@@ -72,17 +93,33 @@ Axiom exposes **3 MCP tools**. Almost everything flows through `compute`, a sing
 
 ## Installation
 
+The package is [`axiom-math`](https://www.npmjs.com/package/axiom-math) on npm.
+Nothing to install for normal use — `npx` fetches and caches it:
+
 ```bash
-# Clone and install
+npx -y axiom-math compute '2+2'
+```
+
+Or install it so the `axiom-math` command is on your PATH:
+
+```bash
+npm install -g axiom-math
+```
+
+**Node.js >= 20 required.** The first run downloads about 3.8 MB (the CAS engine
+compiled to WebAssembly) and takes a few seconds; later runs come from the npx
+cache.
+
+### From source
+
+For contributors, or to run a modified build:
+
+```bash
 git clone https://github.com/tufantunc/axiom-advanced-math-mcp.git
 cd axiom-advanced-math-mcp
 npm install
-
-# Build
 npm run build
 ```
-
-**Node.js >= 20 required.**
 
 ### Docker
 
@@ -154,8 +191,13 @@ echo 'diff(x^3,x)' | npx -y axiom-math compute -q   # 3*x^2
 | `--latex` | LaTeX-focused text (`compute` only) |
 | `-h`, `--help` | usage, or usage for a subcommand |
 
-Exit codes: `0` success · `1` tool or usage error · `2` `verify` ran and the
-claim was **not** verified.
+Exit codes: `0` success · `1` tool or usage error · `2` `verify` checked the
+claim and it is **false**.
+
+`2` is a mathematical verdict, so a claim that never got checked does not use
+it: one that fails to parse, or that the CAS cannot evaluate, exits `1` with
+nothing on stdout. `axiom-math verify '...' && ...` therefore never reads a
+syntax error as a disproof.
 
 A ready-to-use agent skill is in [skills/axiom-math/SKILL.md](skills/axiom-math/SKILL.md).
 
@@ -246,7 +288,12 @@ Independently check a mathematical claim. Useful as a second, tool-grounded opin
 | `claim`   | string (**required**)              | The claim, e.g. `"sin(x)^2 + cos(x)^2 = 1"` (identity), `"x=2 satisfies x^2-4=0"` (solution), `"diff(x^3, x) = 3*x^2"` (computation). |
 | `method`  | `numeric` \| `symbolic` \| `both`  | Verification method (default `both`).                                                                                |
 
-Returns whether the claim is verified, a confidence level, and the checks performed.
+Returns four fields: `verified`, `evaluated`, `confidence`, and `checks_performed`.
+
+`evaluated` is the one to read first. It is `false` when no check produced a
+usable answer — the claim did not parse, or the CAS could not evaluate it — in
+which case `verified: false` means "unknown", not "refuted". Treating the two as
+the same turns a syntax error into a disproof.
 
 ### plot
 
@@ -379,23 +426,18 @@ Text-format responses are line-structured so LLMs (and the benchmark grader) can
 
 ### How to Run
 
+See [Run Benchmarks](#run-benchmarks) above for the commands. In short, from
+the repository root:
+
 ```bash
-# Quick benchmark (small samples)
-npm run benchmark:quick
-
-# Full benchmark (all datasets)
-npm run benchmark:full
-
-# Specific dataset
-npm run benchmark:gsm8k
-npm run benchmark:math-l3
-npm run benchmark:math-l4
-npm run benchmark:math-l5
-
-# With specific provider
-npm run benchmark:zai      # GLM-5.1 (default)
-npm run benchmark:openrouter
+npm run benchmark:zai         # quick sample, GLM-5.1
+npm run benchmark:full:zai    # all datasets
+npm run benchmark:l5:zai      # one difficulty tier
 ```
+
+Swap `:zai` for `:openrouter` to change provider. The `benchmark/` directory is
+a separate npm project with finer-grained scripts (`cas:quick:zai`,
+`gsm8k:quick:zai`, …); `npm run benchmark:*` from the root delegates to them.
 
 **Environment variables:**
 
@@ -410,30 +452,36 @@ npm run benchmark:openrouter
 
 ### Scripts
 
-| Command                 | Description                    |
-| ----------------------- | ------------------------------ |
-| `npm run build`         | Compile TypeScript to `dist/`  |
-| `npm start`             | Run STDIO server               |
-| `npm run dev`           | Run in development mode (tsx)  |
-| `npm run start:http`    | Run HTTP server                |
-| `npm run dev:http`      | Run HTTP server in dev mode    |
-| `npm test`              | Run all tests                  |
-| `npm run test:coverage` | Run tests with coverage report |
-| `npm run lint`          | Lint with oxlint               |
-| `npm run lint:fix`      | Auto-fix linting issues        |
-| `npm run format`        | Format with Prettier           |
+| Command                    | Description                                          |
+| -------------------------- | ---------------------------------------------------- |
+| `npm run build`            | Compile TypeScript to `dist/` and copy the WASM asset |
+| `npm start`                | Run STDIO server                                     |
+| `npm run dev`              | Run in development mode (tsx)                        |
+| `npm run start:http`       | Run HTTP server                                      |
+| `npm run dev:http`         | Run HTTP server in dev mode                          |
+| `npm test`                 | Unit tests — no build required                        |
+| `npm run test:integration` | Integration tests — builds first, exercises `dist/`   |
+| `npm run test:watch`       | Unit tests in watch mode                             |
+| `npm run test:coverage`    | Unit tests with coverage report                      |
+| `npm run typecheck`        | Type-check without emitting                          |
+| `npm run lint`             | Lint with oxlint                                     |
+| `npm run lint:fix`         | Auto-fix linting issues                              |
+| `npm run format`           | Format with Prettier                                 |
+| `npm run format:check`     | Check formatting without writing                     |
+| `npm run inspect`          | Open the MCP Inspector against the stdio server      |
 
 ### Testing
 
+The suites are split. `npm test` runs the unit tests and needs no build;
+`npm run test:integration` builds first and exercises the packaged `dist/`
+output, so it catches things the unit suite cannot — the shipped binary's
+argument dispatch, the MCP handshake, exit codes.
+
 ```bash
-# Run all tests
-npm test
-
-# Watch mode
-npm run test:watch
-
-# Coverage report
-npm run test:coverage
+npm test                  # unit
+npm run test:integration  # integration (runs npm run build first)
+npm run test:watch        # unit, watch mode
+npm run test:coverage     # unit, with coverage
 ```
 
 **Test coverage:** unit + integration suite, 100% pass rate. Run `npm test` for the current count — it changes too often to keep a number here in sync.
