@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A new push supersedes the run in flight for the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static:
+    name: types, lint, format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run format:check
+
+  test:
+    name: tests (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 20 is the engines floor and the one most likely to break; the others
+        # are current and next.
+        node: [20, 22, 24]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+
+      - name: Unit tests
+        run: npm test
+
+      # Builds first and exercises the shipped dist/ — argument dispatch, the
+      # MCP handshake, exit codes. The unit suite cannot see any of that.
+      - name: Integration tests
+        run: npm run test:integration
+
+      # The tarball is the actual product. Packing it here catches a broken
+      # `files` list or a missing WASM asset before a tag does.
+      - name: Pack and smoke-test the tarball
+        run: |
+          set -euo pipefail
+          npm pack --pack-destination "$RUNNER_TEMP"
+          mkdir -p "$RUNNER_TEMP/consumer"
+          cd "$RUNNER_TEMP/consumer"
+          npm init -y > /dev/null
+          npm install "$RUNNER_TEMP"/axiom-math-*.tgz
+          test "$(./node_modules/.bin/axiom-math compute -q '2+2')" = "4"
+          test "$(./node_modules/.bin/axiom-math compute -q 'integrate(sin(x)^3,x)')" = "-cos(x)+cos(x)^3/3"
+          ./node_modules/.bin/axiom-math verify -q 'diff(x^3,x) = 3*x^2'

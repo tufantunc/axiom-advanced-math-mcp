@@ -1,0 +1,67 @@
+name: Release
+
+# Tag-triggered, not merge-triggered. Publishing on every push to main would
+# attempt a publish for every merge and fail with "cannot publish over the
+# previously published version" as soon as the version had not changed, and it
+# would make every merge a release whether or not that was the intent.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  # Required for npm trusted publishing: this is what lets the job mint the
+  # OIDC token npm verifies. Without it the publish fails with no token.
+  id-token: write
+
+jobs:
+  publish:
+    name: publish to npm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          # Trusted publishing needs Node >= 22.14; 24 clears it with room.
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      # The bundled npm is often older than 11.5.1, which is the floor for
+      # trusted publishing. Pin the floor rather than trusting the image.
+      - name: Ensure npm supports trusted publishing
+        run: |
+          set -euo pipefail
+          npm install -g npm@latest
+          npm --version
+
+      - run: npm ci
+
+      # A tag that disagrees with package.json publishes something other than
+      # what the tag names. Fail here rather than after it is on the registry
+      # and immutable.
+      - name: Tag must match package.json version
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p 'require("./package.json").version')"
+          if [ "$tag" != "$pkg" ]; then
+            echo "::error::tag v$tag does not match package.json version $pkg"
+            exit 1
+          fi
+          echo "releasing $pkg"
+
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm test
+      - run: npm run test:integration
+
+      # --provenance is explicit on purpose: the docs describe it as automatic
+      # under OIDC, but reports of it silently not attaching are common enough
+      # that stating it is cheaper than shipping an unattested release.
+      # No NODE_AUTH_TOKEN and no npm secret: the OIDC token above is the whole
+      # credential, scoped to this repository and this workflow file.
+      - name: Publish
+        run: npm publish --provenance --access public
