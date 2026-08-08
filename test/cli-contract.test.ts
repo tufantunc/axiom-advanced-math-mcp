@@ -62,20 +62,23 @@ describe('CLI — the MCP server still starts with no arguments', () => {
       }) + '\n'
     );
 
-    const response = await new Promise<string>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('no MCP response within 20s')), 20_000);
-      child.stdout.on('data', () => {
-        const line = out.split('\n').find((l) => l.includes('"result"'));
-        if (line) {
-          clearTimeout(timer);
-          resolve(line);
-        }
+    try {
+      const response = await new Promise<string>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('no MCP response within 20s')), 20_000);
+        child.stdout.on('data', () => {
+          const line = out.split('\n').find((l) => l.includes('"result"'));
+          if (line) {
+            clearTimeout(timer);
+            resolve(line);
+          }
+        });
       });
-    });
 
-    child.kill('SIGKILL');
-    const parsed = JSON.parse(response.replace(/^data:\s*/, ''));
-    expect(parsed.result.serverInfo.name).toBe('axiom-advanced-math-mcp');
+      const parsed = JSON.parse(response);
+      expect(parsed.result.serverInfo.name).toBe('axiom-advanced-math-mcp');
+    } finally {
+      child.kill('SIGKILL');
+    }
   }, 30_000);
 });
 
