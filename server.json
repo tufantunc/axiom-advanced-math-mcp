@@ -3,7 +3,7 @@
   "name": "io.github.tufantunc/axiom-math",
   "title": "Axiom — Advanced Math",
   "description": "Exact symbolic math for LLMs: integrals, equations, matrices, and claim verification via Giac/Xcas",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "websiteUrl": "https://github.com/tufantunc/axiom-advanced-math-mcp",
   "repository": {
     "url": "https://github.com/tufantunc/axiom-advanced-math-mcp",
@@ -13,7 +13,7 @@
     {
       "registryType": "npm",
       "identifier": "axiom-math",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "transport": {
         "type": "stdio"
       }
