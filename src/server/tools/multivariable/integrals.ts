@@ -24,7 +24,7 @@ export async function integralHandler(args: Record<string, unknown>) {
     const bounds = (args.bounds as Bound[]) ?? [];
     if (bounds.length < 2) {
       return formatErrorResponse(
-        "multiple_integral requires at least 2 integration bounds (use 'int' for a single integral)",
+        "multiple_integral requires at least 2 integration bounds (use 'int' for a single integral)"
       );
     }
     const validation = validateExpression(expression);

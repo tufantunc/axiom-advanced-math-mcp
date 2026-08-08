@@ -6,10 +6,29 @@ import { MAX_EXPRESSION_LENGTH } from '../server/tools/limits.js';
 import type { ComputeCommand, VerifyCommand, PlotCommand } from './parse.js';
 import { renderCompute, renderVerify, renderPlotMeta, resultText } from './render.js';
 
+/**
+ * Byte ceiling on piped input.
+ *
+ * `MAX_EXPRESSION_LENGTH` is a *character* cap and can only be applied after
+ * decoding, so reading first and checking after would let `yes | axiom-mcp
+ * compute` grow the buffer without bound. Four bytes is the widest UTF-8 code
+ * point, so this can never reject an input the character cap would accept —
+ * anything past it is refused before it is buffered.
+ */
+const MAX_STDIN_BYTES = MAX_EXPRESSION_LENGTH * 4;
+
 /** Reads the whole of stdin, for when the expression is piped in. */
 async function readStdin(): Promise<string> {
   const chunks: Buffer[] = [];
-  for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
+  let total = 0;
+  for await (const chunk of process.stdin) {
+    const buf = Buffer.from(chunk);
+    total += buf.length;
+    if (total > MAX_STDIN_BYTES) {
+      throw new Error(`input on stdin exceeds the ${MAX_EXPRESSION_LENGTH}-character limit`);
+    }
+    chunks.push(buf);
+  }
   return Buffer.concat(chunks).toString('utf8').trim();
 }
 
@@ -51,9 +70,12 @@ async function runCompute(cmd: ComputeCommand): Promise<number> {
   // quiet reads the envelope's display field, so it needs the json format too.
   const format = cmd.output === 'text' ? 'text' : cmd.output === 'latex' ? 'latex' : 'json';
 
-  // The casts are narrowing, not silencing: parse.ts already validated these
-  // against the same enums the zod schema declares, so the strings are known
-  // to be members. Do not weaken them to `as never` or `as any`.
+  // computeTool takes `Record<string, unknown>`, so these casts buy no
+  // checking from the compiler — parse.ts is the only thing that guarantees
+  // `domain` and `format` are members of the enums the zod schema declares
+  // (DOMAINS in parse.ts, mirrored by hand from computeSchema). They are here
+  // to document the contract, not to enforce it; a typo in a key name would
+  // compile and arrive as `undefined`.
   const result = await computeTool({
     problem,
     ...(cmd.domain !== undefined
@@ -84,16 +106,24 @@ async function runVerify(cmd: VerifyCommand): Promise<number> {
     format: 'json',
   });
 
-  // Defensive: verifyHandler currently catches every internal failure itself
-  // and downgrades it to `verified: false` rather than setting isError, so
-  // this branch is unreachable today. verifyTool is typed generically enough
-  // that a future change could start setting it — do not delete this.
+  // verifyHandler's catch block sets isError for anything that escapes its
+  // per-strategy handling, so this is a live path, not a defensive one.
   if (result.isError) {
     console.error(resultText(result));
     return 1;
   }
 
-  const { out, verified } = renderVerify(result, cmd.output);
+  const { out, verified, evaluated } = renderVerify(result, cmd.output);
+
+  // Exit 2 means "checked, and the claim is false". A claim that could not be
+  // parsed or evaluated was not checked at all, so it exits 1 like any other
+  // failure to run — otherwise `verify '((('` tells a script the mathematics
+  // was refuted. stdout stays clean so nothing captures a bogus verdict.
+  if (!evaluated) {
+    console.error(`axiom-mcp: could not check the claim\n${out}`);
+    return 1;
+  }
+
   console.log(out);
   return verified ? 0 : 2;
 }
@@ -114,7 +144,14 @@ async function runPlot(cmd: PlotCommand): Promise<number> {
   });
 
   if (cmd.out !== undefined) {
-    writeFileSync(cmd.out, result.svg, 'utf8');
+    try {
+      writeFileSync(cmd.out, result.svg, 'utf8');
+    } catch (err) {
+      // A raw ENOENT/EACCES from fs names the syscall, not what the user did.
+      throw new Error(
+        `could not write ${cmd.out}: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
     if (cmd.output === 'json') console.log(renderPlotMeta(result, cmd.out));
     else if (cmd.output === 'quiet') console.log(cmd.out);
     else console.log(`Wrote ${cmd.out} — f(${result.variable}) = ${result.expression}`);

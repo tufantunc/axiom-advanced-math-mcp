@@ -11,21 +11,38 @@ interface Run {
   stderr: string;
 }
 
-/** Runs the built CLI with the given args, optionally piping stdin. */
-async function cli(args: string[], stdin?: string): Promise<Run> {
-  return new Promise((resolve, reject) => {
-    const child = spawn('node', ['dist/cli.js', ...args], {
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (d) => (stdout += d));
-    child.stderr.on('data', (d) => (stderr += d));
-    child.on('error', reject);
-    child.on('close', (code) => resolve({ code, stdout, stderr }));
-    if (stdin !== undefined) child.stdin.write(stdin);
-    child.stdin.end();
+/**
+ * Runs the built CLI with the given args, optionally piping stdin.
+ *
+ * The timeout and its `finally` are load-bearing, not belt-and-braces: with no
+ * arguments the binary is an MCP server that blocks on stdin forever, so a run
+ * that never closes would otherwise leave an orphan holding the test runner
+ * open. Every path kills the child.
+ */
+async function cli(args: string[], stdin?: string, timeoutMs = 25_000): Promise<Run> {
+  const child = spawn('node', ['dist/cli.js', ...args], {
+    stdio: ['pipe', 'pipe', 'pipe'],
   });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.on('data', (d) => (stdout += d));
+  child.stderr.on('data', (d) => (stderr += d));
+  // EPIPE when the child exits before consuming everything we wrote is the
+  // child's business, not a test failure.
+  child.stdin.on('error', () => {});
+
+  const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs);
+  try {
+    return await new Promise<Run>((resolve, reject) => {
+      child.on('error', reject);
+      child.on('close', (code) => resolve({ code, stdout, stderr }));
+      if (stdin !== undefined) child.stdin.write(stdin);
+      child.stdin.end();
+    });
+  } finally {
+    clearTimeout(timer);
+    child.kill('SIGKILL');
+  }
 }
 
 let workdir: string;
@@ -122,6 +139,27 @@ describe('CLI — compute', () => {
     expect(r.code).toBe(0);
     expect(r.stdout.trim()).toBe('0');
   }, 30_000);
+
+  it('writes a result larger than the pipe buffer without truncating it', async () => {
+    // The regression this pins: the dispatcher used to call process.exit() on
+    // the success path, which does not drain an async pipe. This exact
+    // expression came out at 65,728 of 181,227 bytes — cut mid-number, exit 0.
+    // A silently truncated number is the worst failure this product has, and
+    // `ANSWER=$(axiom-mcp compute -q ...)` is what the agent skill teaches.
+    const r = await cli(['compute', '-q', 'expand((x+1)^900)']);
+    expect(r.code).toBe(0);
+    expect(r.stdout.length).toBeGreaterThan(180_000);
+    // The constant term is the last thing Giac prints, so its presence means
+    // nothing was lost off the end.
+    expect(r.stdout.trim().endsWith('+900*x+1')).toBe(true);
+  }, 60_000);
+
+  it('refuses stdin past the input cap instead of buffering it', async () => {
+    const r = await cli(['compute', '-q'], 'x'.repeat(40_000));
+    expect(r.code).toBe(1);
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toContain('limit');
+  }, 30_000);
 });
 
 describe('CLI — verify', () => {
@@ -146,6 +184,30 @@ describe('CLI — verify', () => {
     const r = await cli(['verify', '-q', 'sin(x)^2+cos(x)^2 = 2']);
     expect(r.code).toBe(2);
     expect(r.stdout.trim()).toBe('false');
+  }, 30_000);
+
+  // Exit 2 is a mathematical verdict. A claim that never got checked must not
+  // borrow it: `if axiom-mcp verify "$c"; then ... else echo "disproved"; fi`
+  // would otherwise report a syntax error as a refuted theorem.
+  it('exits 1, not 2, for a claim it cannot parse', async () => {
+    const r = await cli(['verify', '(((']);
+    expect(r.code).toBe(1);
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toContain('could not check');
+  }, 30_000);
+
+  it('exits 1, not 2, for a claim it can parse but cannot evaluate', async () => {
+    const r = await cli(['verify', 'x + = 1']);
+    expect(r.code).toBe(1);
+    expect(r.stdout).toBe('');
+  }, 30_000);
+
+  it('-q emits no verdict at all when the claim could not be checked', async () => {
+    // A quiet-mode "false" on stdout would be captured by a script as a real
+    // verdict, so nothing may reach stdout on this path.
+    const r = await cli(['verify', '-q', '(((']);
+    expect(r.code).toBe(1);
+    expect(r.stdout).toBe('');
   }, 30_000);
 });
 

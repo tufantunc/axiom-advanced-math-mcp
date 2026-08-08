@@ -95,7 +95,9 @@ export async function verifyFactor(
   return {
     verified: ok,
     method: 'expand',
-    detail: ok ? 'expand(factored) equals the original' : 'expand(factored) does not equal original',
+    detail: ok
+      ? 'expand(factored) equals the original'
+      : 'expand(factored) does not equal original',
   };
 }
 
@@ -108,6 +110,8 @@ export async function verifyIntegrate(
   return {
     verified: ok,
     method: 'differentiation',
-    detail: ok ? 'derivative of the result equals the integrand' : 'derivative does not equal the integrand',
+    detail: ok
+      ? 'derivative of the result equals the integrand'
+      : 'derivative does not equal the integrand',
   };
 }

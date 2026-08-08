@@ -41,7 +41,9 @@ Options: `--domain real|complex|numeric|exact`, `--precision 1..50`,
 ## Verify
 
 Checks a claim independently. **Exit code carries the verdict:** `0` verified,
-`2` not verified, `1` could not run.
+`2` checked and refuted, `1` could not run. A claim that does not parse, or
+that the CAS cannot evaluate, exits `1` — never `2` — so `verify ... && ...`
+never reads a syntax error as a disproof.
 
 ```bash
 npx -y axiom-advanced-math-mcp verify 'sin(x)^2+cos(x)^2 = 1' && echo "holds"
@@ -63,7 +65,8 @@ Options: `--variable`, `--x-min`, `--x-max`, `--y-min`, `--y-max`, `--width`,
 - Expressions can be piped instead of quoted, which avoids shell-escaping pain:
   `echo 'diff(x^3,x)' | npx -y axiom-advanced-math-mcp compute -q`
 - An expression starting with `-` (e.g. `-x^2+1`, `-2+2`) looks like a flag to
-  the parser — put `--` before it: `axiom-mcp compute -- '-2+2'`.
+  the parser — put `--` before it:
+  `npx -y axiom-advanced-math-mcp compute -- '-2+2'`.
 - **The first invocation downloads about 3.8 MB** (the CAS engine, compiled to
   WebAssembly) and takes a few seconds. Later calls come from the npx cache and
   take roughly 300 ms.

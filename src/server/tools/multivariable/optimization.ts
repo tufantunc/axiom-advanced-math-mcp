@@ -36,13 +36,21 @@ async function toLatex(result: string): Promise<string | undefined> {
  */
 function parseSolutionPoints(raw: string): string[][] {
   const trimmed = raw.replace(/^list/, '').trim();
-  const inner = trimmed.replace(/^[[(]/, '').replace(/[\])]$/, '').trim();
+  const inner = trimmed
+    .replace(/^[[(]/, '')
+    .replace(/[\])]$/, '')
+    .trim();
   if (!inner) return [];
   const points: string[][] = [];
   let depth = 0;
   let current = '';
   const flush = () => {
-    const coords = current.replace(/^\[/, '').replace(/\]$/, '').split(',').map((s) => s.trim()).filter(Boolean);
+    const coords = current
+      .replace(/^\[/, '')
+      .replace(/\]$/, '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
     if (coords.length) points.push(coords);
     current = '';
   };
@@ -71,7 +79,8 @@ export async function optimizationHandler(args: Record<string, unknown>) {
     const variables = (args.variables as string[]) ?? [];
 
     if (!expression) return formatErrorResponse(`'expression' is required for ${operation}`);
-    if (variables.length === 0) return formatErrorResponse(`'variables' is required for ${operation}`);
+    if (variables.length === 0)
+      return formatErrorResponse(`'variables' is required for ${operation}`);
     const validation = validateExpression(expression);
     if (validation) return formatErrorResponse(validation.message);
 
@@ -119,7 +128,11 @@ export async function optimizationHandler(args: Record<string, unknown>) {
       return formatToolResponse({
         result: dv,
         latex,
-        notes: [`Point: (${point.join(', ')})`, `Direction: [${direction.join(', ')}]`, `‖direction‖ = ${norm}`],
+        notes: [
+          `Point: (${point.join(', ')})`,
+          `Direction: [${direction.join(', ')}]`,
+          `‖direction‖ = ${norm}`,
+        ],
       });
     }
 
@@ -127,7 +140,9 @@ export async function optimizationHandler(args: Record<string, unknown>) {
     // D = f_xx*f_yy - f_xy^2 is the standard 2-variable discriminant; the n-variable case would require full Hessian analysis.
     if (operation === 'critical_points') {
       if (variables.length !== 2) {
-        return formatErrorResponse('critical_points classification is supported for exactly 2 variables');
+        return formatErrorResponse(
+          'critical_points classification is supported for exactly 2 variables'
+        );
       }
       const [x, y] = variables;
       const stationary = `[diff(${expression},${x}),diff(${expression},${y})]`;

@@ -3,7 +3,11 @@ export interface CacheEntry {
   latex?: string;
   // Mirrors VerificationResult from tools/self-verify.ts — kept inline to avoid
   // a dependency from cache.ts into the tools layer.
-  verification?: { verified: boolean; method: 'substitution' | 'expand' | 'differentiation'; detail: string };
+  verification?: {
+    verified: boolean;
+    method: 'substitution' | 'expand' | 'differentiation';
+    detail: string;
+  };
 }
 
 const MAX_ENTRIES = 100;

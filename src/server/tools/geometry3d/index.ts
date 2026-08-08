@@ -4,7 +4,14 @@ import { vectorHandler } from './vectors.js';
 import { planeHandler } from './planes.js';
 import { volumeHandler } from './volumes.js';
 
-const VECTOR_OPS = new Set(['distance3d', 'midpoint3d', 'dot', 'cross', 'vector_norm', 'angle_vectors']);
+const VECTOR_OPS = new Set([
+  'distance3d',
+  'midpoint3d',
+  'dot',
+  'cross',
+  'vector_norm',
+  'angle_vectors',
+]);
 const PLANE_OPS = new Set([
   'plane_from_points',
   'point_plane_distance',

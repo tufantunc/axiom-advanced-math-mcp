@@ -54,12 +54,7 @@ export interface VersionCommand {
 }
 
 export type Command =
-  | ComputeCommand
-  | VerifyCommand
-  | PlotCommand
-  | ServerCommand
-  | HelpCommand
-  | VersionCommand;
+  ComputeCommand | VerifyCommand | PlotCommand | ServerCommand | HelpCommand | VersionCommand;
 
 export const USAGE = `axiom-mcp — symbolic math over MCP, or straight from the shell
 
@@ -173,9 +168,11 @@ function requireValue(flag: string, value: string | undefined): string {
   if (value === undefined) {
     throw new UsageError(`${flag} needs a value`);
   }
-  // A flag starts with -- or is a single-char flag like -o, -q
-  // A negative number like -1 is not a flag
-  if (value.startsWith('--') || (value.startsWith('-') && value.length > 1 && /^-[a-zA-Z]$/.test(value))) {
+  // The next argument being another flag means this one was left without a
+  // value. A long flag (`--json`) or a single-letter short flag (`-q`) counts;
+  // a negative number (`-1`, `-2.5`) does not, since that is a legitimate
+  // value for --x-min and friends.
+  if (value.startsWith('--') || /^-[a-zA-Z]$/.test(value)) {
     throw new UsageError(`${flag} needs a value`);
   }
   return value;

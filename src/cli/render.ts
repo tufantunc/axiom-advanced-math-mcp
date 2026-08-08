@@ -2,14 +2,19 @@ import type { OutputMode } from './parse.js';
 import type { PlotResult } from '../server/tools/plot/render.js';
 import { formatVerifyResponse, type VerifyResult } from '../server/tools/verify/index.js';
 
+/**
+ * The shape both tool handlers return. Kept structurally identical to the
+ * handlers' own return type rather than widened: `text?: string` here would
+ * accept a block the handlers never produce and hide it behind `?? ''`.
+ */
 export interface ToolResult {
-  content: { type: string; text?: string }[];
-  isError?: boolean;
+  content: { type: 'text'; text: string }[];
+  isError: boolean;
 }
 
 /** Concatenates a handler's text blocks the way the MCP client would see them. */
 export function resultText(r: ToolResult): string {
-  return r.content.map((c) => c.text ?? '').join('\n');
+  return r.content.map((c) => c.text).join('\n');
 }
 
 /**
@@ -56,16 +61,21 @@ export function renderCompute(r: ToolResult, mode: OutputMode): string {
 export function renderVerify(
   r: ToolResult,
   mode: OutputMode
-): { out: string; verified: boolean } {
+): { out: string; verified: boolean; evaluated: boolean } {
   const json = resultText(r);
   const parsed = parseEnvelope<VerifyResult>(json);
-  const verified = parsed.verified === true;
+  if (typeof parsed.verified !== 'boolean' || typeof parsed.evaluated !== 'boolean') {
+    // The exit code is derived from these two fields, so an envelope missing
+    // them must fail loudly rather than default to a verdict.
+    throw new Error(`verify returned no verdict: ${json.slice(0, 200)}`);
+  }
+  const { verified, evaluated } = parsed;
 
-  if (mode === 'json') return { out: json, verified };
-  if (mode === 'quiet') return { out: String(verified), verified };
+  if (mode === 'json') return { out: json, verified, evaluated };
+  if (mode === 'quiet') return { out: String(verified), verified, evaluated };
 
   const rendered = formatVerifyResponse(parsed, 'text');
-  return { out: rendered.content.map((c) => c.text).join('\n'), verified };
+  return { out: rendered.content.map((c) => c.text).join('\n'), verified, evaluated };
 }
 
 export function renderPlotMeta(p: PlotResult, path: string | null): string {
@@ -78,6 +88,7 @@ export function renderPlotMeta(p: PlotResult, path: string | null): string {
       x_range: [p.xMin, p.xMax],
       y_range: [p.yMin, p.yMax],
       segments: p.segments,
+      samples: p.samples,
       points: p.points,
     },
     null,

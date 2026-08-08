@@ -15,7 +15,7 @@ import { VERSION } from './version.js';
  * "could not determine executable to run", and that is the line in every MCP
  * client config.
  */
-async function main(): Promise<number> {
+async function main(): Promise<number | null> {
   let command;
   try {
     command = parseArgs(process.argv.slice(2));
@@ -45,23 +45,43 @@ async function main(): Promise<number> {
         // goes to stderr where it cannot corrupt a client's stream.
         console.error(
           'axiom-mcp: starting as an MCP stdio server (waiting for JSON-RPC on stdin).\n' +
-            'For one-off computations try: axiom-mcp compute \'2+2\'   ·   axiom-mcp --help'
+            "For one-off computations try: axiom-mcp compute '2+2'   ·   axiom-mcp --help"
         );
       }
       await startStdioServer();
-      // The server owns the process from here; it exits on transport close.
-      return -1;
+      // null, not an exit code: the server owns the process from here and exits
+      // on transport close. A sentinel number would share the exit-code channel
+      // with real codes, which is how a "-1 means keep running" convention turns
+      // into an accidental exit status.
+      return null;
 
     default:
       return runCommand(command);
   }
 }
 
+/**
+ * Sets the exit code; never calls `process.exit()`.
+ *
+ * `process.exit()` terminates without draining stdout, and writes to a **pipe**
+ * are asynchronous. Measured before this was fixed: `expand((x+1)^900)` wrote
+ * 181,227 bytes to a file but only 65,728 through `$(...)` — truncated mid-number
+ * and still exit 0. That is the silent-wrong-answer failure this CLI exists to
+ * prevent, delivered by the CLI itself, on the exact `ANSWER=$(...)` pattern the
+ * agent skill teaches.
+ *
+ * Setting `exitCode` lets Node flush and exit on its own. Nothing keeps the loop
+ * open: the Giac worker child is `unref()`d by the worker host.
+ */
+function finish(code: number): void {
+  process.exitCode = code;
+}
+
 main()
   .then((code) => {
-    if (code >= 0) process.exit(code);
+    if (code !== null) finish(code);
   })
   .catch((err) => {
     console.error(`axiom-mcp: ${err instanceof Error ? err.message : String(err)}`);
-    process.exit(1);
+    finish(1);
   });

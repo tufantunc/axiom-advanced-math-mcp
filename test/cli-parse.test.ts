@@ -69,6 +69,36 @@ describe('parseArgs — compute', () => {
     expect(() => parseArgs(['compute', 'x', '--domain', 'imaginary'])).toThrow(UsageError);
   });
 
+  // Every flag is scoped to one subcommand. Accepting a foreign flag would
+  // silently drop it — the value is parsed, then never read by that command's
+  // branch — so each guard is checked rather than trusting the one that has a
+  // test. These are the nine that exist in parseArgs.
+  it.each([
+    [['compute', 'x', '--method', 'numeric'], /--method is only valid for verify/],
+    [['compute', 'x', '-o', 'f.svg'], /-o is only valid for plot/],
+    [['compute', 'x', '--variable', 't'], /--variable is only valid for plot/],
+    [['compute', 'x', '--x-min', '0'], /--x-min is only valid for plot/],
+    [['compute', 'x', '--title', 'hi'], /--title is only valid for plot/],
+    [['verify', 'x=1', '--domain', 'real'], /--domain is only valid for compute/],
+    [['verify', 'x=1', '--precision', '5'], /--precision is only valid for compute/],
+    [['verify', 'x=1', '--latex'], /--latex is only valid for compute/],
+    [['plot', 'x', '--method', 'numeric'], /--method is only valid for verify/],
+  ])('rejects %j as out of scope for its subcommand', (argv, message) => {
+    expect(() => parseArgs(argv as string[])).toThrow(message as RegExp);
+  });
+
+  it('rejects an unknown option', () => {
+    expect(() => parseArgs(['compute', 'x', '--frobnicate'])).toThrow(/unknown option/);
+  });
+
+  it('takes a negative number as a value, not as the next flag', () => {
+    // --x-min -5 must not be read as "--x-min has no value"; -q must.
+    expect(parseArgs(['plot', 'x', '--x-min', '-5']).kind).toBe('plot');
+    expect((parseArgs(['plot', 'x', '--x-min', '-5']) as { xMin?: number }).xMin).toBe(-5);
+    expect(() => parseArgs(['plot', 'x', '--x-min', '-q'])).toThrow(/needs a value/);
+    expect(() => parseArgs(['plot', 'x', '--x-min', '--json'])).toThrow(/needs a value/);
+  });
+
   it('rejects precision outside 1..50', () => {
     expect(() => parseArgs(['compute', 'x', '--precision', '0'])).toThrow(UsageError);
     expect(() => parseArgs(['compute', 'x', '--precision', '51'])).toThrow(UsageError);
@@ -180,24 +210,27 @@ describe('render', () => {
 
   // Every verify mode reads the verdict from the typed field, so the input is
   // always the JSON envelope — text mode included.
-  const verifyEnvelope = (verified: boolean) => ({
+  const verifyEnvelope = (verified: boolean, evaluated = true) => ({
     content: [
       {
-        type: 'text',
+        type: 'text' as const,
         text: JSON.stringify({
           verified,
+          evaluated,
           confidence: 'high',
           explanation: verified ? 'holds' : 'does not hold',
           checks_performed: ['Symbolic: checked'],
         }),
       },
     ],
+    isError: false,
   });
 
   it('verify quiet mode prints the boolean and reports the verdict', () => {
     expect(renderVerify(verifyEnvelope(false), 'quiet')).toEqual({
       out: 'false',
       verified: false,
+      evaluated: true,
     });
   });
 
@@ -214,6 +247,24 @@ describe('render', () => {
     expect(rendered.out).toContain('Checks performed:');
   });
 
+  it('verify reports evaluated: false separately from a false verdict', () => {
+    // The distinction the exit code rests on: "checked and refuted" (exit 2)
+    // must not be reachable from "could not be checked at all" (exit 1).
+    const rendered = renderVerify(verifyEnvelope(false, false), 'text');
+    expect(rendered.verified).toBe(false);
+    expect(rendered.evaluated).toBe(false);
+    expect(rendered.out).toContain('UNKNOWN');
+    expect(rendered.out).not.toContain('FALSE');
+  });
+
+  it('verify refuses an envelope with no verdict rather than assuming one', () => {
+    const missing = {
+      content: [{ type: 'text' as const, text: JSON.stringify({ confidence: 'high' }) }],
+      isError: false,
+    };
+    expect(() => renderVerify(missing, 'quiet')).toThrow(/no verdict/);
+  });
+
   it('plot metadata names the file it wrote', () => {
     const meta = JSON.parse(
       renderPlotMeta(
@@ -226,7 +277,8 @@ describe('render', () => {
           yMin: -1,
           yMax: 1,
           segments: 1,
-          points: 200,
+          samples: 200,
+          points: 187,
         },
         'out.svg'
       )
@@ -239,7 +291,8 @@ describe('render', () => {
       x_range: [-10, 10],
       y_range: [-1, 1],
       segments: 1,
-      points: 200,
+      samples: 200,
+      points: 187,
     });
   });
 

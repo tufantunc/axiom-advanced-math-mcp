@@ -9,7 +9,19 @@ describe('plotToSvg', () => {
     expect(r.variable).toBe('x');
     expect(r.xMin).toBe(-10);
     expect(r.xMax).toBe(10);
-    expect(r.segments).toBeGreaterThan(0);
+    expect(r.segments).toBe(1);
+    // sin is finite everywhere, so every sample is drawn.
+    expect(r.samples).toBe(200);
+    expect(r.points).toBe(200);
+  });
+
+  it('counts the points actually drawn, not the samples requested', () => {
+    // sqrt is undefined on half of [-10, 10]: the sample count is fixed, but
+    // roughly half the samples produce no number and are not drawn. The
+    // metadata must report what was drawn rather than the constant.
+    const r = plotToSvg({ expression: 'sqrt(x)', xMin: -10, xMax: 10 });
+    expect(r.samples).toBe(200);
+    expect(r.points).toBeLessThan(r.samples);
     expect(r.points).toBeGreaterThan(0);
   });
 

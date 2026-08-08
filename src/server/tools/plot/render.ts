@@ -1,8 +1,5 @@
-import { evaluateFunction } from './evaluator.js';
+import { evaluateFunction, DEFAULT_PLOT_POINTS } from './evaluator.js';
 import { renderSvg } from './svg-renderer.js';
-
-/** How many samples `evaluateFunction` takes across the x range. */
-const PLOT_POINTS = 200;
 
 export interface PlotArgs {
   expression: string;
@@ -25,6 +22,9 @@ export interface PlotResult {
   yMin: number;
   yMax: number;
   segments: number;
+  /** x values sampled across the range. */
+  samples: number;
+  /** Of those samples, how many produced a finite y and were drawn. */
   points: number;
 }
 
@@ -47,7 +47,7 @@ export function plotToSvg(args: PlotArgs): PlotResult {
     throw new Error('x_min must be less than x_max');
   }
 
-  const evalResult = evaluateFunction(args.expression, variable, xMin, xMax, PLOT_POINTS);
+  const evalResult = evaluateFunction(args.expression, variable, xMin, xMax, DEFAULT_PLOT_POINTS);
   const yMin = args.yMin ?? evalResult.yMin;
   const yMax = args.yMax ?? evalResult.yMax;
 
@@ -71,6 +71,10 @@ export function plotToSvg(args: PlotArgs): PlotResult {
     yMin,
     yMax,
     segments: evalResult.segments.length,
-    points: PLOT_POINTS,
+    samples: DEFAULT_PLOT_POINTS,
+    // Counted, not assumed: a function with poles or a restricted domain draws
+    // fewer points than it samples, and reporting the sample count as `points`
+    // would describe a denser curve than was actually rendered.
+    points: evalResult.segments.reduce((n, s) => n + s.points.length, 0),
   };
 }
