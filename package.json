@@ -1,6 +1,6 @@
 {
   "name": "axiom-math",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Exact symbolic math for LLMs: integrals, equations, matrices, and claim verification via Giac/Xcas",
   "mcpName": "io.github.tufantunc/axiom-math",
   "type": "module",
