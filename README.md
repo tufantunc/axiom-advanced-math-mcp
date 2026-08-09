@@ -5,6 +5,7 @@
 [![Node.js >=20](https://img.shields.io/badge/Node.js->=20-green.svg)](https://nodejs.org/)
 [![MCP](https://img.shields.io/badge/Model_Context_Protocol-blue)](https://modelcontextprotocol.io/)
 [![CI](https://github.com/tufantunc/axiom-advanced-math-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/tufantunc/axiom-advanced-math-mcp/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/tufantunc/axiom-advanced-math-mcp/graph/badge.svg)](https://codecov.io/gh/tufantunc/axiom-advanced-math-mcp)
 
 Exact symbolic and numerical mathematics for LLMs — a real computer algebra
 system (Giac/Xcas) behind the Model Context Protocol, and behind a shell

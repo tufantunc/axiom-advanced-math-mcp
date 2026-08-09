@@ -42,8 +42,26 @@ jobs:
           cache: npm
       - run: npm ci
 
+      # test:coverage runs the same suite as `npm test` and additionally writes
+      # coverage/lcov.info, which the Codecov step below uploads.
       - name: Unit tests
-        run: npm test
+        run: npm run test:coverage
+
+      # One upload, not three: the matrix runs the same tests on each Node
+      # version, so uploading from all of them would just be the same report
+      # three times. 22 is the middle version and the one the static job uses.
+      #
+      # fail_ci_if_error is on deliberately. A silent upload failure leaves the
+      # README badge showing a stale number, which is the failure mode this
+      # project has already cleaned up twice — better a red build than a badge
+      # that quietly lies. Flip it if Codecov outages prove noisy.
+      - name: Upload coverage to Codecov
+        if: matrix.node == 22
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage/lcov.info
+          fail_ci_if_error: true
 
       # Builds first and exercises the shipped dist/ — argument dispatch, the
       # MCP handshake, exit codes. The unit suite cannot see any of that.
