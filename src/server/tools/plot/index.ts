@@ -21,12 +21,16 @@ const plotFunctionSchema = {
 export function registerPlotTools(server: McpServer): void {
   server.tool(
     'plot',
-    'Plot a mathematical function as an SVG graph. Returns an image showing the function curve with axes, grid, and labels.\n\n' +
+    'Plot a single-variable function as a graph. Returns a base64-encoded SVG image with axes, grid, ' +
+      'labels and asymptote detection, plus a text caption.\n\n' +
       'Examples:\n' +
       '- plot sin(x) from -2*pi to 2*pi\n' +
       '- plot x^2 - 3*x + 1 from -5 to 5\n' +
       '- plot exp(-x^2) (Gaussian curve)\n' +
-      '- plot 1/x with asymptote detection',
+      '- plot 1/x (poles are split into separate segments rather than joined)\n\n' +
+      'Samples the function numerically, so it draws the shape of an expression — it does not solve or ' +
+      'simplify it. Use `compute` for the mathematics and `plot` to show it. Points where the function ' +
+      'is undefined are dropped rather than interpolated.',
     plotFunctionSchema,
     async (args) => {
       try {

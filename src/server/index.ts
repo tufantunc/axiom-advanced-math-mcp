@@ -44,6 +44,8 @@ Optional parameters:
 The "verify" tool checks mathematical claims:
   "sin(x)^2 + cos(x)^2 = 1"     — identity check
   "x=2 satisfies x^2-4=0"        — solution check
+  Read "evaluated" before "verified": evaluated=false means the claim could not
+  be checked at all, so verified=false there is "unknown", not "disproved".
 
 The "plot" tool renders function graphs as SVG images.`,
     }
@@ -54,10 +56,17 @@ The "plot" tool renders function graphs as SVG images.`,
   // --- compute: single gateway for ALL math computations ---
   server.tool(
     'compute',
-    'Solve any math problem: equations, calculus, algebra, matrices, combinatorics, ' +
-      'probability, statistics, geometry, number theory, and more. ' +
-      'Pass a CAS-style problem string (e.g., "solve(x^2-4=0, x)", "diff(x^3, x)", ' +
-      '"det([[1,2],[3,4]])", "C(10,3)", "2+3*sin(pi/4)") or any Giac/Xcas expression.',
+    'Compute an exact answer to a mathematics problem: equation solving, calculus, linear algebra, ' +
+      'combinatorics, probability and statistics, number theory, geometry, differential equations, ' +
+      'transforms and series. Runs a real computer algebra system (Giac/Xcas) in this process — ' +
+      'answers are computed rather than recalled, with no network call and no API key.\n\n' +
+      'Pass one CAS-style problem string; the `problem` parameter lists the verbs. Anything it does ' +
+      'not recognise is evaluated as a raw Giac/Xcas expression, so valid Giac syntax always works.\n\n' +
+      'Results are exact by default — fractions and radicals are kept rather than rounded. Ask for ' +
+      'domain "numeric" or set `precision` when you want a decimal. Where it can, the tool re-checks ' +
+      'its own answer and reports that check alongside the result.\n\n' +
+      'When you already have an answer and want it confirmed, use `verify` instead: recomputing here ' +
+      'and comparing is not an independent check.',
     computeSchema.shape,
     computeTool
   );
@@ -65,9 +74,14 @@ The "plot" tool renders function graphs as SVG images.`,
   // --- verify: independent result verification ---
   server.tool(
     'verify',
-    'Verify a mathematical claim using symbolic and/or numeric checks. ' +
-      'Supports identity verification (e.g., "sin(x)^2+cos(x)^2 = 1"), ' +
-      'solution checking (e.g., "x=2 satisfies x^2-4=0"), and computation assertions.',
+    'Independently check whether a mathematical claim is true. Use it to confirm an answer — yours or ' +
+      'one from `compute` — instead of recomputing and hoping the second attempt agrees.\n\n' +
+      'Handles identities ("sin(x)^2+cos(x)^2 = 1"), solution claims ("x=2 satisfies x^2-4=0") and ' +
+      'computation assertions ("diff(x^3, x) = 3*x^2"), checked symbolically, numerically, or both.\n\n' +
+      'The verdict has three outcomes, not two. Read `evaluated` before `verified`: when `evaluated` is ' +
+      'false nothing could be checked — the claim did not parse, or the CAS could not evaluate it — so ' +
+      '`verified: false` there means "unknown", not "disproved". Treating the two as the same turns a ' +
+      'syntax error into a refutation.',
     verifySchema.shape,
     verifyTool
   );
