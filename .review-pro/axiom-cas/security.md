@@ -28,6 +28,11 @@ expressions. Two independent evaluators sit behind the `compute`, `verify` and
   timeout in front of it. The Giac path is protected by
   `AXIOM_EVAL_TIMEOUT_MS` in `worker-host.ts`; the mathjs path has no such
   bound, so a pathological mathjs expression blocks the event loop directly.
+  The same gap covers **preprocessing regexes**, which run before either
+  evaluator: `/(\d+\.?\d*)\s*°/g` stalled the process for 208 s on an 8 KB
+  input that was well inside `MAX_EXPRESSION_LENGTH`. Treat a regex over caller
+  input as an unauthenticated denial-of-service surface and measure it — the
+  method and the threshold are in the performance pack.
 - **Error text echoed back to the caller** that contains a filesystem path, a
   stack frame, or raw engine internals. Tool errors and the JSON-RPC `-32603`
   envelope must stay opaque.
@@ -52,5 +57,7 @@ expressions. Two independent evaluators sit behind the `compute`, `verify` and
 - A path from tool input to an unrestricted `evaluate()` that can reach
   `import`/`createUnit`/constructor access: **Critical**.
 - Unnormalized interpolation into a Giac expression string: **High**.
+- A regex over caller input measuring over ~1 s at the input cap: **High** on
+  the HTTP path, which is unauthenticated by design.
 - Removing or weakening the body limit or Host allowlist on `/mcp`: **High**.
 - Engine internals or filesystem paths in a returned error: **Medium**.
