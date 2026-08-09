@@ -22,6 +22,7 @@ import 'dotenv/config';
 import { writeFile, mkdir } from 'fs/promises';
 import path from 'path';
 import { buildConfig } from './config.js';
+import { collectProvenance } from './provenance.js';
 import { createProvider } from './providers/index.js';
 import { loadGSM8K } from './datasets/gsm8k.js';
 import { loadMATH, activeMathLevels } from './datasets/math.js';
@@ -421,6 +422,7 @@ async function main(): Promise<void> {
     date: runDate,
     model: `${config.provider}/${config.model}`,
     mode: config.mode,
+    provenance: collectProvenance(config.features, config.selfConsistency),
     totalProblems,
     datasets,
     toolStats,

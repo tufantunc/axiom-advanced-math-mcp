@@ -3,6 +3,7 @@ import path from 'path';
 import type { BenchmarkConfig } from '../config.js';
 import type { ProblemDetail } from '../problem-detail.js';
 import { diagnoseRegression, type RegressionCause } from '../problem-detail.js';
+import { formatProvenance, type RunProvenance } from '../provenance.js';
 
 export interface DatasetResult {
   name: string;
@@ -35,6 +36,11 @@ export interface BenchmarkReport {
   date: string;
   model: string;
   mode: string;
+  /**
+   * How the run was configured. Without this a result file cannot be compared
+   * with another one — see provenance.ts for what that cost us.
+   */
+  provenance: RunProvenance;
   totalProblems: number;
   datasets: DatasetResult[];
   toolStats: ToolStats[];
@@ -86,6 +92,14 @@ function renderMarkdown(r: BenchmarkReport): string {
     `**Date:** ${r.date.slice(0, 10)} | **Model:** ${r.model} | **Mode:** ${r.mode} (${r.totalProblems} problems)`,
   );
   lines.push('');
+  lines.push(formatProvenance(r.provenance));
+  lines.push('');
+  if (r.provenance.dirty) {
+    lines.push(
+      '> Run against an uncommitted working tree. These numbers cannot be reproduced from the repository and should not be quoted as a project result.',
+    );
+    lines.push('');
+  }
 
   // Summary table
   lines.push('## Summary');
