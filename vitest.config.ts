@@ -10,7 +10,10 @@ export default defineConfig({
       // lcov is what SonarQube ingests; the others are for reading locally.
       reporter: ['text', 'json', 'html', 'lcov'],
       include: ['src/**/*.ts'],
-      exclude: ['src/**/*.test.ts', 'src/**/*.spec.ts']
+      // .d.ts files carry no executable lines, so they contribute nothing but
+      // noise: SonarQube refuses to map them ("could not resolve 3 file paths")
+      // and Codecov lists three permanent 0-line entries.
+      exclude: ['src/**/*.test.ts', 'src/**/*.spec.ts', 'src/**/*.d.ts']
     },
     include: ['test/**/*.test.ts'],
     exclude: [
