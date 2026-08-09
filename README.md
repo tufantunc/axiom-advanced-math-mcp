@@ -11,6 +11,8 @@ Exact symbolic and numerical mathematics for LLMs — a real computer algebra
 system (Giac/Xcas) behind the Model Context Protocol, and behind a shell
 command. Published as **`axiom-math`**.
 
+![Axiom catching a wrong derivative, then computing an exact integral](docs/demo.gif)
+
 ## Quick start
 
 As a CLI, straight away:
