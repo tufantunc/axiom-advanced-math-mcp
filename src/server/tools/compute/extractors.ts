@@ -221,7 +221,8 @@ export function extractTaylor(problem: string): RouteResult {
   const expression = parts[0] || '';
   // taylor(expr, var=point, order) or taylor(expr, var, point, order)
   let variable = parts[1] || guessVariable(expression);
-  let point = '0';
+  // No initialiser: both branches below assign it, so '0' was never read.
+  let point: string;
   let order: number | undefined;
 
   if (variable.includes('=')) {

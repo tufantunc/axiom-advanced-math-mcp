@@ -33,7 +33,10 @@ export async function tryExactResult(
     try {
       let giacExpr = originalExpression;
       if (giacExpr.includes('°')) {
-        giacExpr = giacExpr.replace(/(\d+\.?\d*)\s*°/g, '($1*pi/180)');
+        // `\d+(?:\.\d*)?` rather than `\d+\.?\d*`: the latter can split a run of
+        // digits many ways, so a long number with no degree sign after it
+        // backtracks through all of them. Same strings, one way to match them.
+        giacExpr = giacExpr.replace(/(\d+(?:\.\d*)?)\s*°/g, '($1*pi/180)');
       }
       const giacResult = await giacEngine.evaluate(giacExpr);
       if (

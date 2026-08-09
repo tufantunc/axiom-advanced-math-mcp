@@ -1,7 +1,6 @@
 import { route } from './router.js';
 import { dispatch } from './dispatcher.js';
 import { normalize } from './normalize.js';
-import { computeSchema } from './schema.js';
 import type { ComputeEnvelope } from './types.js';
 import { applyHygiene } from './hygiene.js';
 import { giacEngine } from '../../giac/index.js';

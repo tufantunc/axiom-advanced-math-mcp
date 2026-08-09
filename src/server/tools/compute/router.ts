@@ -59,7 +59,12 @@ function hasMatrixArg(problem: string): boolean {
 /** Check if problem looks like multiple equations (system). */
 function isSystemOfEquations(problem: string): boolean {
   // [eq1, eq2, ...] format
-  if (/^\s*\[.*,.*\]\s*$/.test(problem) && (problem.includes('=') || problem.includes(','))) {
+  //
+  // `[^,]*` rather than `.*` before the comma: two greedy `.*` either side of a
+  // literal makes the split ambiguous, so an input that does not match backtracks
+  // through every position. Stopping at the first comma is deterministic and
+  // accepts exactly the same strings.
+  if (/^\s*\[[^,]*,.*\]\s*$/.test(problem) && (problem.includes('=') || problem.includes(','))) {
     const eqCount = (problem.match(/=/g) || []).length;
     if (eqCount >= 2) return true;
   }
@@ -120,7 +125,7 @@ const rules: RouterRule[] = [
       // Single equation with = that isn't a system and doesn't match other patterns
       if (/=/.test(p) && !isSystemOfEquations(p)) {
         // Exclude ODE patterns: y', y'', dy/dx
-        if (/y['']/.test(p) || /dy\s*\/\s*dx/.test(p) || /y''\s*[+=]/.test(p)) return false;
+        if (/y'/.test(p) || /dy\s*\/\s*dx/.test(p) || /y''\s*[+=]/.test(p)) return false;
         // Exclude patterns that belong to other handlers
         if (
           startsWith(
@@ -232,7 +237,7 @@ const rules: RouterRule[] = [
     name: 'calculus:solve_ode',
     test: (p) =>
       startsWith(p, 'desolve', 'dsolve', 'odesolve') ||
-      /y['']/.test(p) ||
+      /y'/.test(p) ||
       /dy\s*\/\s*dx/.test(p) ||
       /y''\s*[+=]/.test(p),
     extract: extractOde,

@@ -153,3 +153,7 @@ docs/business/
 
 # Subagent-driven-development scratch
 .superpowers/
+
+# SonarQube — local-only analysis config and scanner state
+sonar-project.properties
+.scannerwork/
