@@ -11,7 +11,11 @@ Exact symbolic and numerical mathematics for LLMs — a real computer algebra
 system (Giac/Xcas) behind the Model Context Protocol, and behind a shell
 command. Published as **`axiom-math`**.
 
-![Axiom catching a wrong derivative, then computing an exact integral](docs/demo.gif)
+<!-- Absolute raw URL on purpose. npm rewrites relative README paths to
+     github.com/.../blob/HEAD/..., which serves text/html for a .gif and would
+     render as a broken image on the package page. -->
+
+![Axiom catching a wrong derivative, then computing an exact integral](https://raw.githubusercontent.com/tufantunc/axiom-advanced-math-mcp/main/docs/demo.gif)
 
 ## Quick start
 
