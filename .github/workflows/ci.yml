@@ -26,14 +26,22 @@ jobs:
       - run: npm run format:check
 
   test:
-    name: tests (node ${{ matrix.node }})
-    runs-on: ubuntu-latest
+    name: tests (node ${{ matrix.node }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest]
         # 20 is the engines floor and the one most likely to break; the others
         # are current and next.
         node: [20, 22, 24]
+        include:
+          # One Windows leg rather than a full 3x3. What can plausibly differ
+          # there is platform-specific — the forked Giac worker, path joins in
+          # the WASM asset copy, and npm's bin shim — not the Node version, so
+          # a second Windows row would re-test the same surface.
+          - os: windows-latest
+            node: 22
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -47,16 +55,17 @@ jobs:
       - name: Unit tests
         run: npm run test:coverage
 
-      # One upload, not three: the matrix runs the same tests on each Node
-      # version, so uploading from all of them would just be the same report
-      # three times. 22 is the middle version and the one the static job uses.
+      # One upload, not four: every leg runs the same tests, so uploading from
+      # all of them would just be the same report repeated. Pinned to the Linux
+      # leg specifically — `matrix.node == 22` alone would now also match the
+      # Windows row and upload twice.
       #
       # fail_ci_if_error is on deliberately. A silent upload failure leaves the
       # README badge showing a stale number, which is the failure mode this
       # project has already cleaned up twice — better a red build than a badge
       # that quietly lies. Flip it if Codecov outages prove noisy.
       - name: Upload coverage to Codecov
-        if: matrix.node == 22
+        if: matrix.os == 'ubuntu-latest' && matrix.node == 22
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -70,14 +79,19 @@ jobs:
 
       # The tarball is the actual product. Packing it here catches a broken
       # `files` list or a missing WASM asset before a tag does.
+      #
+      # `shell: bash` and workspace-relative paths, both for Windows: PowerShell
+      # is the default shell there, and $RUNNER_TEMP is a backslash path that
+      # Git Bash mangles when globbed.
       - name: Pack and smoke-test the tarball
+        shell: bash
         run: |
           set -euo pipefail
-          npm pack --pack-destination "$RUNNER_TEMP"
-          mkdir -p "$RUNNER_TEMP/consumer"
-          cd "$RUNNER_TEMP/consumer"
+          npm pack --pack-destination .
+          mkdir -p consumer-check
+          cd consumer-check
           npm init -y > /dev/null
-          npm install "$RUNNER_TEMP"/axiom-math-*.tgz
+          npm install ../axiom-math-*.tgz
           test "$(./node_modules/.bin/axiom-math compute -q '2+2')" = "4"
           test "$(./node_modules/.bin/axiom-math compute -q 'integrate(sin(x)^3,x)')" = "-cos(x)+cos(x)^3/3"
           ./node_modules/.bin/axiom-math verify -q 'diff(x^3,x) = 3*x^2'
