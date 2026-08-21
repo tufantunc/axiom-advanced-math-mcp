@@ -22,7 +22,6 @@ export function detectNaturalLanguage(expression: string): boolean {
 
 export interface QuickCalcOptions {
   expression: string;
-  units?: 'none' | 'auto' | 'si' | 'us';
   precision?: number;
   format?: 'text' | 'latex' | 'json';
 }
@@ -30,8 +29,6 @@ export interface QuickCalcOptions {
 export interface QuickCalcResult {
   result: number | string;
   latex?: string;
-  units?: string;
-  steps?: string[];
 }
 
 export class QuickCalcService {

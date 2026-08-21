@@ -12,7 +12,6 @@ export async function quickCalcHandler(args: Record<string, unknown>) {
     const service = new QuickCalcService();
     const opts: QuickCalcOptions = {
       expression,
-      units: args.units as QuickCalcOptions['units'],
       precision: args.precision as number | undefined,
       format: args.format as QuickCalcOptions['format'],
     };
@@ -28,7 +27,6 @@ export async function quickCalcHandler(args: Record<string, unknown>) {
           result: exact.exact,
           decimal: String(numericResult),
           latex: exact.latex,
-          notes: result.units ? [`Units: ${result.units}`] : undefined,
         });
       }
     }
@@ -36,7 +34,6 @@ export async function quickCalcHandler(args: Record<string, unknown>) {
     return formatToolResponse({
       result: String(result.result),
       latex: result.latex,
-      notes: result.units ? [`Units: ${result.units}`] : undefined,
     });
   } catch (error) {
     return formatErrorResponse(error instanceof Error ? error.message : String(error));

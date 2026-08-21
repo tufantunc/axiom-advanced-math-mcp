@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { splitTopLevel, stripQuotes, stripOrderTerm, listToSet } from '../src/server/tools/output-cleanup.js';
+import {
+  splitTopLevel,
+  stripQuotes,
+  stripOrderTerm,
+  listToSet,
+  stripDisplayMode,
+} from '../src/server/tools/output-cleanup.js';
 
 describe('splitTopLevel', () => {
   it('splits at top-level separator only', () => {
@@ -69,5 +75,33 @@ describe('listToSet', () => {
   });
   it('returns the raw string when not a list', () => {
     expect(listToSet('x^2+1')).toBe('x^2+1');
+  });
+});
+
+describe('stripDisplayMode', () => {
+  // Tested on literals, not through a CAS call: the bundled Giac returns
+  // \frac for simple fractions, so a live-path test cannot supply this
+  // function's input and would assert an empty set.
+  it('rewrites \\dfrac to \\frac', () => {
+    expect(stripDisplayMode('\\dfrac{2}{17}')).toBe('\\frac{2}{17}');
+  });
+
+  it('removes \\displaystyle and \\textstyle along with trailing space', () => {
+    expect(stripDisplayMode('\\displaystyle x^2')).toBe('x^2');
+    expect(stripDisplayMode('\\textstyle   y')).toBe('y');
+  });
+
+  it('handles several wrappers in one string', () => {
+    expect(stripDisplayMode('\\displaystyle \\dfrac{1}{2}+\\dfrac{1}{3}')).toBe(
+      '\\frac{1}{2}+\\frac{1}{3}'
+    );
+  });
+
+  it('leaves already-normalized LaTeX untouched', () => {
+    expect(stripDisplayMode('\\frac{2}{17}')).toBe('\\frac{2}{17}');
+  });
+
+  it('does not touch \\dfracsomething (word-boundary anchored)', () => {
+    expect(stripDisplayMode('\\dfracx')).toBe('\\dfracx');
   });
 });

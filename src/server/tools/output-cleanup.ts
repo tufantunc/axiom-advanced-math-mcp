@@ -34,6 +34,23 @@ export function stripQuotes(s: string): string {
 }
 
 /**
+ * Drop LaTeX display-mode wrappers so the emitted LaTeX renders the same
+ * inline as it does in a block: `\dfrac` -> `\frac`, and `\displaystyle` /
+ * `\textstyle` removed.
+ *
+ * Whether Giac emits these depends on its build and settings — the bundled one
+ * returns `\frac` for simple fractions — so this is a normalizer that may be a
+ * no-op on any given result. It is unit-tested on literals rather than through
+ * a CAS call for exactly that reason.
+ */
+export function stripDisplayMode(latex: string): string {
+  return latex
+    .replace(/\\dfrac\b/g, '\\frac')
+    .replace(/\\displaystyle\s*/g, '')
+    .replace(/\\textstyle\s*/g, '');
+}
+
+/**
  * Remove the trailing big-O remainder term (e.g. `+x^5*order_size(x)`) that
  * Giac appends to series/taylor results. The remainder is always the last
  * additive term, so we cut from the last depth-0 +/- operator before the

@@ -27,7 +27,7 @@
     "lint:fix": "oxlint src --fix",
     "format": "prettier --write \"src/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\"",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
     "benchmark": "cd benchmark && npm run quick",
     "benchmark:zai": "cd benchmark && npm run quick:zai",
     "benchmark:openrouter": "cd benchmark && npm run quick:openrouter",

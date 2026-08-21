@@ -1,11 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { parseArgs, UsageError } from '../src/cli/parse.js';
-import {
-  resultText,
-  renderCompute,
-  renderVerify,
-  renderPlotMeta,
-} from '../src/cli/render.js';
+import type { ComputeCommand, PlotCommand } from '../src/cli/parse.js';
+import { resultText, renderCompute, renderVerify, renderPlotMeta } from '../src/cli/render.js';
 
 describe('parseArgs — dispatch', () => {
   it('treats no arguments as the MCP server', () => {
@@ -56,9 +52,9 @@ describe('parseArgs — compute', () => {
   });
 
   it('maps the output flags', () => {
-    expect(parseArgs(['compute', 'x', '--json']).output).toBe('json');
-    expect(parseArgs(['compute', 'x', '--latex']).output).toBe('latex');
-    expect(parseArgs(['compute', 'x', '-q']).output).toBe('quiet');
+    expect((parseArgs(['compute', 'x', '--json']) as ComputeCommand).output).toBe('json');
+    expect((parseArgs(['compute', 'x', '--latex']) as ComputeCommand).output).toBe('latex');
+    expect((parseArgs(['compute', 'x', '-q']) as ComputeCommand).output).toBe('quiet');
   });
 
   it('rejects two output modes together', () => {
@@ -148,9 +144,22 @@ describe('parseArgs — verify', () => {
 describe('parseArgs — plot', () => {
   it('accepts the range, size and output path', () => {
     const c = parseArgs([
-      'plot', 'sin(x)', '-o', 'out.svg',
-      '--variable', 't', '--x-min', '-1', '--x-max', '1',
-      '--width', '800', '--height', '600', '--title', 'hi',
+      'plot',
+      'sin(x)',
+      '-o',
+      'out.svg',
+      '--variable',
+      't',
+      '--x-min',
+      '-1',
+      '--x-max',
+      '1',
+      '--width',
+      '800',
+      '--height',
+      '600',
+      '--title',
+      'hi',
     ]);
     expect(c).toEqual({
       kind: 'plot',
@@ -171,7 +180,9 @@ describe('parseArgs — plot', () => {
   });
 
   it('accepts -q together with -o', () => {
-    expect(parseArgs(['plot', 'sin(x)', '-o', 'f.svg', '-q']).output).toBe('quiet');
+    expect((parseArgs(['plot', 'sin(x)', '-o', 'f.svg', '-q']) as PlotCommand).output).toBe(
+      'quiet'
+    );
   });
 
   it('rejects a non-numeric range value', () => {
@@ -183,16 +194,23 @@ describe('render', () => {
   const envelope = {
     content: [
       {
-        type: 'text',
+        type: 'text' as const,
         text: JSON.stringify({ success: true, display: '{-2, 2}', latex: '\\{-2,2\\}' }),
       },
     ],
+    isError: false,
   };
 
   it('joins content blocks into text', () => {
-    expect(resultText({ content: [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }] })).toBe(
-      'a\nb'
-    );
+    expect(
+      resultText({
+        content: [
+          { type: 'text' as const, text: 'a' },
+          { type: 'text' as const, text: 'b' },
+        ],
+        isError: false,
+      })
+    ).toBe('a\nb');
   });
 
   it('quiet mode prints the envelope display field, not scraped text', () => {
@@ -204,7 +222,7 @@ describe('render', () => {
   });
 
   it('text mode passes the handler text through', () => {
-    const r = { content: [{ type: 'text', text: 'Result: 4' }] };
+    const r = { content: [{ type: 'text' as const, text: 'Result: 4' }], isError: false };
     expect(renderCompute(r, 'text')).toBe('Result: 4');
   });
 
@@ -298,22 +316,59 @@ describe('render', () => {
 
   it('renderCompute in quiet mode with non-JSON input throws a legible error', () => {
     const nonJsonResult = {
-      content: [{ type: 'text', text: 'Error: something went wrong' }],
+      content: [{ type: 'text' as const, text: 'Error: something went wrong' }],
+      isError: false,
     };
     expect(() => renderCompute(nonJsonResult, 'quiet')).toThrow(/something went wrong/);
   });
 
   it('renderVerify in quiet mode with non-JSON input throws a legible error', () => {
     const nonJsonResult = {
-      content: [{ type: 'text', text: 'Error: something went wrong' }],
+      content: [{ type: 'text' as const, text: 'Error: something went wrong' }],
+      isError: false,
     };
     expect(() => renderVerify(nonJsonResult, 'quiet')).toThrow(/something went wrong/);
   });
 
   it('renderCompute in text mode with non-JSON input returns it unchanged', () => {
     const nonJsonResult = {
-      content: [{ type: 'text', text: 'Error: something went wrong' }],
+      content: [{ type: 'text' as const, text: 'Error: something went wrong' }],
+      isError: false,
     };
     expect(renderCompute(nonJsonResult, 'text')).toBe('Error: something went wrong');
+  });
+});
+
+describe('parse — each range flag lands in its own field', () => {
+  // These six flags share one `switch` case and were then re-dispatched by a
+  // second if/else cascade on the same token. Only --x-min was ever asserted
+  // in isolation, so a mis-wired arm (e.g. --y-max writing height) would have
+  // been invisible. One assertion per flag, so the mapping is pinned per arm.
+  const cases: [string, keyof PlotCommand, number][] = [
+    ['--x-min', 'xMin', -3],
+    ['--x-max', 'xMax', 7],
+    ['--y-min', 'yMin', -11],
+    ['--y-max', 'yMax', 13],
+    ['--width', 'width', 640],
+    ['--height', 'height', 480],
+  ];
+
+  it.each(cases)('%s sets %s and nothing else', (flag, field, value) => {
+    const cmd = parseArgs(['plot', 'sin(x)', flag, String(value)]) as PlotCommand;
+    expect(cmd.kind).toBe('plot');
+    expect(cmd[field]).toBe(value);
+    // Every other range field stays untouched — this is what catches a
+    // cascade arm assigning the wrong variable.
+    for (const [, other] of cases) {
+      if (other !== field) expect(cmd[other], `${flag} also set ${other}`).toBeUndefined();
+    }
+  });
+
+  it('accepts all six together, each in its own field', () => {
+    // Driven off the same table, so a seventh range flag needs one edit here,
+    // not three.
+    const argv = cases.flatMap(([flag, , value]) => [flag, String(value)]);
+    const cmd = parseArgs(['plot', 'sin(x)', ...argv]) as PlotCommand;
+    expect(cases.map(([, field]) => cmd[field])).toEqual(cases.map(([, , value]) => value));
   });
 });

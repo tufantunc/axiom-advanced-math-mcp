@@ -161,6 +161,32 @@ export function topicUsage(topic?: 'compute' | 'verify' | 'plot'): string {
   return USAGE;
 }
 
+/**
+ * Range/size flag -> the PlotCommand field it sets.
+ *
+ * `satisfies Record<string, keyof PlotCommand>` is what makes a mistyped field
+ * name a compile error; RangeField is then derived from this map, so the field
+ * names have exactly one author.
+ */
+const RANGE_FIELDS = {
+  '--x-min': 'xMin',
+  '--x-max': 'xMax',
+  '--y-min': 'yMin',
+  '--y-max': 'yMax',
+  '--width': 'width',
+  '--height': 'height',
+} as const satisfies Record<string, keyof PlotCommand>;
+
+type RangeFlag = keyof typeof RANGE_FIELDS;
+type RangeField = (typeof RANGE_FIELDS)[RangeFlag];
+
+// Object.hasOwn, not `in`: `in` walks the prototype chain, so `toString` and
+// `constructor` would test true and index RANGE_FIELDS to a function. Bare words
+// are already rejected upstream as an extra argument, so that is unreachable
+// today — but the predicate should be correct on its own terms rather than
+// relying on a guard elsewhere in the function.
+const isRangeFlag = (arg: string): arg is RangeFlag => Object.hasOwn(RANGE_FIELDS, arg);
+
 const DOMAINS = ['real', 'complex', 'numeric', 'exact'];
 const METHODS = ['numeric', 'symbolic', 'both'];
 
@@ -222,12 +248,7 @@ export function parseArgs(argv: string[]): Command {
   let method: string | undefined;
   let out: string | undefined;
   let variable: string | undefined;
-  let xMin: number | undefined;
-  let xMax: number | undefined;
-  let yMin: number | undefined;
-  let yMax: number | undefined;
-  let width: number | undefined;
-  let height: number | undefined;
+  const range: Partial<Record<RangeField, number>> = {};
   let title: string | undefined;
 
   let sawDoubleDash = false;
@@ -296,27 +317,21 @@ export function parseArgs(argv: string[]): Command {
         if (kind !== 'plot') throw new UsageError('--variable is only valid for plot');
         variable = requireValue(arg, rest[++i]);
         break;
-      case '--x-min':
-      case '--x-max':
-      case '--y-min':
-      case '--y-max':
-      case '--width':
-      case '--height': {
-        if (kind !== 'plot') throw new UsageError(`${arg} is only valid for plot`);
-        const n = parseNumber(arg, requireValue(arg, rest[++i]));
-        if (arg === '--x-min') xMin = n;
-        else if (arg === '--x-max') xMax = n;
-        else if (arg === '--y-min') yMin = n;
-        else if (arg === '--y-max') yMax = n;
-        else if (arg === '--width') width = n;
-        else height = n;
-        break;
-      }
       case '--title':
         if (kind !== 'plot') throw new UsageError('--title is only valid for plot');
         title = requireValue(arg, rest[++i]);
         break;
       default:
+        // Range/size flags are dispatched off RANGE_FIELDS rather than their own
+        // case labels, so that table is the single author of both which flags
+        // exist and which field each one sets. With case labels, drift was only
+        // half-caught: a label with no entry failed to compile, but an entry
+        // with no label compiled clean and silently did nothing.
+        if (isRangeFlag(arg)) {
+          if (kind !== 'plot') throw new UsageError(`${arg} is only valid for plot`);
+          range[RANGE_FIELDS[arg]] = parseNumber(arg, requireValue(arg, rest[++i]));
+          break;
+        }
         throw new UsageError(`unknown option: ${arg}`);
     }
   }
@@ -340,16 +355,12 @@ export function parseArgs(argv: string[]): Command {
   if (output === 'quiet' && out === undefined) {
     throw new UsageError('-q requires -o for plot: without a file there is no path to print');
   }
-  const cmd: PlotCommand = { kind, output };
+  // `range` holds only the flags actually seen, so spreading it keeps the
+  // absent-key style the rest of this function uses.
+  const cmd: PlotCommand = { kind, output, ...range };
   if (positional !== undefined) cmd.expression = positional;
   if (out !== undefined) cmd.out = out;
   if (variable !== undefined) cmd.variable = variable;
-  if (xMin !== undefined) cmd.xMin = xMin;
-  if (xMax !== undefined) cmd.xMax = xMax;
-  if (yMin !== undefined) cmd.yMin = yMin;
-  if (yMax !== undefined) cmd.yMax = yMax;
-  if (width !== undefined) cmd.width = width;
-  if (height !== undefined) cmd.height = height;
   if (title !== undefined) cmd.title = title;
   return cmd;
 }

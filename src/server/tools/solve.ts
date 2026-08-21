@@ -1,6 +1,6 @@
 import { giacEngine } from '../giac/index.js';
 import { formatErrorResponse } from './response-formatter.js';
-import { validateExpression } from './symbolic/validator.js';
+import { validateExpression } from './expression-validator.js';
 import { evalWithLatex } from './giac-eval.js';
 import { listToSet, splitTopLevel } from './output-cleanup.js';
 import { verifySolveSet, verifySystem, type VerificationResult } from './self-verify.js';

@@ -1,6 +1,6 @@
 import { evalWithLatex } from '../giac-eval.js';
 import { formatErrorResponse } from '../response-formatter.js';
-import { validateExpression } from '../symbolic/validator.js';
+import { validateExpression } from '../expression-validator.js';
 
 const VECTOR_OPS = new Set(['divergence', 'curl', 'jacobian']);
 

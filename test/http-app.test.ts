@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { createHttpApp, MAX_MCP_BODY_BYTES } from '../src/server/transports/http-app.js';
 import { createServer } from '../src/server/index.js';
-import { evaluationCache } from '../src/server/tools/symbolic/cache.js';
+import { evaluationCache } from '../src/server/giac/cache.js';
 import { VERSION } from '../src/version.js';
 
 /**

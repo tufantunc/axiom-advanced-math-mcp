@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createMutex, withGiacSession } from '../src/server/giac/session-lock.js';
-import { isCacheable } from '../src/server/tools/symbolic/cache.js';
+import { isCacheable } from '../src/server/giac/cache.js';
 
 describe('createMutex', () => {
   it('serializes holders — a second acquire waits for the first release', async () => {

@@ -1,7 +1,7 @@
 import { giacEngine } from '../../giac/index.js';
 import { formatToolResponse, formatErrorResponse } from '../response-formatter.js';
-import { validateExpression } from '../symbolic/validator.js';
-import { stripQuotes } from '../output-cleanup.js';
+import { validateExpression } from '../expression-validator.js';
+import { toLatex } from '../giac-eval.js';
 
 /** Build a Giac substitution list "[x=1,y=2]" from variables + point values. */
 function substList(variables: string[], point: string[]): string {
@@ -13,20 +13,6 @@ async function giac(expr: string): Promise<string> {
   const out = await giacEngine.evaluate(expr);
   if (!out || out === 'undef') throw new Error(`Giac could not evaluate: ${expr}`);
   return out;
-}
-
-/** Best-effort LaTeX rendering of a Giac result; undefined on failure. */
-async function toLatex(result: string): Promise<string | undefined> {
-  try {
-    const raw = await giacEngine.evaluate(`latex(${result})`);
-    if (!raw || raw === 'undef' || raw.startsWith('latex')) return undefined;
-    return stripQuotes(raw)
-      .replace(/\\dfrac\b/g, '\\frac')
-      .replace(/\\displaystyle\s*/g, '')
-      .replace(/\\textstyle\s*/g, '');
-  } catch {
-    return undefined;
-  }
 }
 
 /**

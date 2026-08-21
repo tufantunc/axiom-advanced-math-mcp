@@ -1,4 +1,5 @@
 import { giacEngine } from '../giac/index.js';
+import { toLatex } from './giac-eval.js';
 
 export interface ExactResult {
   exact: string;
@@ -46,15 +47,7 @@ export async function tryExactResult(
         giacResult !== String(numericResult) &&
         giacResult !== numericResult.toFixed(15)
       ) {
-        let latex: string | undefined;
-        try {
-          const rawLatex = await giacEngine.evaluate(`latex(${giacResult})`);
-          if (rawLatex && rawLatex !== 'undef' && !rawLatex.startsWith('latex')) {
-            latex = normalizeLatex(rawLatex);
-          }
-        } catch {
-          /* best effort */
-        }
+        const latex = await toLatex(giacResult);
 
         return {
           exact: giacResult,
@@ -68,13 +61,6 @@ export async function tryExactResult(
   }
 
   return null;
-}
-
-function normalizeLatex(s: string): string {
-  return s
-    .replace(/\\dfrac\b/g, '\\frac')
-    .replace(/\\displaystyle\s*/g, '')
-    .replace(/\\textstyle\s*/g, '');
 }
 
 function looksLikeGiacExpression(expr: string): boolean {
