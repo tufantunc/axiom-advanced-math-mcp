@@ -126,3 +126,28 @@ describe('hypothesis tests reach a real verdict', () => {
     expect(out).toMatch(/α = 0\.01/);
   });
 });
+
+describe('ANOVA reports a real p-value', () => {
+  // Giac returns the unevaluated symbolic `Beta(1,3,9/10,1)` for
+  // `fisher_cdf(2,6,27)` when F is an INTEGER, so parseFloat gave NaN and the
+  // fallback — `F > 10 ? 0 : NaN` — asserted p = 0. Any ANOVA whose F landed on
+  // a whole number reported certainty it had not computed.
+  it('computes p from the F distribution rather than a threshold guess', async () => {
+    // F = 27 exactly, df = (2,6). Reference p = 0.00101.
+    const out = text(await computeHandler({ problem: 'anova([[1,2,3],[4,5,6],[7,8,9]])' }));
+    expect(out).toMatch(/F = 27\.000000/);
+    expect(out).not.toMatch(/p-value = 0\.000000/);
+    expect(out).toMatch(/p-value = 0\.001/);
+    expect(out).toContain('Reject H₀');
+  });
+
+  it('fails to reject when the groups barely differ', async () => {
+    // The direction the old fallback could never produce for a large F, and the
+    // control that the fix did not simply invert the comparison.
+    const out = text(
+      await computeHandler({ problem: 'anova([[1,2,3],[1.1,2.1,3.1],[0.9,1.9,2.9]])' })
+    );
+    expect(out).toContain('Fail to reject H₀');
+    expect(out).toMatch(/p-value = 0\.9/);
+  });
+});

@@ -201,12 +201,20 @@ async function oneWayAnova(data: { groups?: number[][]; significance: number }):
 
   let pValue: number;
   try {
-    const rawCdf = await giacEngine.evaluate(`fisher_cdf(${dfBetween},${dfWithin},${F})`);
-    const cdf = parseFloat(rawCdf.trim());
-    if (isNaN(cdf)) throw new Error('NaN');
-    pValue = 1 - cdf;
+    // `evalf` and an explicit `1 -` inside Giac, both deliberate. Given an
+    // INTEGER F, `fisher_cdf(2,6,27)` returns the unevaluated symbolic
+    // `Beta(1,3,9/10,1)`, whose parseFloat is NaN; evalf forces a number.
+    // Giac caps the result at three significant digits, so the subtraction is
+    // done there rather than on an already-rounded cdf.
+    const raw = await giacEngine.evaluate(`evalf(1-fisher_cdf(${dfBetween},${dfWithin},${F}),12)`);
+    const parsed = parseFloat(raw.trim());
+    if (!Number.isFinite(parsed)) throw new Error(`unparseable F cdf: ${raw}`);
+    pValue = parsed;
   } catch {
-    pValue = F > 10 ? 0 : NaN;
+    // Report the failure. The previous fallback was `F > 10 ? 0 : NaN`, which
+    // asserted p = 0 — certainty — for any F above a hardcoded threshold, and
+    // that is exactly the branch an integer F reached.
+    pValue = NaN;
   }
 
   return [
