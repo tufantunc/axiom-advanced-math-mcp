@@ -44,8 +44,10 @@ describe('hypothesis_testing', () => {
         data: { sample1: [1, 2, 3], significance: 0.05 },
         alternative: 'two_sided',
       });
-      expect(result.isError).toBe(false);
-      expect(allText(result)).toContain('Error');
+      // Was `isError: false` with an `Error:` body — a failure the MCP client
+      // reads as a successful answer. The handler now flags it.
+      expect(result.isError).toBe(true);
+      expect(allText(result)).toContain('requires mu0');
     });
   });
 
@@ -152,8 +154,8 @@ describe('hypothesis_testing', () => {
         },
         alternative: 'two_sided',
       });
-      expect(result.isError).toBe(false);
-      expect(allText(result)).toContain('Error');
+      expect(result.isError).toBe(true);
+      expect(allText(result)).toContain('at least 3 groups');
     });
   });
 });

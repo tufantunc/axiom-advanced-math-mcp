@@ -1,4 +1,5 @@
 import { giacEngine } from '../giac/index.js';
+import { isNumberList, isNumberMatrix } from './compute/arg-parsing.js';
 import { formatToolResponse, formatErrorResponse } from './response-formatter.js';
 import { normalCdf } from './stats-utils.js';
 
@@ -44,7 +45,17 @@ async function tPValue(t: number, df: number, alternative: string): Promise<numb
 
 async function oneSampleT(
   data: { sample1?: number[]; mu0?: number; significance: number },
-  alternative: string
+  alternative: string,
+  /**
+   * How to name the test and its parameter in the report. `paired_t` runs a
+   * one-sample test on the differences — correct arithmetic, but reporting it
+   * as "One-sample t-test / H₀: μ = 0" tells a user who asked for a paired
+   * test that a different test ran.
+   */
+  report: { name: string; parameter: string } = {
+    name: 'One-sample t-test',
+    parameter: 'μ',
+  }
 ): Promise<string[]> {
   const { sample1, mu0, significance } = data;
   if (!sample1 || sample1.length < 2)
@@ -60,8 +71,8 @@ async function oneSampleT(
   const ci95Half = (1.96 * s) / Math.sqrt(n);
 
   return [
-    `Test: One-sample t-test`,
-    `H₀: μ = ${mu0}  |  H₁: μ ${alternative === 'two_sided' ? '≠' : alternative === 'less' ? '<' : '>'} ${mu0}`,
+    `Test: ${report.name}`,
+    `H₀: ${report.parameter} = ${mu0}  |  H₁: ${report.parameter} ${alternative === 'two_sided' ? '≠' : alternative === 'less' ? '<' : '>'} ${mu0}`,
     ``,
     `Sample mean: ${xbar.toFixed(6)}`,
     `Sample std:  ${s.toFixed(6)}`,
@@ -124,7 +135,10 @@ async function pairedT(
     return ['Error: paired_t requires sample1 and sample2 of equal length'];
 
   const diffs = sample1.map((v, i) => v - sample2[i]);
-  return oneSampleT({ sample1: diffs, mu0: 0, significance }, alternative);
+  return oneSampleT({ sample1: diffs, mu0: 0, significance }, alternative, {
+    name: 'Paired t-test',
+    parameter: 'μ_d',
+  });
 }
 
 async function chiSquareIndependence(data: {
@@ -244,6 +258,47 @@ async function oneWayAnova(data: { groups?: number[][]; significance: number }):
 /** Conventional α when the caller does not name one. */
 const DEFAULT_SIGNIFICANCE = 0.05;
 
+/**
+ * Turns a parsed argument list into this module's data shape.
+ *
+ * The field names — sample1, sample2, mu0, groups, significance — are owned
+ * here, so the mapping lives here too rather than in the routing layer. Accepts
+ * `data`/`sample` for sample1 and `alpha` for significance.
+ *
+ * Positional: every numeric list is a sample, so three or more become `groups`
+ * rather than being silently truncated to the first two; a list of lists is
+ * `groups` directly; a bare number is mu0.
+ */
+export function coerceTestData(
+  named: Record<string, unknown>,
+  positional: unknown[],
+  test?: string
+): Record<string, unknown> {
+  const aliases: Record<string, string> = {
+    data: 'sample1',
+    sample: 'sample1',
+    alpha: 'significance',
+  };
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(named)) out[aliases[key] ?? key] = value;
+
+  const matrix = positional.find(isNumberMatrix);
+  const lists = positional.filter(isNumberList);
+  // chi-square reads a contingency_table; the other tests read groups. Same
+  // shape, different field, so the test decides which name it lands under.
+  const matrixField = test === 'chi_square_independence' ? 'contingency_table' : 'groups';
+  if (matrix) out[matrixField] ??= matrix;
+  else if (lists.length >= 3) out['groups'] ??= lists;
+  else {
+    if (lists[0]) out['sample1'] ??= lists[0];
+    if (lists[1]) out['sample2'] ??= lists[1];
+  }
+
+  const scalar = positional.find((v) => typeof v === 'number' && Number.isFinite(v));
+  if (scalar !== undefined) out['mu0'] ??= scalar;
+  return out;
+}
+
 export async function hypothesisTestingHandler(args: Record<string, unknown>) {
   const test = args.test as string;
   const rawData = args.data as {
@@ -257,7 +312,17 @@ export async function hypothesisTestingHandler(args: Record<string, unknown>) {
   // The type used to declare `significance: number` as required while nothing
   // supplied it, so every comparison was `p < undefined` — false — and every
   // test reported "Fail to reject H₀" whatever the p-value was.
-  const data = { ...rawData, significance: rawData?.significance ?? DEFAULT_SIGNIFICANCE };
+  // A significance level outside (0,1) inverts the conclusion: α = 1.5 makes
+  // every test reject, α ≤ 0 makes none reject, and both used to be reported as
+  // confident successes. An ABSENT α gets the convention; a malformed one is an
+  // error, because those are different inputs.
+  const alpha = rawData?.significance;
+  if (alpha !== undefined && !(typeof alpha === 'number' && alpha > 0 && alpha < 1)) {
+    return formatErrorResponse(
+      `significance must be a number strictly between 0 and 1, got ${String(alpha)}`
+    );
+  }
+  const data = { ...rawData, significance: alpha ?? DEFAULT_SIGNIFICANCE };
   const alternative = (args.alternative as string) ?? 'two_sided';
 
   try {
@@ -281,6 +346,20 @@ export async function hypothesisTestingHandler(args: Record<string, unknown>) {
         break;
       default:
         return formatErrorResponse(`Unknown test: ${test}`);
+    }
+
+    // The per-test functions signal a validation failure by returning a single
+    // `Error: ...` line, which formatToolResponse would ship with
+    // isError: false — so `t_test(data=[1])` answered "The answer is Error:
+    // one_sample_t requires sample1 with at least 2 values" as a SUCCESS. An
+    // LLM caller reads that as a result.
+    //
+    // Interim: honour the convention here. The proper fix is for those
+    // functions to return a discriminated outcome instead of prose plus a
+    // convention (audit finding F-S10-b, shared with probability-calc.ts and
+    // numerical-methods.ts).
+    if (lines.length === 1 && lines[0].startsWith('Error: ')) {
+      return formatErrorResponse(lines[0].slice('Error: '.length));
     }
 
     const mainResult = lines[lines.length - 1];

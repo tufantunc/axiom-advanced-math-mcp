@@ -32,18 +32,25 @@ async function handleGiacDistOps(
   headerLines: string[]
 ): Promise<CalcResult | null> {
   const { x, p } = params;
+
+  // A probability is a number. Giac keeps these exact unless asked otherwise,
+  // so the density of χ²(3) at 2 came back as `√2/exp(1)/(1/2*√pi*2*√2)` and
+  // Student-t(5) at 2 as `2/(3/4*√pi)/√(5*pi)*125/729` — both correct, neither
+  // an answer a caller can use.
+  const decimal = (expr: string): string => `evalf(${expr},12)`;
+
   if (op === 'quantile') {
     if (p === undefined) return { lines: [...headerLines, 'Error: quantile requires param p'] };
-    const val = await giacEngine.evaluate(giacIcdf.replace('${p}', String(p)));
+    const val = await giacEngine.evaluate(decimal(giacIcdf.replace('${p}', String(p))));
     return { lines: [...headerLines, `P(X ≤ x) = ${p} → x = ${val.trim()}`] };
   }
   if (x === undefined) return { lines: [...headerLines, 'Error: pmf/cdf requires param x'] };
   if (op === 'pmf') {
-    const val = await giacEngine.evaluate(giacPdf.replace('${x}', String(x)));
+    const val = await giacEngine.evaluate(decimal(giacPdf.replace('${x}', String(x))));
     return { lines: [...headerLines, `f(${x}) = ${val.trim()}`] };
   }
   if (op === 'cdf') {
-    const val = await giacEngine.evaluate(giacCdf.replace('${x}', String(x)));
+    const val = await giacEngine.evaluate(decimal(giacCdf.replace('${x}', String(x))));
     return { lines: [...headerLines, `P(X ≤ ${x}) = ${val.trim()}`] };
   }
   return null;
@@ -313,7 +320,11 @@ async function chiSquare(op: string, params: Record<string, number>): Promise<Ca
   const distResult = await handleGiacDistOps(
     op,
     params,
-    `chisquare(\${x},${df})`,
+    // Giac's density takes the degrees of freedom first, as the cdf and icdf
+    // lines below already do. Reversed, `chi_square(df=3, x=2)` evaluated
+    // `chisquare(2,3)` = 0.1116 — the density of χ²(2) at 3 — and reported it
+    // as the density of χ²(3) at 2, which is 0.2076.
+    `chisquare(${df},\${x})`,
     `chisquare_cdf(${df},\${x})`,
     `chisquare_icdf(${df},\${p})`,
     lines
@@ -444,9 +455,20 @@ function exponentialDist(op: string, params: Record<string, number>): CalcResult
   return { lines };
 }
 
+/**
+ * Every distribution here implements its density/mass branch under the name
+ * `pmf`, and nothing branches on `pdf` — so a query carrying `pdf`, or no
+ * operation at all, fell past every branch and returned only the header line:
+ * `normal(mu=0, sigma=1, x=1)` answered "Normal(μ=0, σ=1)" instead of the
+ * density at x = 1, with isError:false.
+ */
+function densityOrGiven(op: string | undefined): string {
+  return op === undefined || op === 'pdf' ? 'pmf' : op;
+}
+
 export async function probabilityCalcHandler(args: Record<string, unknown>) {
   const dist = args.distribution as string;
-  const op = args.operation as string;
+  const op = densityOrGiven(args.operation as string | undefined);
   const params = args.params as Record<string, number>;
 
   try {
@@ -485,6 +507,16 @@ export async function probabilityCalcHandler(args: Record<string, unknown>) {
         break;
       default:
         result = { lines: [`Error: Unknown distribution: ${dist}`] };
+    }
+
+    // These functions signal a validation failure by returning a single
+    // `Error: ...` line, which formatToolResponse ships with isError:false — so
+    // `beta(a=2, b=3, x=0.5)` answered "The answer is beta requires params
+    // alpha and beta" as a SUCCESS, which an LLM caller reads as a result.
+    // Same convention, same fix as hypothesis-testing.ts (audit F-S10-b); the
+    // proper fix is a discriminated outcome instead of prose plus a convention.
+    if (result.lines.length === 1 && result.lines[0].startsWith('Error: ')) {
+      return formatErrorResponse(result.lines[0].slice('Error: '.length));
     }
 
     const mainResult = result.lines[result.lines.length - 1].replace(/^[^=:]*[=:]\s*/, '');

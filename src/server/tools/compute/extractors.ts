@@ -1,62 +1,24 @@
 import type { RouteResult } from './types.js';
+import { coerceTestData } from '../hypothesis-testing.js';
+import {
+  extractFnArgs,
+  splitArgs,
+  parseCallArgs,
+  pickNumbers,
+  parseBracketList,
+  parsePointList,
+  parsePointPairs,
+  parseNumberList,
+  parseSampleList,
+  isNumberList,
+  expressionArg,
+  stripEnclosingBrackets,
+} from './arg-parsing.js';
 import { rewriteCombinatorics } from '../combinatorics-rewrite.js';
 
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
-
-/**
- * Extract the content inside the outermost parentheses of a function call.
- * e.g. "solve(x^2-4, x)" → "x^2-4, x"
- */
-function extractFnArgs(problem: string): string {
-  const idx = problem.indexOf('(');
-  if (idx === -1) return problem;
-  // Find matching closing paren
-  let depth = 0;
-  let end = -1;
-  for (let i = idx; i < problem.length; i++) {
-    if (problem[i] === '(') depth++;
-    else if (problem[i] === ')') {
-      depth--;
-      if (depth === 0) {
-        end = i;
-        break;
-      }
-    }
-  }
-  if (end === -1) return problem.slice(idx + 1); // unbalanced — take everything after (
-  return problem.slice(idx + 1, end);
-}
-
-/**
- * Split args by top-level commas (not inside nested parens/brackets).
- */
-function splitArgs(inner: string): string[] {
-  const parts: string[] = [];
-  let depth = 0;
-  let bracketDepth = 0;
-  let current = '';
-
-  for (const ch of inner) {
-    if (ch === '(' || ch === '[') {
-      if (ch === '(') depth++;
-      else bracketDepth++;
-      current += ch;
-    } else if (ch === ')' || ch === ']') {
-      if (ch === ')') depth--;
-      else bracketDepth--;
-      current += ch;
-    } else if (ch === ',' && depth === 0 && bracketDepth === 0) {
-      parts.push(current.trim());
-      current = '';
-    } else {
-      current += ch;
-    }
-  }
-  if (current.trim()) parts.push(current.trim());
-  return parts;
-}
 
 /**
  * Guess the primary variable from an expression by finding single-letter
@@ -98,25 +60,45 @@ function extractVariables(equations: string[]): string[] {
 
 // --- Solve ---
 
+/**
+ * Is this argument a variable list rather than an equation list?
+ *
+ * `solve_system` accepts both `solve_system([x+y=3, x-y=1], [x, y])` and bare
+ * `solve_system(x+y=3, x-y=1)`. Positionally these are indistinguishable, so
+ * classify by content: a variable list holds nothing but bare identifiers.
+ */
+function isVariableList(part: string): boolean {
+  const tokens = splitArgs(stripEnclosingBrackets(part.trim()));
+  return tokens.length > 0 && tokens.every((t) => /^[A-Za-z]\w*$/.test(t.trim()));
+}
+
 export function extractSolveSystem(problem: string): RouteResult {
   // Try to parse "solve_system([eq1, eq2], [x, y])" or "[eq1; eq2]" formats
   if (/^solve_system\s*\(/i.test(problem.trim())) {
-    const inner = extractFnArgs(problem);
-    const parts = splitArgs(inner);
-    // Expected: [equations], [variables]
-    const equations = parts[0]
-      ? parts[0]
-          .replace(/^\[|\]$/g, '')
-          .split(',')
-          .map((e) => e.trim())
-      : [];
-    const variables = parts[1]
-      ? parts[1]
-          .replace(/^\[|\]$/g, '')
-          .split(',')
-          .map((v) => v.trim())
-      : [];
-    return { handler: 'solve_system', args: { equations, variables } };
+    const parts = splitArgs(extractFnArgs(problem), true);
+
+    // Assuming `([equations], [variables])` positionally made
+    // `solve_system(x+y=3, x-y=1)` build `solve([x+y=3],[x-y=1])`: the second
+    // equation became the variable list and Giac answered `{}` — the empty
+    // solution set — with isError:false.
+    const equations: string[] = [];
+    let variables: string[] = [];
+    for (const part of parts) {
+      if (isVariableList(part)) {
+        variables = variables.concat(
+          splitArgs(stripEnclosingBrackets(part.trim())).map((v) => v.trim())
+        );
+      } else {
+        equations.push(...splitArgs(stripEnclosingBrackets(part.trim())).map((e) => e.trim()));
+      }
+    }
+    return {
+      handler: 'solve_system',
+      args: {
+        equations,
+        variables: variables.length > 0 ? variables : extractVariables(equations),
+      },
+    };
   }
   // Semicolon-separated equations
   if (problem.includes(';')) {
@@ -418,22 +400,39 @@ export function extractCombinatorics(problem: string): RouteResult {
   if (lc.includes('partition')) {
     return { handler: 'combinatorics', args: { operation: 'partition_count', n: numArgs[0] } };
   }
+  // `permutations(10,3)` matched neither the `P(n,k)` regex (which needs `(`
+  // right after `P`/`perm`) nor any keyword, so it fell to the combinations
+  // default below: it answered 120 under the heading "Combinations C(10, 3)"
+  // for a question about P(10,3) = 720.
+  if (lc.includes('permutation')) {
+    return {
+      handler: 'combinatorics',
+      args: { operation: 'permutations', n: numArgs[0], k: numArgs[1] },
+    };
+  }
+  if (lc.includes('combination') || lc.includes('choose')) {
+    return {
+      handler: 'combinatorics',
+      args: { operation: 'combinations', n: numArgs[0], k: numArgs[1] },
+    };
+  }
   if (lc.includes('multinomial')) {
     // `multinomial(5, [2,2,1])` — n first, then the group sizes. Passing the
     // whole flattened arg list as `groups` left n undefined and the group sum
     // NaN, so the handler rejected every call.
     const parts = splitArgs(extractFnArgs(problem));
-    const groups = parseNumberList(parts.slice(1).join(','));
+    const groups = parseNumberList(parts.slice(1).join(',')) ?? [];
     return {
       handler: 'combinatorics',
       args: { operation: 'multinomial', n: numArgs[0], groups: groups.length ? groups : undefined },
     };
   }
 
-  // Default: combinations
+  // Default: combinations. `|| 0` used to turn an unparsable argument into a
+  // real answer for n = 0, so pass NaN through and let the handler say so.
   return {
     handler: 'combinatorics',
-    args: { operation: 'combinations', n: numArgs[0] || 0, k: numArgs[1] || 0 },
+    args: { operation: 'combinations', n: numArgs[0], k: numArgs[1] },
   };
 }
 
@@ -459,11 +458,20 @@ export function extractProbability(problem: string): RouteResult {
     'beta',
     'exponential',
   ];
+  // Match the leading verb exactly where there is one: substring matching in
+  // list order made `hypergeometric(N=50,K=5,n=10,k=2)` run as `geometric`,
+  // which reported "Geometric requires param p" for a complete call. Prose
+  // falls back to a longest-name-first scan for the same reason.
+  const verb = /^\s*([a-z_][a-z0-9_]*)\s*\(/i.exec(problem)?.[1]?.toLowerCase();
   let distribution = 'normal';
-  for (const d of distributions) {
-    if (lc.includes(d)) {
-      distribution = d;
-      break;
+  if (verb && distributions.includes(verb)) {
+    distribution = verb;
+  } else {
+    for (const d of [...distributions].sort((a, b) => b.length - a.length)) {
+      if (lc.includes(d)) {
+        distribution = d;
+        break;
+      }
     }
   }
 
@@ -493,51 +501,6 @@ export function extractProbability(problem: string): RouteResult {
 
 // --- Hypothesis testing ---
 
-/**
- * Parses a hypothesis test's arguments into the shape the handler reads.
- *
- * Accepts named arguments — `t_test(data=[1,2,3], mu0=5)` — with `data` and
- * `sample` treated as aliases for `sample1`, and falls back to position:
- * the first list is sample1, a second list is sample2, and a bare number is
- * mu0. Lists of lists become `groups`.
- */
-function parseTestArgs(inner: string): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  const aliases: Record<string, string> = {
-    data: 'sample1',
-    sample: 'sample1',
-    alpha: 'significance',
-  };
-  const positional: unknown[] = [];
-
-  for (const part of splitArgs(inner)) {
-    const named = /^\s*([A-Za-z_]\w*)\s*=\s*([\s\S]+)$/.exec(part);
-    const rawValue = named ? named[2].trim() : part.trim();
-    let value: unknown;
-    try {
-      value = JSON.parse(rawValue);
-    } catch {
-      value = Number(rawValue);
-      if (!Number.isFinite(value as number)) continue;
-    }
-    if (named) out[aliases[named[1]] ?? named[1]] = value;
-    else positional.push(value);
-  }
-
-  const lists = positional.filter((v): v is number[] => Array.isArray(v));
-  const nested = lists.filter((v) => v.every((n) => Array.isArray(n)));
-  if (nested.length) out['groups'] = nested.length === 1 ? nested[0] : nested;
-  else {
-    const flat = lists.filter((v) => v.every((n) => typeof n === 'number'));
-    if (flat[0] && out['sample1'] === undefined) out['sample1'] = flat[0];
-    if (flat[1] && out['sample2'] === undefined) out['sample2'] = flat[1];
-  }
-  const scalar = positional.find((v) => typeof v === 'number');
-  if (scalar !== undefined && out['mu0'] === undefined) out['mu0'] = scalar;
-
-  return out;
-}
-
 export function extractHypothesisTesting(problem: string): RouteResult {
   // Hypothesis testing requires structured data (arrays) that's hard to extract
   // from a free-form string. We'll try to detect the test type and pass through.
@@ -547,8 +510,10 @@ export function extractHypothesisTesting(problem: string): RouteResult {
   if (lc.includes('two_sample') || lc.includes('two sample')) test = 'two_sample_t';
   else if (lc.includes('paired')) test = 'paired_t';
   else if (lc.includes('anova')) test = 'one_way_anova';
-  else if (lc.includes('chi_square_test') || lc.includes('chi square test'))
-    test = 'chi_square_independence';
+  // `chi_square_independence` is the handler's own name for this test, and only
+  // the `_test` spelling was recognised — so calling it by its published name
+  // ran a one-sample t-test on a contingency table.
+  else if (lc.includes('chi_square') || lc.includes('chi square')) test = 'chi_square_independence';
 
   // hypothesisTestingHandler reads data.sample1/sample2/mu0/groups/
   // contingency_table/significance. This used to fall back to `data: { raw }`,
@@ -566,32 +531,14 @@ export function extractHypothesisTesting(problem: string): RouteResult {
   }
 
   if (Object.keys(data).length === 0) {
-    data = parseTestArgs(inner);
+    const { named, positional } = parseCallArgs(inner);
+    data = coerceTestData(named, positional, test);
   }
 
   return { handler: 'hypothesis_testing', args: { test, data } };
 }
 
 // --- Geometry ---
-
-/**
- * Picks `name=value` arguments out of a call's argument list.
- *
- * Only the names the caller allows, so a stray `=` cannot invent a field, and
- * only numeric values — every consumer of this today wants a number.
- */
-function parseNamedArgs(inner: string, allowed: string[]): Record<string, number> {
-  const out: Record<string, number> = {};
-  for (const part of splitArgs(inner)) {
-    const match = /^\s*([A-Za-z_]\w*)\s*=\s*(.+)$/.exec(part);
-    if (!match) continue;
-    const [, name, rawValue] = match;
-    if (!allowed.includes(name)) continue;
-    const value = Number(rawValue.trim());
-    if (Number.isFinite(value)) out[name] = value;
-  }
-  return out;
-}
 
 export function extractGeometry(problem: string): RouteResult {
   const trimmed = problem.trim().toLowerCase();
@@ -630,8 +577,16 @@ export function extractGeometry(problem: string): RouteResult {
   // These used to fall into the JSON catch below and land in a `raw` field
   // that geometryHandler does not read, so it reported "requires radius or
   // diameter" for a call that supplied one.
-  const named = parseNamedArgs(inner, ['radius', 'diameter', 'base', 'height']);
+  const callArgs = parseCallArgs(inner);
+  const named = pickNumbers(callArgs.named, ['radius', 'diameter', 'base', 'height']);
   Object.assign(args, named);
+
+  // `area_polygon(vertices=[[0,0],...])` names its list the way the schema's
+  // other named forms do; only the scalar names were picked up.
+  for (const key of ['vertices', 'points']) {
+    const pairs = parsePointPairs(callArgs.named[key]);
+    if (pairs) args['points'] = pairs;
+  }
 
   if (Object.keys(named).length === 0) {
     try {
@@ -650,8 +605,20 @@ export function extractGeometry(problem: string): RouteResult {
         } else if (operation === 'angle_between_lines' || operation === 'line_intersection') {
           args['line1'] = parsed[0];
           args['line2'] = parsed[1];
+        } else if (operation === 'point_line_distance') {
+          // The handler reads `points[0]` and `line1`; nothing set `line1`, so
+          // every call reported "requires points[0] and line1". The line comes
+          // either as one [a,b,c] argument or as three bare coefficients —
+          // reading the first spelling only left the second destructuring a
+          // number, which surfaced as the raw "line1 is not iterable".
+          args['points'] = [parsed[0]];
+          args['line1'] = Array.isArray(parsed[1])
+            ? parsed[1]
+            : parsed.slice(1, 4).every((n) => typeof n === 'number')
+              ? parsed.slice(1, 4)
+              : undefined;
         } else {
-          args['points'] = parsed;
+          args['points'] = parsePointList(inner) ?? parsed;
         }
       }
     } catch {
@@ -675,8 +642,14 @@ export function extractNumericalMethods(problem: string): RouteResult {
     bisection: 'bisection',
     secant: 'secant',
     romberg: 'romberg_integration',
+    romberg_integration: 'romberg_integration',
     simpson: 'numerical_integration',
+    // Absent from this map, `numerical_integration(x^2, x, 0, 1)` took the
+    // newton_raphson default below and answered `f(root) = 0.000000e+0` — it
+    // ran root-finding on an integration request.
+    numerical_integration: 'numerical_integration',
   };
+  const INTEGRATION_METHODS = ['romberg_integration', 'numerical_integration'];
 
   let method = 'newton_raphson';
   for (const [key, m] of Object.entries(methodMap)) {
@@ -686,14 +659,38 @@ export function extractNumericalMethods(problem: string): RouteResult {
     }
   }
 
+  // The variable is optional: `newton(x^2-2, x, 1)` names it, `bisection(x^2-2,
+  // 1, 2)` does not. Taking parts[1] as the variable unconditionally made the
+  // bracket `1` the variable name.
+  const expression = parts[0] || '';
+  const hasVariable = /^[A-Za-z]\w*$/.test((parts[1] ?? '').trim());
+  const variable = hasVariable ? parts[1].trim() : guessVariable(expression);
+  const numbers = parts.slice(hasVariable ? 2 : 1).map((n) => parseFloat(n));
+
+  // bisection and secant need a bracket, and the extractor only ever emitted
+  // `initial_guess` — so both reported "requires x0 and x1" for every input.
+  // Each method reads different fields: a bracket, a pair of bounds, or a
+  // single starting point. Only `initial_guess` was ever emitted, so both
+  // integrations reported "requires lower_bound and upper_bound".
+  const [first, second] = numbers;
+  const bracket =
+    method === 'bisection' || method === 'secant'
+      ? {
+          ...(Number.isFinite(first) ? { x0: first } : {}),
+          ...(Number.isFinite(second) ? { x1: second } : {}),
+        }
+      : INTEGRATION_METHODS.includes(method)
+        ? {
+            ...(Number.isFinite(first) ? { lower_bound: first } : {}),
+            ...(Number.isFinite(second) ? { upper_bound: second } : {}),
+          }
+        : Number.isFinite(first)
+          ? { initial_guess: first }
+          : {};
+
   return {
     handler: 'numerical_methods',
-    args: {
-      method,
-      expression: parts[0] || '',
-      variable: parts[1] || 'x',
-      ...(parts[2] ? { initial_guess: parseFloat(parts[2]) } : {}),
-    },
+    args: { method, expression, variable, ...bracket },
   };
 }
 
@@ -734,17 +731,25 @@ export function extractLinearRegression(problem: string): RouteResult {
     /* not an object literal */
   }
 
-  const points = parsePointPairs(expressionArg(parts[0]));
+  const { named, positional } = parseCallArgs(inner);
+
+  // Named form: `linear_regression(x=[1,2,3], y=[2,4,6])`.
+  if (isNumberList(named['x']) && isNumberList(named['y'])) {
+    args['x'] = named['x'];
+    args['y'] = named['y'];
+  }
+
+  // Point pairs: `linear_regression([[1,2],[2,4]])`.
+  const points = args['x'] === undefined ? parsePointPairs(expressionArg(parts[0])) : null;
   if (points) {
     args['x'] = points.map((point) => point[0]);
     args['y'] = points.map((point) => point[1]);
   }
 
-  // `linear_regression([[..]], [[..]])` — separate x and y lists.
-  if (!points && parts.length >= 2) {
-    const xs = parseNumberList(parts[0]);
-    const ys = parseNumberList(parts[1]);
-    if (xs.length && ys.length) {
+  // Two separate lists: `linear_regression([1,2,3], [2,4,6])`.
+  if (args['x'] === undefined) {
+    const [xs, ys] = positional;
+    if (isNumberList(xs) && isNumberList(ys)) {
       args['x'] = xs;
       args['y'] = ys;
     }
@@ -759,57 +764,7 @@ export function extractLinearRegression(problem: string): RouteResult {
   return { handler: 'linear_regression', args };
 }
 
-/** `[[1,2],[2,4]]` as a list of (x, y) pairs, or null if it is not that shape. */
-function parsePointPairs(arg: string | undefined): [number, number][] | null {
-  const trimmed = (arg || '').trim();
-  if (!trimmed.startsWith('[')) return null;
-  try {
-    const parsed: unknown = JSON.parse(trimmed);
-    if (
-      Array.isArray(parsed) &&
-      parsed.length > 0 &&
-      parsed.every(
-        (pair) =>
-          Array.isArray(pair) &&
-          pair.length === 2 &&
-          pair.every((n) => typeof n === 'number' && Number.isFinite(n))
-      )
-    ) {
-      return parsed as [number, number][];
-    }
-  } catch {
-    /* not point pairs */
-  }
-  return null;
-}
-
 // --- Sequence identify ---
-
-/**
- * A flat list of numeric samples, or null if the argument is not one.
- *
- * Accepts both `fft([1,2,3])` and `fft(1,2,3)`. The bracketed form must not be
- * wrapped again — `JSON.parse('[' + '[1,2,3]' + ']')` yields `[[1,2,3]]`, one
- * level too deep for the handler.
- */
-function parseSampleList(inner: string): number[] | null {
-  const trimmed = inner.trim();
-  if (!trimmed) return null;
-  const source = trimmed.startsWith('[') ? trimmed : `[${trimmed}]`;
-  try {
-    const parsed: unknown = JSON.parse(source);
-    if (
-      Array.isArray(parsed) &&
-      parsed.length > 0 &&
-      parsed.every((n) => typeof n === 'number' && Number.isFinite(n))
-    ) {
-      return parsed as number[];
-    }
-  } catch {
-    /* not a sample list */
-  }
-  return null;
-}
 
 export function extractSequenceIdentify(problem: string): RouteResult {
   // Same parser as fourier: `JSON.parse('[' + '[1,2,3]' + ']')` yields
@@ -860,24 +815,6 @@ export function extractGiacRaw(problem: string): RouteResult {
 }
 
 // --- Multivariable ---
-
-/** Parse a "[a, b, c]" bracket list into trimmed elements (paren/bracket-aware via splitArgs). */
-function parseBracketList(s: string): string[] {
-  return splitArgs(s.trim().replace(/^\[/, '').replace(/\]$/, ''));
-}
-
-/**
- * Drops a leading `name =` label from an expression argument.
- *
- * `gradient(f = x*y, [x,y])` names its argument; the expression to operate on
- * is `x*y`, not `f = x*y`. Handlers that receive the label pass it to Giac
- * whole and produce confident nonsense (`grad(f = x*y)` -> `[0,0]=[y,x]`).
- * Only fires on a bare identifier followed by `=`, so real equations and
- * comparisons are untouched.
- */
-function expressionArg(arg: string | undefined): string {
-  return (arg || '').replace(/^\s*[A-Za-z_]\w*\s*=\s*(?!=)/, '');
-}
 
 export function extractMultivariable(problem: string): RouteResult {
   const trimmed = problem.trim();
@@ -1029,11 +966,6 @@ const GEOMETRY3D_OPS = [
   'volume_parallelepiped',
 ];
 
-/** Parse a bracket list "[a, b, c]" into a number array (reuses parseBracketList). */
-function parseNumberList(s: string): number[] {
-  return parseBracketList(s).map(Number);
-}
-
 export function extractGeometry3d(problem: string): RouteResult {
   const lc = problem.trim().toLowerCase();
   const inner = extractFnArgs(problem);
@@ -1046,8 +978,10 @@ export function extractGeometry3d(problem: string): RouteResult {
   const lists: number[][] = [];
   let scalar: number | undefined;
   for (const part of parts) {
-    if (part.trim().startsWith('[')) lists.push(parseNumberList(part));
-    else if (scalar === undefined && part.trim() !== '') scalar = Number(part);
+    if (part.trim().startsWith('[')) {
+      const nums = parseNumberList(part);
+      if (nums) lists.push(nums);
+    } else if (scalar === undefined && part.trim() !== '') scalar = Number(part);
   }
 
   return {

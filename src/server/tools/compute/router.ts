@@ -1,4 +1,5 @@
 import type { RouterRule, RouteResult } from './types.js';
+import { stripEnclosingBrackets } from './arg-parsing.js';
 import { splitTopLevel } from '../output-cleanup.js';
 import {
   extractSolveSystem,
@@ -99,34 +100,17 @@ function isBracketBalanced(problem: string): boolean {
 }
 
 /**
- * Drops bracket pairs that wrap the whole problem, so a parenthesised equation
- * still reads as an equation: `(x^2-4=0)` and the Giac-idiomatic `[x^2-4=0]`
- * have no depth-0 `=` until the wrapper comes off.
+ * `beta(...)` as the probability distribution rather than Giac's Beta function.
  *
- * Only strips a pair whose partner is the final character, so `gradient(f =
- * x*y, [x,y])` (opener preceded by a verb) and `(a=1)*(b=2)` are untouched.
- * `{}` is left alone: it is a Giac set, not grouping.
+ * README advertises `beta` as a distribution, but the router only knew
+ * `beta_dist`, so `beta(a=2, b=3, x=0.5)` fell through to the CAS and came back
+ * as the string "beta". The two spellings are distinguishable by their
+ * arguments: a distribution query names its parameters, while Giac's Beta
+ * function takes two positional numbers — `beta(2,3)`, which must keep working.
  */
-function stripEnclosingBrackets(problem: string): string {
-  let s = problem.trim();
-  while (s.length > 1 && (s[0] === '(' || s[0] === '[')) {
-    let depth = 0;
-    let partner = -1;
-    for (let i = 0; i < s.length; i++) {
-      const ch = s[i];
-      if (ch === '(' || ch === '[' || ch === '{') depth++;
-      else if (ch === ')' || ch === ']' || ch === '}') {
-        depth--;
-        if (depth === 0) {
-          partner = i;
-          break;
-        }
-      }
-    }
-    if (partner !== s.length - 1) break;
-    s = s.slice(1, -1).trim();
-  }
-  return s;
+function isBetaDistributionCall(problem: string): boolean {
+  if (!startsWith(problem, 'beta')) return false;
+  return /\b(a|b|alpha|beta|x|p)\s*=(?!=)/i.test(problem);
 }
 
 /**
@@ -371,7 +355,14 @@ const rules: RouterRule[] = [
         'catalan',
         'derangements',
         'partitions',
-        'multinomial'
+        'multinomial',
+        // The handler's own operation names: `\bbell\b` has no boundary inside
+        // `bell_number`, so `bell_number(5)` answered `bell_number(5)`.
+        'bell_number',
+        'catalan_number',
+        'partition_count',
+        'stirling_first',
+        'stirling_second'
       );
     },
     extract: extractCombinatorics,
@@ -406,7 +397,8 @@ const rules: RouterRule[] = [
         'f_distribution',
         'beta_dist',
         'exponential'
-      ),
+      ) ||
+      isBetaDistributionCall(p),
     extract: extractProbability,
   },
 
@@ -421,8 +413,15 @@ const rules: RouterRule[] = [
         'chi_square_test',
         'one_sample_t',
         'two_sample_t',
-        'paired_t'
-      ),
+        'paired_t',
+        'one_way_anova',
+        'chi_square_independence'
+      ) ||
+      // `_test`-suffixed spellings defeat hasKeyword: `\btwo_sample_t\b` finds
+      // no boundary inside `two_sample_t_test`, so the call fell through to the
+      // raw CAS, which echoed `two_sample_t_test([1,2,3],[4,5,6])` back as the
+      // Result with isError:false — the input returned as its own answer.
+      startsWith(p, 'one_sample_t_test', 'two_sample_t_test', 'paired_t_test', 'anova_test'),
     extract: extractHypothesisTesting,
   },
 
@@ -473,7 +472,9 @@ const rules: RouterRule[] = [
         'circumference',
         'intersection',
         'angle',
-        'point_line_distance'
+        'point_line_distance',
+        'angle_between_lines',
+        'line_intersection'
       ) || hasKeyword(p, 'area_triangle', 'area_polygon', 'area_circle', 'perimeter_polygon'),
     extract: extractGeometry,
   },
@@ -484,7 +485,10 @@ const rules: RouterRule[] = [
     test: (p, d) =>
       d === 'numeric' ||
       startsWith(p, 'newton', 'bisection', 'secant', 'romberg', 'simpson') ||
-      hasKeyword(p, 'newton_raphson', 'numerical_integration'),
+      // `\bromberg\b` finds no boundary inside `romberg_integration`, so the
+      // handler's own name for the operation was claimed by no rule and fell
+      // through to the CAS, which returned the call unevaluated as the answer.
+      hasKeyword(p, 'newton_raphson', 'numerical_integration', 'romberg_integration'),
     extract: extractNumericalMethods,
   },
 
