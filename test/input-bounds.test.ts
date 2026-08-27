@@ -6,6 +6,7 @@ import { linearRegressionHandler } from '../src/server/tools/linear-regression.j
 import { numericalMethodsHandler } from '../src/server/tools/numerical-methods.js';
 import { createJsComputeHost } from '../src/server/js-compute/index.js';
 import { probabilityCalcHandler } from '../src/server/tools/probability-calc.js';
+import { plotToSvg } from '../src/server/tools/plot/render.js';
 
 const text = (r: { content: { text: string }[] }): string =>
   r.content.map((c) => c.text).join('\n');
@@ -193,14 +194,19 @@ describe('the compute worker bounds both axes', () => {
   it('survives the timeout and answers the next call', async () => {
     // A synchronous BigInt loop cannot be interrupted, so the timeout kills the
     // child. The next call must transparently get a fresh one.
-    const host = createJsComputeHost({ timeoutMs: 60 });
+    //
+    // 2s rather than the 50ms used above: this test needs the SECOND call to
+    // succeed, and under a parallel suite run a fork plus a cold start can
+    // itself outlast a tight budget. bell_number(100000) takes minutes, so the
+    // first call still times out reliably.
+    const host = createJsComputeHost({ timeoutMs: 2000 });
     try {
       await expect(host.run('bell_number', { n: 100000 })).rejects.toThrow(/budget/);
       await expect(host.run('bell_number', { n: 5 })).resolves.toBe('52');
     } finally {
       await host.dispose();
     }
-  });
+  }, 30_000);
 
   it('contains an out-of-memory computation instead of aborting the server', async () => {
     // This is the axis no input ceiling expressed: cost is the WIDTH of the
@@ -433,5 +439,120 @@ describe('a discrete cdf is summed in log space', () => {
     expect(r.isError, text(r)).toBe(false);
     const value = Number(/P\(X ≤ [\d.]+\) = ([\d.e+-]+)/.exec(text(r))?.[1]);
     expect(value).toBeCloseTo(expected, 8);
+  });
+});
+
+describe('mathjs evaluation is bounded outside the server process', () => {
+  // It ran synchronously on the main thread, where an unbounded expression
+  // cannot be interrupted: `1:20000000` is eleven characters and blocked the
+  // event loop for 20s while building a 532MB response. A guard on range syntax
+  // would not have been enough — the cost shows up as time, as memory, or as
+  // response size depending on the expression, so all three are bounded and none
+  // of the bounds names a mathjs construct.
+  it.each([
+    ['1:200000', /response limit/],
+    ['1:2000000', /response limit/],
+  ])('%s is refused on response size', async (problem, expected) => {
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(expected);
+    // The refusal itself must be small — the point is not to ship 48MB.
+    expect(text(r).length).toBeLessThan(500);
+  });
+
+  it('a runaway expression is refused on time or memory, not answered', async () => {
+    const host = createJsComputeHost({ timeoutMs: 400, heapMb: 64 });
+    try {
+      await expect(host.run('mathjs_evaluate', { expression: '1:50000000' })).rejects.toThrow(
+        /budget|response limit/
+      );
+      // And the worker is usable again straight after.
+      await expect(host.run('mathjs_evaluate', { expression: '2+2' })).resolves.toContain('"4"');
+    } finally {
+      await host.dispose();
+    }
+  }, 30_000);
+
+  it.each([
+    ['2+2', '4'],
+    ['sin(pi/4)', '0.7071067811865475'],
+    ['ln(e)', '1'],
+    ['sqrt(2)*100', '141.4213562373095'],
+  ])('still evaluates %s', async (expression, expected) => {
+    const host = createJsComputeHost({ timeoutMs: 10_000 });
+    try {
+      const raw = await host.run('mathjs_evaluate', { expression });
+      expect((JSON.parse(raw) as { value: string }).value).toBe(expected);
+    } finally {
+      await host.dispose();
+    }
+  });
+
+  it('keeps mathjs import and createUnit disabled in the worker', async () => {
+    // The two in-process instances this replaces both disabled these per mathjs's
+    // security guidance; the move must not quietly drop that.
+    const host = createJsComputeHost({ timeoutMs: 5000 });
+    try {
+      await expect(host.run('mathjs_evaluate', { expression: 'import({evil:1})' })).rejects.toThrow(
+        /import is disabled/
+      );
+      await expect(host.run('mathjs_evaluate', { expression: 'createUnit("zz")' })).rejects.toThrow(
+        /createUnit is disabled/
+      );
+    } finally {
+      await host.dispose();
+    }
+  });
+
+  it('bounds the plot sampler too, and still plots an ordinary function', async () => {
+    // 200 samples is fixed, but the CALLER writes the expression:
+    // `sum(1:2000000)*x` measured 10.9s across those points, and plot is not
+    // behind the CAS session mutex, so it stalled every client directly.
+    const host = createJsComputeHost({ timeoutMs: 500 });
+    try {
+      await expect(
+        host.run('mathjs_sample', {
+          expression: 'sum(1:2000000)*x',
+          variable: 'x',
+          xMin: -5,
+          xMax: 5,
+          numPoints: 200,
+        })
+      ).rejects.toThrow(/budget/);
+    } finally {
+      await host.dispose();
+    }
+
+    const plotted = await plotToSvg({ expression: 'sin(x)', xMin: -5, xMax: 5 });
+    expect(plotted.points).toBe(200);
+    expect(plotted.segments).toBe(1);
+  }, 30_000);
+});
+
+describe('the plot sampler kept the behaviour it had in-process', () => {
+  // These two details were both wrong in the first attempt at moving this code,
+  // and nothing caught it: a fixed jump threshold instead of the relative one,
+  // and the y-range padding dropped. They are the reason the sampler is two
+  // passes — the threshold is judged against a range only known once every point
+  // is sampled — so pin them rather than the fact that it runs.
+  it('pads the y range by 5% of the sampled span', async () => {
+    const r = await plotToSvg({ expression: 'sin(x)', xMin: -5, xMax: 5 });
+    // Sampled span is very nearly [-1, 1]; 5% of 2 is 0.1 at each end.
+    expect(r.yMin).toBeCloseTo(-1.0999, 3);
+    expect(r.yMax).toBeCloseTo(1.0999, 3);
+  });
+
+  it('pads a flat function by ±1 rather than by 5% of zero', async () => {
+    const r = await plotToSvg({ expression: '5', xMin: -5, xMax: 5 });
+    expect(r.yMin).toBe(4);
+    expect(r.yMax).toBe(6);
+  });
+
+  it('judges a jump against the sampled range, not a fixed constant', async () => {
+    // 1/x^3 over [-1,1] spans ±8.7e6, so the relative threshold (2× the span) is
+    // ~3.5e7 and the pole does NOT split. A fixed 1e6 threshold would split it
+    // into two segments — which is how the wrong port showed up.
+    const r = await plotToSvg({ expression: '1/x^3', xMin: -1, xMax: 1 });
+    expect(r.segments).toBe(1);
   });
 });

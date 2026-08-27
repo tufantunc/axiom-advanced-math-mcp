@@ -2,6 +2,7 @@ import { fork, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import type { TaskName } from './tasks.js';
+import type { MathJsTaskName } from './mathjs-tasks.js';
 
 /**
  * Main-process bridge to the pure-JS compute worker.
@@ -100,6 +101,14 @@ export function createJsComputeHost(opts: JsComputeHostOptions = {}) {
     });
     child = c;
 
+    // Neither the child nor its IPC channel may hold the parent's event loop
+    // open: the CLI does its work and then exits, and an unref'd channel is what
+    // lets it. Without this the four plot CLI integration tests each hung for
+    // 25s. Mirrors giac/worker-host.ts, which unrefs both for the same reason;
+    // the child self-exits on 'disconnect' when the parent goes away.
+    c.unref();
+    c.channel?.unref();
+
     c.on('message', (msg: { type: string; id: number; value?: string; error?: string }) => {
       if (msg.type !== 'result') return;
       const p = pending.get(msg.id);
@@ -110,8 +119,20 @@ export function createJsComputeHost(opts: JsComputeHostOptions = {}) {
       else p.resolve(msg.value ?? '');
     });
 
+    let detached = false;
+    const handleFault = (error: Error): void => {
+      // A fault matters only while this child is the current one. Two ways to
+      // get here otherwise, and both must be silent: `recycle()` already failed
+      // this child's pending work and set `child` to null, so `child !== c` is
+      // true again by the time the kill's own 'exit' arrives; and by then the
+      // NEXT call may have forked a replacement, whose pending work is not this
+      // child's to fail.
+      if (detached || child !== c) return;
+      detached = true;
+      recycle(error);
+    };
+
     c.on('exit', (code, signal) => {
-      if (child !== c) return;
       // The heap cap and SIGKILL both land here. Report the cause rather than
       // the code: "exited (code null)" told an operator nothing, and this is the
       // message a caller sees when their input was simply too large.
@@ -119,12 +140,10 @@ export function createJsComputeHost(opts: JsComputeHostOptions = {}) {
         signal === 'SIGABRT' || code === 134
           ? `exceeded its ${heapMb}MB memory budget`
           : `stopped unexpectedly (code ${String(code)}, signal ${String(signal)})`;
-      recycle(new Error(`the computation ${cause}`));
+      handleFault(new Error(`the computation ${cause}`));
     });
 
-    c.on('error', (e) => {
-      if (child === c) recycle(e);
-    });
+    c.on('error', (e) => handleFault(e));
 
     return c;
   }
@@ -137,18 +156,19 @@ export function createJsComputeHost(opts: JsComputeHostOptions = {}) {
      * interrupted, so there is nothing else to do, and the worker holds no state
      * worth preserving.
      */
-    run(task: TaskName, args: Record<string, unknown>): Promise<string> {
+    run(task: TaskName | MathJsTaskName, args: Record<string, unknown>): Promise<string> {
       const c = ensureChild();
       const id = nextId++;
       return new Promise<string>((resolve, reject) => {
         const timer = setTimeout(() => {
           pending.delete(id);
-          recycle(
-            new Error(`the computation exceeded its ${timeoutMs}ms budget — try smaller arguments`)
+          const timedOut = new Error(
+            `the computation exceeded its ${timeoutMs}ms budget — try smaller arguments`
           );
-          reject(
-            new Error(`the computation exceeded its ${timeoutMs}ms budget — try smaller arguments`)
-          );
+          // Kills the child: a synchronous loop cannot be interrupted, and the
+          // worker holds no state worth preserving.
+          recycle(timedOut);
+          reject(timedOut);
         }, timeoutMs);
         pending.set(id, { resolve, reject, timer });
         c.send({ id, task, args });

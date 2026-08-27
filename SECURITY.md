@@ -153,7 +153,15 @@ Named plainly, because they are the things most likely to bite you:
   is that something else if you do not already have one.
 - Set `MCP_ALLOWED_HOSTS` explicitly when reaching the server by hostname or
   LAN address; the loopback default will reject those.
-- Leave `AXIOM_EVAL_TIMEOUT_MS` at its default unless you have measured a need.
+- Leave `AXIOM_EVAL_TIMEOUT_MS` at its default unless you have measured a need. It
+  also bounds the child process that runs arbitrary-precision integer work and
+  mathjs evaluation, so raising it widens both.
+- **`AXIOM_JS_COMPUTE_HEAP_MB` is the memory half of that bound.** Arbitrary-precision
+  arithmetic and mathjs expressions are unbounded in memory as a function of their
+  input, and neither can be interrupted once running, so both execute in a child
+  process with this heap ceiling. Exceeding it kills that one computation and
+  reports an error; the server stays up. Raising it moves the failure closer to
+  the host's own memory limit, where it is no longer contained.
 - **`AXIOM_INTEGRATION_BUDGET_MS` bounds a whole routine, not one call.** Numerical
   integration and root finding make up to a few hundred CAS calls each, and the
   caller chooses the expression and therefore the cost of every one of them.

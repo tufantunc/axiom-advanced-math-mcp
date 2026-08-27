@@ -1,5 +1,6 @@
 import { createJsComputeHost } from './host.js';
 import type { TaskName } from './tasks.js';
+import type { MathJsTaskName } from './mathjs-tasks.js';
 
 /**
  * The process-wide bounded compute worker.
@@ -10,7 +11,10 @@ import type { TaskName } from './tasks.js';
 const host = createJsComputeHost();
 
 /** Runs one arbitrary-precision computation in the bounded worker. */
-export function runJsCompute(task: TaskName, args: Record<string, unknown>): Promise<string> {
+export function runJsCompute(
+  task: TaskName | MathJsTaskName,
+  args: Record<string, unknown>
+): Promise<string> {
   return host.run(task, args);
 }
 
@@ -20,3 +24,4 @@ export function disposeJsCompute(): Promise<void> {
 
 export { createJsComputeHost } from './host.js';
 export { TASKS, type TaskName } from './tasks.js';
+export type { MathJsTaskName } from './mathjs-tasks.js';

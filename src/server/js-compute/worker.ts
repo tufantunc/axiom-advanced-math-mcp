@@ -16,17 +16,39 @@ const send = (m: unknown): void => {
 // linger as an orphan holding a large heap.
 process.on('disconnect', () => process.exit(0));
 
+/**
+ * The mathjs tasks, imported on first use.
+ *
+ * `require('mathjs')` costs ~143ms and tens of MB, and most tasks here do not
+ * need it — a `bell_number` call must not pay for it.
+ */
+type TaskRegistry = Record<string, (args: Record<string, never>) => string>;
+
+let mathjsTasks: TaskRegistry | null = null;
+
+async function resolveTask(task: string): Promise<TaskRegistry[string] | undefined> {
+  const own = (TASKS as unknown as TaskRegistry)[task];
+  if (own) return own;
+  if (!mathjsTasks) {
+    const loaded = await import('./mathjs-tasks.js');
+    mathjsTasks = loaded.MATHJS_TASKS as unknown as TaskRegistry;
+  }
+  return mathjsTasks[task];
+}
+
 process.on('message', (msg: { id: number; task: TaskName; args: Record<string, unknown> }) => {
-  const run = TASKS[msg.task] as ((args: Record<string, unknown>) => string) | undefined;
-  if (!run) {
-    send({ type: 'result', id: msg.id, error: `unknown task: ${String(msg.task)}` });
-    return;
-  }
-  try {
-    send({ type: 'result', id: msg.id, value: run(msg.args) });
-  } catch (e) {
-    send({ type: 'result', id: msg.id, error: e instanceof Error ? e.message : String(e) });
-  }
+  void (async () => {
+    try {
+      const run = await resolveTask(msg.task);
+      if (!run) {
+        send({ type: 'result', id: msg.id, error: `unknown task: ${String(msg.task)}` });
+        return;
+      }
+      send({ type: 'result', id: msg.id, value: run(msg.args as Record<string, never>) });
+    } catch (e) {
+      send({ type: 'result', id: msg.id, error: e instanceof Error ? e.message : String(e) });
+    }
+  })();
 });
 
 send({ type: 'ready' });

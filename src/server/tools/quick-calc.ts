@@ -15,7 +15,7 @@ export async function quickCalcHandler(args: Record<string, unknown>) {
       precision: args.precision as number | undefined,
       format: args.format as QuickCalcOptions['format'],
     };
-    const result = service.evaluate(opts);
+    const result = await service.evaluate(opts);
 
     const numericResult =
       typeof result.result === 'number' ? result.result : parseFloat(String(result.result));

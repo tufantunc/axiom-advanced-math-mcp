@@ -28,7 +28,7 @@ export async function exactValueHandler(args: Record<string, unknown>) {
       case 'to_decimal': {
         const precision = (args.precision as number) ?? 10;
         const service = new QuickCalcService();
-        const result = service.evaluate({ expression: value, precision });
+        const result = await service.evaluate({ expression: value, precision });
         const numeric =
           typeof result.result === 'number' ? result.result : parseFloat(String(result.result));
         return formatToolResponse({

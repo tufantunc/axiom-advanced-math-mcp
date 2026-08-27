@@ -131,7 +131,7 @@ async function runVerify(cmd: VerifyCommand): Promise<number> {
 async function runPlot(cmd: PlotCommand): Promise<number> {
   const expression = await resolveInput(cmd.expression, 'expression');
 
-  const result = plotToSvg({
+  const result = await plotToSvg({
     expression,
     ...(cmd.variable !== undefined ? { variable: cmd.variable } : {}),
     ...(cmd.xMin !== undefined ? { xMin: cmd.xMin } : {}),

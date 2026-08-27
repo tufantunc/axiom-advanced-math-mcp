@@ -36,7 +36,7 @@ export interface PlotResult {
  * image in that path. Both callers share this function so the two surfaces
  * cannot drift apart on defaults or range handling.
  */
-export function plotToSvg(args: PlotArgs): PlotResult {
+export async function plotToSvg(args: PlotArgs): Promise<PlotResult> {
   const variable = args.variable || 'x';
   const xMin = args.xMin ?? -10;
   const xMax = args.xMax ?? 10;
@@ -47,7 +47,13 @@ export function plotToSvg(args: PlotArgs): PlotResult {
     throw new Error('x_min must be less than x_max');
   }
 
-  const evalResult = evaluateFunction(args.expression, variable, xMin, xMax, DEFAULT_PLOT_POINTS);
+  const evalResult = await evaluateFunction(
+    args.expression,
+    variable,
+    xMin,
+    xMax,
+    DEFAULT_PLOT_POINTS
+  );
   const yMin = args.yMin ?? evalResult.yMin;
   const yMax = args.yMax ?? evalResult.yMax;
 
