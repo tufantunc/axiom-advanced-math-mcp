@@ -113,3 +113,65 @@ export function listToSet(raw: string): string {
   if (members.length === 1) return members[0];
   return `{${members.join(', ')}}`;
 }
+
+/** A Giac numeric literal, with optional decimal point and exponent. */
+const GIAC_NUMBER = String.raw`(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?`;
+const COMPLEX_TERM = new RegExp(`^(.*?)([+-]?(?:${GIAC_NUMBER}\\*?)?)i$`);
+
+/**
+ * Parses one Giac complex literal into its real and imaginary parts.
+ *
+ * Handles `10.0`, `-2.0+2.0*i`, `2.0*i`, `2.0-i`, `-i` and exponent forms like
+ * `6.12323399574e-17-i`. Giac writes a unit coefficient as a bare `i`, so the
+ * sign has to be captured separately from the digits — a pattern that requires
+ * a digit can never see the `-` in `2.0-i`, and reconstructing the real part
+ * from what is left over then loses both halves.
+ *
+ * Throws on anything it does not recognise. That matters more than it looks:
+ * `giacEngine.evaluate` RESOLVES with `GIAC_ERROR: ...` rather than rejecting,
+ * and that string contains an `i` (in "Invalid"). Defaulting an unparseable
+ * term to zero turns a CAS error into a confident fabricated number.
+ */
+export function parseComplexTerm(term: string): { re: number; im: number } {
+  const t = term.replace(/\s+/g, '');
+  if (t === '') throw new Error('empty complex term');
+
+  if (!t.includes('i')) {
+    const re = Number(t);
+    if (!Number.isFinite(re)) throw new Error(`unparseable term: ${term}`);
+    return { re, im: 0 };
+  }
+
+  const match = COMPLEX_TERM.exec(t);
+  if (!match) throw new Error(`unparseable complex term: ${term}`);
+
+  const [, realPart, imaginaryPart] = match;
+  const coefficient = imaginaryPart.replace(/\*$/, '');
+  const im =
+    coefficient === '' || coefficient === '+' ? 1 : coefficient === '-' ? -1 : Number(coefficient);
+  const re = realPart === '' ? 0 : Number(realPart);
+  if (!Number.isFinite(re) || !Number.isFinite(im)) {
+    throw new Error(`unparseable complex term: ${term}`);
+  }
+  return { re, im };
+}
+
+/**
+ * Parses a Giac list of complex numbers, one entry per element.
+ *
+ * Each element is a complex literal, not a bare number. Reading the list with
+ * `parseFloat` per comma-separated part and pairing the results as (re, im)
+ * truncated every `a+b*i` at the `+` and halved the bin count.
+ */
+export function parseComplexList(raw: string): { re: number; im: number }[] {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith('[') || !trimmed.endsWith(']')) {
+    throw new Error(`expected a Giac list, got: ${trimmed.slice(0, 60)}`);
+  }
+  const inner = trimmed.slice(1, -1).trim();
+  if (inner === '') return [];
+  return splitTopLevel(inner, ',')
+    .map((part) => part.trim())
+    .filter((part) => part !== '')
+    .map(parseComplexTerm);
+}

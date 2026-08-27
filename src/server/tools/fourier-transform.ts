@@ -1,22 +1,24 @@
 import { giacEngine } from '../giac/index.js';
-import { formatRawResponse, formatRawError } from './response-formatter.js';
-
-function parseGiacComplex(giac: string): { re: number; im: number }[] {
-  const stripped = giac.replace(/^\[/, '').replace(/\]$/, '');
-  if (!stripped) return [];
-  const nums = stripped.split(',').map((s) => parseFloat(s.trim()));
-  const result: { re: number; im: number }[] = [];
-  for (let i = 0; i < nums.length; i += 2) {
-    result.push({ re: nums[i] ?? 0, im: nums[i + 1] ?? 0 });
-  }
-  return result;
-}
+import { formatRawResponse, formatRawError, formatErrorResponse } from './response-formatter.js';
+import { parseComplexList } from './output-cleanup.js';
 
 export async function fourierTransformHandler(args: Record<string, unknown>) {
   const mode = args.mode as string;
   const data = args.data as number[];
   const sampleRate = args.sample_rate as number | undefined;
   const outputMagnitude = args.output_magnitude !== false;
+
+  // Early return, matching how every other handler in this directory reports
+  // bad input. Giac has no symbolic Fourier transform (`fourier(sin(t),t,s)`
+  // comes back unevaluated), so this tool is discrete FFT over samples only.
+  // n < 2 is rejected here because Giac answers `fft([1])` with
+  // "GIAC_ERROR: Invalid dimension" rather than throwing.
+  if (!Array.isArray(data) || data.length < 2) {
+    return formatErrorResponse(
+      'fourier needs a list of at least 2 numeric samples, e.g. fft([1,0,1,0]). ' +
+        'Symbolic Fourier transforms are not supported; use laplace() for a symbolic transform.'
+    );
+  }
 
   try {
     const n = data.length;
@@ -25,7 +27,7 @@ export async function fourierTransformHandler(args: Record<string, unknown>) {
     const fn = mode === 'ifft' ? 'ifft' : 'fft';
     const raw = await giacEngine.evaluate(`${fn}(${giacList})`);
 
-    const complex = parseGiacComplex(raw);
+    const complex = parseComplexList(raw);
 
     const lines: string[] = [`${mode.toUpperCase()}: n = ${n} samples`, ``];
 
@@ -58,7 +60,7 @@ export async function fourierTransformHandler(args: Record<string, unknown>) {
       for (let k = 0; k < complex.length; k++) {
         const { re, im } = complex[k];
         lines.push(
-          `  [${k}]  ${re.toFixed(8)}${Math.abs(im) > 1e-10 ? ` + ${im.toFixed(8)}i` : ''}`
+          `  [${k}]  ${re.toFixed(8)}${Math.abs(im) > 1e-10 ? ` ${im < 0 ? '-' : '+'} ${Math.abs(im).toFixed(8)}i` : ''}`
         );
       }
     }

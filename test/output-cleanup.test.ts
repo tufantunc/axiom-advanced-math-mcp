@@ -5,6 +5,8 @@ import {
   stripOrderTerm,
   listToSet,
   stripDisplayMode,
+  parseComplexTerm,
+  parseComplexList,
 } from '../src/server/tools/output-cleanup.js';
 
 describe('splitTopLevel', () => {
@@ -103,5 +105,76 @@ describe('stripDisplayMode', () => {
 
   it('does not touch \\dfracsomething (word-boundary anchored)', () => {
     expect(stripDisplayMode('\\dfracx')).toBe('\\dfracx');
+  });
+});
+
+describe('parseComplexTerm', () => {
+  // Literal-level, because this is where the bug hid: the parser was private to
+  // fourier-transform.ts and reachable only through a live Giac call, so its
+  // edge cases were whatever that one call happened to emit. Giac writes a unit
+  // coefficient as a bare `i`, and every asserted fixture happened to use the
+  // explicit `2.0*i` form instead.
+  const values: [string, number, number][] = [
+    ['10.0', 10, 0],
+    ['-2.0', -2, 0],
+    ['0', 0, 0],
+    ['-2.0+2.0*i', -2, 2],
+    ['-2.0-2.0*i', -2, -2],
+    ['2.0*i', 0, 2],
+    ['-2.0*i', 0, -2],
+    ['i', 0, 1],
+    ['-i', 0, -1],
+    ['+i', 0, 1],
+    ['2.0-i', 2, -1],
+    ['3+i', 3, 1],
+    ['-3-i', -3, -1],
+    ['1e-3+2e4*i', 1e-3, 2e4],
+    ['.5-.5*i', 0.5, -0.5],
+  ];
+  it.each(values)('%s -> %f %+fi', (term, re, im) => {
+    expect(parseComplexTerm(term)).toEqual({ re, im });
+  });
+
+  it('parses the exponent form Giac emits for a near-zero real part', () => {
+    const r = parseComplexTerm('6.12323399574e-17-i');
+    expect(r.im).toBe(-1);
+    expect(r.re).toBeCloseTo(0, 15);
+  });
+
+  it('throws rather than inventing a number', () => {
+    // giacEngine.evaluate RESOLVES with "GIAC_ERROR: ..." instead of rejecting,
+    // and that string contains an `i` (in "Invalid"). Defaulting to zero turned
+    // a CAS error into a confident fabricated bin.
+    for (const bad of [
+      'GIAC_ERROR: Error: Invalid dimension',
+      'undef',
+      'inf',
+      '1/2+i',
+      'sqrt(2)*i',
+      '',
+    ]) {
+      expect(() => parseComplexTerm(bad), bad).toThrow();
+    }
+  });
+});
+
+describe('parseComplexList', () => {
+  it('returns one entry per element, not one per pair', () => {
+    // Reading the list with parseFloat and pairing the results as (re, im)
+    // halved the bin count and truncated each `a+b*i` at the `+`.
+    expect(parseComplexList('[10.0,-2.0+2.0*i,-2.0,-2.0-2.0*i]')).toEqual([
+      { re: 10, im: 0 },
+      { re: -2, im: 2 },
+      { re: -2, im: 0 },
+      { re: -2, im: -2 },
+    ]);
+  });
+
+  it('handles an empty list', () => {
+    expect(parseComplexList('[]')).toEqual([]);
+  });
+
+  it('rejects anything that is not a Giac list', () => {
+    expect(() => parseComplexList('GIAC_ERROR: Error: Invalid dimension')).toThrow();
   });
 });

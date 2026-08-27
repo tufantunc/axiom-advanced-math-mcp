@@ -626,17 +626,37 @@ export function extractLinearRegression(problem: string): RouteResult {
 
 // --- Sequence identify ---
 
-export function extractSequenceIdentify(problem: string): RouteResult {
-  const inner = extractFnArgs(problem);
-  let terms: number[] = [];
+/**
+ * A flat list of numeric samples, or null if the argument is not one.
+ *
+ * Accepts both `fft([1,2,3])` and `fft(1,2,3)`. The bracketed form must not be
+ * wrapped again — `JSON.parse('[' + '[1,2,3]' + ']')` yields `[[1,2,3]]`, one
+ * level too deep for the handler.
+ */
+function parseSampleList(inner: string): number[] | null {
+  const trimmed = inner.trim();
+  if (!trimmed) return null;
+  const source = trimmed.startsWith('[') ? trimmed : `[${trimmed}]`;
   try {
-    terms = JSON.parse(`[${inner}]`);
+    const parsed: unknown = JSON.parse(source);
+    if (
+      Array.isArray(parsed) &&
+      parsed.length > 0 &&
+      parsed.every((n) => typeof n === 'number' && Number.isFinite(n))
+    ) {
+      return parsed as number[];
+    }
   } catch {
-    terms = inner
-      .split(',')
-      .map((s) => parseFloat(s.trim()))
-      .filter((n) => !isNaN(n));
+    /* not a sample list */
   }
+  return null;
+}
+
+export function extractSequenceIdentify(problem: string): RouteResult {
+  // Same parser as fourier: `JSON.parse('[' + '[1,2,3]' + ']')` yields
+  // [[1,2,3]], so the bracketed form used to arrive as one element and the
+  // arity guard then blamed the user for supplying one term.
+  const terms = parseSampleList(extractFnArgs(problem)) ?? [];
   return { handler: 'sequence_identify', args: { terms } };
 }
 
@@ -659,22 +679,17 @@ export function extractFourier(problem: string): RouteResult {
   const trimmed = problem.trim().toLowerCase();
   const inner = extractFnArgs(problem);
 
-  let mode: 'forward' | 'inverse' = 'forward';
-  if (trimmed.startsWith('ifft') || trimmed.startsWith('inverse')) {
-    mode = 'inverse';
-  }
+  // `mode` and `data` are the names fourierTransformHandler reads, and it
+  // compares mode against 'fft'/'ifft'. This used to emit `signal` and
+  // 'forward'/'inverse', so every field missed and the handler crashed on
+  // `data.length` for every input — `fft([1,2,3,4])` included.
+  const mode: 'fft' | 'ifft' =
+    trimmed.startsWith('ifft') || trimmed.startsWith('inverse') ? 'ifft' : 'fft';
 
-  // Try to parse signal data
-  let args: Record<string, unknown> = { mode };
-  try {
-    const data = JSON.parse(`[${inner}]`);
-    if (Array.isArray(data)) {
-      args['signal'] = data;
-    }
-  } catch {
-    args['expression'] = inner;
-  }
-  return { handler: 'fourier', args };
+  // No `data` is what makes the handler explain itself; there is no consumer
+  // for the raw argument, so passing it along would be another phantom field.
+  const data = parseSampleList(inner);
+  return { handler: 'fourier', args: data ? { mode, data } : { mode } };
 }
 
 // --- Giac raw (fallback) ---
