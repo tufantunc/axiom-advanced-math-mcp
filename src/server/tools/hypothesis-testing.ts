@@ -233,16 +233,23 @@ async function oneWayAnova(data: { groups?: number[][]; significance: number }):
   ];
 }
 
+/** Conventional α when the caller does not name one. */
+const DEFAULT_SIGNIFICANCE = 0.05;
+
 export async function hypothesisTestingHandler(args: Record<string, unknown>) {
   const test = args.test as string;
-  const data = args.data as {
+  const rawData = args.data as {
     sample1?: number[];
     sample2?: number[];
     mu0?: number;
-    significance: number;
+    significance?: number;
     contingency_table?: number[][];
     groups?: number[][];
   };
+  // The type used to declare `significance: number` as required while nothing
+  // supplied it, so every comparison was `p < undefined` — false — and every
+  // test reported "Fail to reject H₀" whatever the p-value was.
+  const data = { ...rawData, significance: rawData?.significance ?? DEFAULT_SIGNIFICANCE };
   const alternative = (args.alternative as string) ?? 'two_sided';
 
   try {

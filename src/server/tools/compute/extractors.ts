@@ -419,7 +419,15 @@ export function extractCombinatorics(problem: string): RouteResult {
     return { handler: 'combinatorics', args: { operation: 'partition_count', n: numArgs[0] } };
   }
   if (lc.includes('multinomial')) {
-    return { handler: 'combinatorics', args: { operation: 'multinomial', groups: numArgs } };
+    // `multinomial(5, [2,2,1])` — n first, then the group sizes. Passing the
+    // whole flattened arg list as `groups` left n undefined and the group sum
+    // NaN, so the handler rejected every call.
+    const parts = splitArgs(extractFnArgs(problem));
+    const groups = parseNumberList(parts.slice(1).join(','));
+    return {
+      handler: 'combinatorics',
+      args: { operation: 'multinomial', n: numArgs[0], groups: groups.length ? groups : undefined },
+    };
   }
 
   // Default: combinations
@@ -485,6 +493,51 @@ export function extractProbability(problem: string): RouteResult {
 
 // --- Hypothesis testing ---
 
+/**
+ * Parses a hypothesis test's arguments into the shape the handler reads.
+ *
+ * Accepts named arguments — `t_test(data=[1,2,3], mu0=5)` — with `data` and
+ * `sample` treated as aliases for `sample1`, and falls back to position:
+ * the first list is sample1, a second list is sample2, and a bare number is
+ * mu0. Lists of lists become `groups`.
+ */
+function parseTestArgs(inner: string): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  const aliases: Record<string, string> = {
+    data: 'sample1',
+    sample: 'sample1',
+    alpha: 'significance',
+  };
+  const positional: unknown[] = [];
+
+  for (const part of splitArgs(inner)) {
+    const named = /^\s*([A-Za-z_]\w*)\s*=\s*([\s\S]+)$/.exec(part);
+    const rawValue = named ? named[2].trim() : part.trim();
+    let value: unknown;
+    try {
+      value = JSON.parse(rawValue);
+    } catch {
+      value = Number(rawValue);
+      if (!Number.isFinite(value as number)) continue;
+    }
+    if (named) out[aliases[named[1]] ?? named[1]] = value;
+    else positional.push(value);
+  }
+
+  const lists = positional.filter((v): v is number[] => Array.isArray(v));
+  const nested = lists.filter((v) => v.every((n) => Array.isArray(n)));
+  if (nested.length) out['groups'] = nested.length === 1 ? nested[0] : nested;
+  else {
+    const flat = lists.filter((v) => v.every((n) => typeof n === 'number'));
+    if (flat[0] && out['sample1'] === undefined) out['sample1'] = flat[0];
+    if (flat[1] && out['sample2'] === undefined) out['sample2'] = flat[1];
+  }
+  const scalar = positional.find((v) => typeof v === 'number');
+  if (scalar !== undefined && out['mu0'] === undefined) out['mu0'] = scalar;
+
+  return out;
+}
+
 export function extractHypothesisTesting(problem: string): RouteResult {
   // Hypothesis testing requires structured data (arrays) that's hard to extract
   // from a free-form string. We'll try to detect the test type and pass through.
@@ -497,20 +550,48 @@ export function extractHypothesisTesting(problem: string): RouteResult {
   else if (lc.includes('chi_square_test') || lc.includes('chi square test'))
     test = 'chi_square_independence';
 
-  // Try to extract JSON-like data
+  // hypothesisTestingHandler reads data.sample1/sample2/mu0/groups/
+  // contingency_table/significance. This used to fall back to `data: { raw }`,
+  // which none of those names match, so every call through compute reported
+  // "requires sample1 with at least 2 values" — for a call that supplied it.
   const inner = extractFnArgs(problem);
   let data: Record<string, unknown> = {};
   try {
-    data = JSON.parse(inner);
+    const parsed: unknown = JSON.parse(inner);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      data = parsed as Record<string, unknown>;
+    }
   } catch {
-    // If not JSON, pass as raw
-    data = { raw: inner };
+    /* fall through to named/positional parsing */
+  }
+
+  if (Object.keys(data).length === 0) {
+    data = parseTestArgs(inner);
   }
 
   return { handler: 'hypothesis_testing', args: { test, data } };
 }
 
 // --- Geometry ---
+
+/**
+ * Picks `name=value` arguments out of a call's argument list.
+ *
+ * Only the names the caller allows, so a stray `=` cannot invent a field, and
+ * only numeric values — every consumer of this today wants a number.
+ */
+function parseNamedArgs(inner: string, allowed: string[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const part of splitArgs(inner)) {
+    const match = /^\s*([A-Za-z_]\w*)\s*=\s*(.+)$/.exec(part);
+    if (!match) continue;
+    const [, name, rawValue] = match;
+    if (!allowed.includes(name)) continue;
+    const value = Number(rawValue.trim());
+    if (Number.isFinite(value)) out[name] = value;
+  }
+  return out;
+}
 
 export function extractGeometry(problem: string): RouteResult {
   const trimmed = problem.trim().toLowerCase();
@@ -542,20 +623,40 @@ export function extractGeometry(problem: string): RouteResult {
     }
   }
 
-  // Try to parse points from inner args
-  let args: Record<string, unknown> = { operation };
-  try {
-    // Try JSON-like array parsing
-    const parsed = JSON.parse(`[${inner}]`);
-    if (Array.isArray(parsed)) {
-      if (operation === 'area_circle' || operation === 'circumference') {
-        args['radius'] = parsed[0];
-      } else {
-        args['points'] = parsed;
+  const args: Record<string, unknown> = { operation };
+
+  // Named arguments first: `area_circle(radius=2)` and
+  // `area_triangle(base=4, height=3)` are the forms the schema advertises.
+  // These used to fall into the JSON catch below and land in a `raw` field
+  // that geometryHandler does not read, so it reported "requires radius or
+  // diameter" for a call that supplied one.
+  const named = parseNamedArgs(inner, ['radius', 'diameter', 'base', 'height']);
+  Object.assign(args, named);
+
+  if (Object.keys(named).length === 0) {
+    try {
+      const parsed: unknown = JSON.parse(`[${inner}]`);
+      if (Array.isArray(parsed)) {
+        if (operation === 'area_circle' || operation === 'circumference') {
+          args['radius'] = parsed[0];
+        } else if (
+          operation === 'area_triangle' &&
+          parsed.length === 2 &&
+          parsed.every((n) => typeof n === 'number')
+        ) {
+          // Two bare numbers for a triangle are base and height, not points.
+          args['base'] = parsed[0];
+          args['height'] = parsed[1];
+        } else if (operation === 'angle_between_lines' || operation === 'line_intersection') {
+          args['line1'] = parsed[0];
+          args['line2'] = parsed[1];
+        } else {
+          args['points'] = parsed;
+        }
       }
+    } catch {
+      /* leave the handler to report what it needs */
     }
-  } catch {
-    args['raw'] = inner;
   }
 
   return { handler: 'geometry', args };
@@ -606,22 +707,80 @@ export function extractExactValue(problem: string): RouteResult {
   if (trimmed.startsWith('to_decimal')) operation = 'to_decimal';
   else if (trimmed.startsWith('simplify_fraction')) operation = 'simplify_fraction';
 
-  return { handler: 'exact_value', args: { operation, expression: inner } };
+  // `value` is the field exactValueHandler reads; emitting `expression` meant
+  // to_exact/to_decimal/simplify_fraction crashed on `undefined`.
+  return { handler: 'exact_value', args: { operation, value: inner } };
 }
 
 // --- Linear regression ---
 
 export function extractLinearRegression(problem: string): RouteResult {
+  const trimmed = problem.trim().toLowerCase();
   const inner = extractFnArgs(problem);
-  let args: Record<string, unknown> = {};
+  const parts = splitArgs(inner);
+
+  // linearRegressionHandler reads x, y, model and degree. This used to emit a
+  // bare array for the JSON form and `{ raw: parts }` otherwise, so `x.length`
+  // dereferenced undefined for every input.
+  const args: Record<string, unknown> = {};
+
+  // An explicit object argument wins — it can already name x/y/model/degree.
   try {
-    args = JSON.parse(inner);
+    const parsed: unknown = JSON.parse(inner);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return { handler: 'linear_regression', args: parsed as Record<string, unknown> };
+    }
   } catch {
-    const parts = splitArgs(inner);
-    parts[0] = expressionArg(parts[0]);
-    args = { raw: parts };
+    /* not an object literal */
   }
+
+  const points = parsePointPairs(expressionArg(parts[0]));
+  if (points) {
+    args['x'] = points.map((point) => point[0]);
+    args['y'] = points.map((point) => point[1]);
+  }
+
+  // `linear_regression([[..]], [[..]])` — separate x and y lists.
+  if (!points && parts.length >= 2) {
+    const xs = parseNumberList(parts[0]);
+    const ys = parseNumberList(parts[1]);
+    if (xs.length && ys.length) {
+      args['x'] = xs;
+      args['y'] = ys;
+    }
+  }
+
+  if (trimmed.startsWith('polynomial_regression') || trimmed.includes('polynomial')) {
+    args['model'] = 'polynomial';
+    const degree = Number(parts[parts.length - 1]);
+    if (Number.isInteger(degree) && degree > 0) args['degree'] = degree;
+  }
+
   return { handler: 'linear_regression', args };
+}
+
+/** `[[1,2],[2,4]]` as a list of (x, y) pairs, or null if it is not that shape. */
+function parsePointPairs(arg: string | undefined): [number, number][] | null {
+  const trimmed = (arg || '').trim();
+  if (!trimmed.startsWith('[')) return null;
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    if (
+      Array.isArray(parsed) &&
+      parsed.length > 0 &&
+      parsed.every(
+        (pair) =>
+          Array.isArray(pair) &&
+          pair.length === 2 &&
+          pair.every((n) => typeof n === 'number' && Number.isFinite(n))
+      )
+    ) {
+      return parsed as [number, number][];
+    }
+  } catch {
+    /* not point pairs */
+  }
+  return null;
 }
 
 // --- Sequence identify ---

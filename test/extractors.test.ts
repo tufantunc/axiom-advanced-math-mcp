@@ -224,7 +224,10 @@ describe('Extractors', () => {
     it('should detect to_exact operation', () => {
       const result = extractExactValue('to_exact(0.333333)');
       expect(result.args.operation).toBe('to_exact');
-      expect(result.args.expression).toBe('0.333333');
+      // `value`, not `expression`: this is the field exactValueHandler reads.
+      // Pinning the extractor's old output in isolation is what let the two
+      // sides disagree — the handler crashed on undefined while this passed.
+      expect(result.args.value).toBe('0.333333');
     });
 
     it('should detect to_decimal operation', () => {
