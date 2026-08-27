@@ -3,8 +3,18 @@ import { formatToolResponse, formatErrorResponse } from './response-formatter.js
 
 // --- Pure-JS helpers ---
 
+/**
+ * Above this, the BigInt loop below blocks the event loop for seconds to
+ * minutes — it runs in the main process, so the Giac timeout cannot fire.
+ * `multinomial(500000, ...)` froze the whole server for 77 seconds.
+ */
+const MAX_FACTORIAL_N = 1000;
+
 function factorial(n: number): bigint {
   if (n < 0) throw new Error('factorial of negative number');
+  if (!Number.isInteger(n) || n > MAX_FACTORIAL_N) {
+    throw new Error(`n must be an integer no greater than ${MAX_FACTORIAL_N}, got ${n}`);
+  }
   let r = 1n;
   for (let i = 2; i <= n; i++) r *= BigInt(i);
   return r;

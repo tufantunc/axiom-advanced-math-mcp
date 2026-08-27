@@ -1,5 +1,5 @@
 import { giacEngine } from '../giac/index.js';
-import { formatRawResponse, formatRawError } from './response-formatter.js';
+import { formatRawResponse, formatRawError, formatErrorResponse } from './response-formatter.js';
 
 function mean(arr: number[]): number {
   return arr.reduce((a, b) => a + b, 0) / arr.length;
@@ -74,11 +74,31 @@ function formatModelOutput(
   return lines;
 }
 
+/** A fit above this is not a useful answer and risks trapping the WASM engine. */
+const MAX_FIT_DEGREE = 10;
+
 export async function linearRegressionHandler(args: Record<string, unknown>) {
   const x = args.x as number[];
   const y = args.y as number[];
   const model = (args.model as string) || 'linear';
   const degree = (args.degree as number) || 1;
+
+  if (!Array.isArray(x) || !Array.isArray(y) || x.length < 2 || y.length < 2) {
+    return formatErrorResponse(
+      'linear_regression requires x and y arrays with at least 2 points each'
+    );
+  }
+  if (!x.every(Number.isFinite) || !y.every(Number.isFinite)) {
+    return formatErrorResponse('x and y must contain only finite numbers');
+  }
+  // A degree at or above the point count is not identifiable, and an unbounded
+  // one builds a Vandermonde matrix large enough to trap the WASM engine —
+  // `degree=3000` used to take the whole CAS down for the process lifetime.
+  if (!Number.isInteger(degree) || degree < 1 || degree > MAX_FIT_DEGREE || degree >= x.length) {
+    return formatErrorResponse(
+      `degree must be an integer between 1 and ${MAX_FIT_DEGREE}, and below the number of points (${x.length})`
+    );
+  }
 
   if (x.length !== y.length) {
     return {
