@@ -618,6 +618,7 @@ export function extractLinearRegression(problem: string): RouteResult {
     args = JSON.parse(inner);
   } catch {
     const parts = splitArgs(inner);
+    parts[0] = expressionArg(parts[0]);
     args = { raw: parts };
   }
   return { handler: 'linear_regression', args };
@@ -691,11 +692,25 @@ function parseBracketList(s: string): string[] {
   return splitArgs(s.trim().replace(/^\[/, '').replace(/\]$/, ''));
 }
 
+/**
+ * Drops a leading `name =` label from an expression argument.
+ *
+ * `gradient(f = x*y, [x,y])` names its argument; the expression to operate on
+ * is `x*y`, not `f = x*y`. Handlers that receive the label pass it to Giac
+ * whole and produce confident nonsense (`grad(f = x*y)` -> `[0,0]=[y,x]`).
+ * Only fires on a bare identifier followed by `=`, so real equations and
+ * comparisons are untouched.
+ */
+function expressionArg(arg: string | undefined): string {
+  return (arg || '').replace(/^\s*[A-Za-z_]\w*\s*=\s*(?!=)/, '');
+}
+
 export function extractMultivariable(problem: string): RouteResult {
   const trimmed = problem.trim();
   const lc = trimmed.toLowerCase();
   const inner = extractFnArgs(problem);
   const parts = splitArgs(inner);
+  parts[0] = expressionArg(parts[0]);
 
   // Multiple integrals.
   if (lc.startsWith('iint') || lc.startsWith('iiint')) {

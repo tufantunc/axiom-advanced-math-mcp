@@ -1,6 +1,7 @@
 /**
- * Pure string helpers for cleaning raw Giac CAS output before it reaches the
- * model or the structured envelope. No I/O, no Giac calls — easy to unit-test.
+ * Pure string helpers for Giac-shaped text — CAS output on its way to the model
+ * or the structured envelope, and (for the depth-aware splitter) problem text on
+ * its way in. No I/O, no Giac calls — easy to unit-test.
  */
 
 /**

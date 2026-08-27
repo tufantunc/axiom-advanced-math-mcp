@@ -1,4 +1,5 @@
 import type { RouterRule, RouteResult } from './types.js';
+import { splitTopLevel } from '../output-cleanup.js';
 import {
   extractSolveSystem,
   extractSolveEquation,
@@ -54,6 +55,89 @@ function hasKeyword(problem: string, ...keywords: string[]): boolean {
 /** Detect matrix-like argument: [[...]] */
 function hasMatrixArg(problem: string): boolean {
   return /\[\s*\[/.test(problem);
+}
+
+/**
+ * True when the problem has an `=` at bracket depth 0 — i.e. it is an equation,
+ * not a call carrying keyword arguments.
+ *
+ * This is the distinction that matters for routing. `gradient(f = x*y, [x,y])`
+ * and `normal(mu=0, sigma=1)` contain `=` but are calls whose own handler should
+ * take them; `x^2-4=0` and `sum(k,k,1,n) = 55` are equations to solve. Testing
+ * for a bare `=` cannot tell those apart, which is why the solve rule used to
+ * carry two hand-maintained lists of every other handler's verbs.
+ *
+ * Unbalanced brackets are treated as an equation. Depth is meaningless on input
+ * like `f(x=1`, and routing it here sends it to a handler that runs
+ * `validateExpression`, which reports the unclosed bracket. Letting it fall
+ * through to the raw-Giac fallback instead produced `Result: f` — a silent wrong
+ * answer to a typo.
+ */
+function hasTopLevelEquals(problem: string): boolean {
+  if (!isBracketBalanced(problem)) return problem.includes('=');
+  return splitTopLevel(stripEnclosingBrackets(problem), '=').length > 1;
+}
+
+/**
+ * Whether every bracket opens and closes in order, and closes with its own
+ * kind.
+ *
+ * Depth alone is not enough: `f(x=1]` opens one bracket and closes one, so a
+ * depth counter calls it balanced, the `=` reads as nested, and the typo
+ * reaches the raw-Giac fallback as `Result: undef` with no error.
+ */
+function isBracketBalanced(problem: string): boolean {
+  const closerFor: Record<string, string> = { '(': ')', '[': ']', '{': '}' };
+  const expected: string[] = [];
+  for (const ch of problem) {
+    if (closerFor[ch]) expected.push(closerFor[ch]);
+    else if (ch === ')' || ch === ']' || ch === '}') {
+      if (expected.pop() !== ch) return false;
+    }
+  }
+  return expected.length === 0;
+}
+
+/**
+ * Drops bracket pairs that wrap the whole problem, so a parenthesised equation
+ * still reads as an equation: `(x^2-4=0)` and the Giac-idiomatic `[x^2-4=0]`
+ * have no depth-0 `=` until the wrapper comes off.
+ *
+ * Only strips a pair whose partner is the final character, so `gradient(f =
+ * x*y, [x,y])` (opener preceded by a verb) and `(a=1)*(b=2)` are untouched.
+ * `{}` is left alone: it is a Giac set, not grouping.
+ */
+function stripEnclosingBrackets(problem: string): string {
+  let s = problem.trim();
+  while (s.length > 1 && (s[0] === '(' || s[0] === '[')) {
+    let depth = 0;
+    let partner = -1;
+    for (let i = 0; i < s.length; i++) {
+      const ch = s[i];
+      if (ch === '(' || ch === '[' || ch === '{') depth++;
+      else if (ch === ')' || ch === ']' || ch === '}') {
+        depth--;
+        if (depth === 0) {
+          partner = i;
+          break;
+        }
+      }
+    }
+    if (partner !== s.length - 1) break;
+    s = s.slice(1, -1).trim();
+  }
+  return s;
+}
+
+/**
+ * Derivative notation that marks the problem as an ODE, owned by
+ * `calculus:solve_ode`. Defined once because two rules need it: solve_ode to
+ * claim these, and the solve rule above it to decline them.
+ *
+ * `y''` contains `y'`, so the first pattern already covers second-order forms.
+ */
+function looksLikeOde(problem: string): boolean {
+  return /y'/.test(problem) || /dy\s*\/\s*dx/.test(problem);
 }
 
 /** Check if problem looks like multiple equations (system). */
@@ -122,74 +206,11 @@ const rules: RouterRule[] = [
       // Domain hint "numeric" overrides to numerical_methods
       if (d === 'numeric') return false;
       if (startsWith(p, 'solve', 'csolve')) return true;
-      // Single equation with = that isn't a system and doesn't match other patterns
-      if (/=/.test(p) && !isSystemOfEquations(p)) {
-        // Exclude ODE patterns: y', y'', dy/dx
-        if (/y'/.test(p) || /dy\s*\/\s*dx/.test(p) || /y''\s*[+=]/.test(p)) return false;
-        // Exclude patterns that belong to other handlers
-        if (
-          startsWith(
-            p,
-            'diff',
-            'int',
-            'integrate',
-            'limit',
-            'taylor',
-            'desolve',
-            'factor',
-            'simplify',
-            'expand',
-            'partfrac',
-            'det',
-            'inv',
-            'eigenvals',
-            'rref',
-            'binomial',
-            'normal',
-            'poisson',
-            'geometric',
-            'hypergeometric',
-            'chi_square',
-            'student_t',
-            'f_distribution',
-            'beta_dist',
-            'exponential',
-            't_test',
-            'anova',
-            'newton',
-            'bisection',
-            'secant',
-            'romberg',
-            'to_exact',
-            'to_decimal',
-            'simplify_fraction'
-          )
-        )
-          return false;
-        // Exclude keyword-based patterns with = inside function args (e.g., "normal(mu=0, ...)")
-        if (
-          /^\w+\s*\(.*=/.test(p) &&
-          hasKeyword(
-            p,
-            'binomial',
-            'normal',
-            'poisson',
-            'geometric',
-            'hypergeometric',
-            'chi_square',
-            'student_t',
-            'f_distribution',
-            'beta',
-            'exponential',
-            't_test',
-            'anova',
-            'chi_square_test',
-            'one_sample_t',
-            'two_sample_t',
-            'paired_t'
-          )
-        )
-          return false;
+      // An equation to solve. Systems need no check here: rule 1 tests
+      // isSystemOfEquations and route() is first-match, so it has already
+      // claimed them. ODEs do, because solve_ode sits below this rule.
+      if (hasTopLevelEquals(p)) {
+        if (looksLikeOde(p)) return false;
         return true;
       }
       return false;
@@ -235,11 +256,7 @@ const rules: RouterRule[] = [
   // 7. ODE
   {
     name: 'calculus:solve_ode',
-    test: (p) =>
-      startsWith(p, 'desolve', 'dsolve', 'odesolve') ||
-      /y'/.test(p) ||
-      /dy\s*\/\s*dx/.test(p) ||
-      /y''\s*[+=]/.test(p),
+    test: (p) => startsWith(p, 'desolve', 'dsolve', 'odesolve') || looksLikeOde(p),
     extract: extractOde,
   },
 
