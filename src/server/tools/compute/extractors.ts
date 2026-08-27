@@ -9,11 +9,10 @@ import {
   parsePointList,
   parsePointPairs,
   parseNumberList,
-  parseSampleList,
-  isNumberList,
   expressionArg,
   stripEnclosingBrackets,
 } from './arg-parsing.js';
+import { isNumberList } from '../value-guards.js';
 import { rewriteCombinatorics } from '../combinatorics-rewrite.js';
 
 // ---------------------------------------------------------------------------
@@ -32,6 +31,16 @@ function guessVariable(expr: string): string {
     if (!constants.has(v)) return v;
   }
   return 'x';
+}
+
+/**
+ * The variable an ODE is solved with respect to: the first single-letter
+ * identifier that is neither the unknown function nor a constant.
+ */
+function independentVariable(equation: string, functionName: string): string {
+  const candidates = equation.match(/\b([a-zA-Z])\b/g) ?? [];
+  const excluded = new Set([functionName, 'e', 'E', 'i', 'I']);
+  return candidates.find((name) => !excluded.has(name)) ?? 'x';
 }
 
 /**
@@ -112,8 +121,7 @@ export function extractSolveSystem(problem: string): RouteResult {
     };
   }
   // [eq1, eq2] bracket format
-  const inner = problem.replace(/^\[|\]$/g, '').trim();
-  const equations = splitArgs(inner);
+  const equations = parseBracketList(problem);
   return {
     handler: 'solve_system',
     args: { equations, variables: extractVariables(equations) },
@@ -230,13 +238,24 @@ export function extractTaylor(problem: string): RouteResult {
 }
 
 export function extractOde(problem: string): RouteResult {
-  if (/^(desolve|dsolve|odesolve)\s*\(/i.test(problem.trim())) {
+  if (/^(desolve|dsolve|odesolve|solve_ode)\s*\(/i.test(problem.trim())) {
     const inner = extractFnArgs(problem);
     const parts = splitArgs(inner);
-    // desolve(eq, var, fn) or desolve([eq, ic], var, fn)
     const equation = parts[0] || '';
-    const variable = parts[1] || 'x';
-    const function_name = parts[2] || 'y';
+
+    // Giac takes (equation, independent variable, function). Reading the second
+    // argument as the variable unconditionally made the two-argument spelling
+    // `desolve(y'=x, y)` build `desolve(y'=x,y,y)` — variable and function both
+    // `y` — which Giac answered with `c_0+x*y-y` instead of x²/2 + c.
+    //
+    // With two arguments the second names the FUNCTION, so the independent
+    // variable has to be inferred: it is the identifier in the equation that
+    // is not the function.
+    const named = parts.slice(1).filter((part) => /^[A-Za-z]\w*$/.test(part.trim()));
+    const function_name = (named.length >= 2 ? named[1] : named[0])?.trim() || 'y';
+    const variable =
+      named.length >= 2 ? named[0].trim() : independentVariable(equation, function_name);
+
     return {
       handler: 'calculus',
       args: { operation: 'solve_ode', equation, variable, function_name },
@@ -438,12 +457,26 @@ export function extractCombinatorics(problem: string): RouteResult {
 
 // --- Probability ---
 
+/**
+ * Caller spellings for the parameter names probability-calc.ts reads.
+ *
+ * The router claims `beta(a=2, b=3, x=0.5)` as a distribution query, so the
+ * handler has to receive it under the names it reads — otherwise the router
+ * recognises a spelling the handler answers with "requires params alpha and
+ * beta".
+ */
+const DISTRIBUTION_PARAM_ALIASES: Record<string, string> = {
+  a: 'alpha',
+  b: 'beta',
+  mean: 'mu',
+  sd: 'sigma',
+  stddev: 'sigma',
+  rate: 'lambda',
+};
+
 export function extractProbability(problem: string): RouteResult {
-  // This handler expects structured data, which is hard to extract from a free-form string.
-  // We pass the problem to giac_raw as fallback, or try basic parsing.
   const lc = problem.toLowerCase();
   const inner = extractFnArgs(problem);
-  const parts = splitArgs(inner);
 
   // Try to detect distribution and operation
   const distributions = [
@@ -475,8 +508,10 @@ export function extractProbability(problem: string): RouteResult {
     }
   }
 
+  // `pmf` is the name every branch in probability-calc.ts tests. Defaulting to
+  // `pdf` meant the router invented a spelling the handler then had to undo.
   const operations = ['pmf', 'pdf', 'cdf', 'expected_value', 'variance', 'quantile'];
-  let operation = 'pdf';
+  let operation = 'pmf';
   for (const op of operations) {
     if (lc.includes(op)) {
       operation = op;
@@ -484,13 +519,17 @@ export function extractProbability(problem: string): RouteResult {
     }
   }
 
-  // Try to extract params as key=value pairs or positional
-  const params: Record<string, number> = {};
-  for (const part of parts) {
-    const kvMatch = part.match(/(\w+)\s*=\s*([\d.eE+-]+)/);
-    if (kvMatch) {
-      params[kvMatch[1]] = parseFloat(kvMatch[2]);
-    }
+  // This was the last `name=value` parser outside arg-parsing.ts, and it had its
+  // own coercion policy: unanchored, `parseFloat`, and no `=(?!=)` guard — so
+  // `normal(mu=0, sigma=2abc, x=1)` silently read sigma as 2 and answered a
+  // density for a distribution the caller never described.
+  // Every named value is forwarded, malformed ones included: dropping them here
+  // let the handler's own `params.sigma ?? 1` default stand in, so
+  // `normal(mu=0, sigma=2abc, x=1)` answered the density for sigma = 1 instead
+  // of reporting the argument it could not read.
+  const params: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(parseCallArgs(inner).named)) {
+    params[DISTRIBUTION_PARAM_ALIASES[key.toLowerCase()] ?? key] = value;
   }
 
   return {
@@ -502,8 +541,6 @@ export function extractProbability(problem: string): RouteResult {
 // --- Hypothesis testing ---
 
 export function extractHypothesisTesting(problem: string): RouteResult {
-  // Hypothesis testing requires structured data (arrays) that's hard to extract
-  // from a free-form string. We'll try to detect the test type and pass through.
   const lc = problem.toLowerCase();
 
   let test = 'one_sample_t';
@@ -588,9 +625,15 @@ export function extractGeometry(problem: string): RouteResult {
     if (pairs) args['points'] = pairs;
   }
 
-  if (Object.keys(named).length === 0) {
-    try {
-      const parsed: unknown = JSON.parse(`[${inner}]`);
+  // A named `vertices`/`points` list is already in `args`, and the positional
+  // reading below would replace it with an empty list.
+  if (Object.keys(named).length === 0 && args['points'] === undefined) {
+    // `callArgs.positional` already holds this — splitArgs plus per-element
+    // coercion — so parsing `inner` again with a second policy meant one
+    // non-JSON element threw and dropped every point, where the shared parser
+    // coerces element by element and keeps the rest.
+    {
+      const parsed: unknown[] = callArgs.positional;
       if (Array.isArray(parsed)) {
         if (operation === 'area_circle' || operation === 'circumference') {
           args['radius'] = parsed[0];
@@ -621,8 +664,6 @@ export function extractGeometry(problem: string): RouteResult {
           args['points'] = parsePointList(inner) ?? parsed;
         }
       }
-    } catch {
-      /* leave the handler to report what it needs */
     }
   }
 
@@ -631,30 +672,44 @@ export function extractGeometry(problem: string): RouteResult {
 
 // --- Numerical methods ---
 
+/** Which fields a numerical method reads its positional numbers into. */
+type NumericArgShape = 'bracket' | 'bounds' | 'guess';
+
+const NUMERIC_ARG_FIELDS: Record<NumericArgShape, string[]> = {
+  bracket: ['x0', 'x1'],
+  bounds: ['lower_bound', 'upper_bound'],
+  guess: ['initial_guess'],
+};
+
 export function extractNumericalMethods(problem: string): RouteResult {
   const trimmed = problem.trim().toLowerCase();
   const inner = extractFnArgs(problem);
   const parts = splitArgs(inner);
 
-  const methodMap: Record<string, string> = {
-    newton: 'newton_raphson',
-    newton_raphson: 'newton_raphson',
-    bisection: 'bisection',
-    secant: 'secant',
-    romberg: 'romberg_integration',
-    romberg_integration: 'romberg_integration',
-    simpson: 'numerical_integration',
-    // Absent from this map, `numerical_integration(x^2, x, 0, 1)` took the
-    // newton_raphson default below and answered `f(root) = 0.000000e+0` — it
-    // ran root-finding on an integration request.
-    numerical_integration: 'numerical_integration',
+  // One table, carrying each verb's method AND the shape of its numeric
+  // arguments. A second list of "which of these are integrations" had to be kept
+  // in sync by hand, and forgetting it reproduces the bug the shapes exist to
+  // fix: an integration request emitting `initial_guess`.
+  //
+  // `numerical_integration` was absent entirely, so it took the newton_raphson
+  // default and answered `f(root) = 0.000000e+0` — root-finding on an integral.
+  const methodMap: Record<string, { method: string; shape: NumericArgShape }> = {
+    newton: { method: 'newton_raphson', shape: 'guess' },
+    newton_raphson: { method: 'newton_raphson', shape: 'guess' },
+    bisection: { method: 'bisection', shape: 'bracket' },
+    secant: { method: 'secant', shape: 'bracket' },
+    romberg: { method: 'romberg_integration', shape: 'bounds' },
+    romberg_integration: { method: 'romberg_integration', shape: 'bounds' },
+    simpson: { method: 'numerical_integration', shape: 'bounds' },
+    numerical_integration: { method: 'numerical_integration', shape: 'bounds' },
   };
-  const INTEGRATION_METHODS = ['romberg_integration', 'numerical_integration'];
 
   let method = 'newton_raphson';
-  for (const [key, m] of Object.entries(methodMap)) {
+  let shape: NumericArgShape = 'guess';
+  for (const [key, entry] of Object.entries(methodMap)) {
     if (trimmed.startsWith(key + '(') || trimmed.startsWith(key + ' (')) {
-      method = m;
+      method = entry.method;
+      shape = entry.shape;
       break;
     }
   }
@@ -667,30 +722,17 @@ export function extractNumericalMethods(problem: string): RouteResult {
   const variable = hasVariable ? parts[1].trim() : guessVariable(expression);
   const numbers = parts.slice(hasVariable ? 2 : 1).map((n) => parseFloat(n));
 
-  // bisection and secant need a bracket, and the extractor only ever emitted
-  // `initial_guess` — so both reported "requires x0 and x1" for every input.
-  // Each method reads different fields: a bracket, a pair of bounds, or a
-  // single starting point. Only `initial_guess` was ever emitted, so both
-  // integrations reported "requires lower_bound and upper_bound".
-  const [first, second] = numbers;
-  const bracket =
-    method === 'bisection' || method === 'secant'
-      ? {
-          ...(Number.isFinite(first) ? { x0: first } : {}),
-          ...(Number.isFinite(second) ? { x1: second } : {}),
-        }
-      : INTEGRATION_METHODS.includes(method)
-        ? {
-            ...(Number.isFinite(first) ? { lower_bound: first } : {}),
-            ...(Number.isFinite(second) ? { upper_bound: second } : {}),
-          }
-        : Number.isFinite(first)
-          ? { initial_guess: first }
-          : {};
+  // Only `initial_guess` was ever emitted, so bisection and secant reported
+  // "requires x0 and x1" and both integrations reported "requires lower_bound
+  // and upper_bound".
+  const positionalArgs: Record<string, number> = {};
+  NUMERIC_ARG_FIELDS[shape].forEach((field, i) => {
+    if (Number.isFinite(numbers[i])) positionalArgs[field] = numbers[i];
+  });
 
   return {
     handler: 'numerical_methods',
-    args: { method, expression, variable, ...bracket },
+    args: { method, expression, variable, ...positionalArgs },
   };
 }
 
@@ -757,7 +799,14 @@ export function extractLinearRegression(problem: string): RouteResult {
 
   if (trimmed.startsWith('polynomial_regression') || trimmed.includes('polynomial')) {
     args['model'] = 'polynomial';
-    const degree = Number(parts[parts.length - 1]);
+    // `named['degree']` is already parsed above and was never read: the code
+    // took `parts[last]` verbatim, so `Number('degree=2')` was NaN and the key
+    // stayed unset. linearRegressionHandler then defaulted to 1, and
+    // `polynomial_regression(x=[1,2,3,4], y=[1,4,9,16], degree=2)` answered a
+    // straight line (ŷ = 5x - 5, R² = 0.969) for data whose fit is ŷ = x².
+    const named = parseCallArgs(inner).named;
+    const degree =
+      typeof named['degree'] === 'number' ? named['degree'] : Number(parts[parts.length - 1]);
     if (Number.isInteger(degree) && degree > 0) args['degree'] = degree;
   }
 
@@ -770,7 +819,7 @@ export function extractSequenceIdentify(problem: string): RouteResult {
   // Same parser as fourier: `JSON.parse('[' + '[1,2,3]' + ']')` yields
   // [[1,2,3]], so the bracketed form used to arrive as one element and the
   // arity guard then blamed the user for supplying one term.
-  const terms = parseSampleList(extractFnArgs(problem)) ?? [];
+  const terms = parseNumberList(extractFnArgs(problem)) ?? [];
   return { handler: 'sequence_identify', args: { terms } };
 }
 
@@ -802,7 +851,7 @@ export function extractFourier(problem: string): RouteResult {
 
   // No `data` is what makes the handler explain itself; there is no consumer
   // for the raw argument, so passing it along would be another phantom field.
-  const data = parseSampleList(inner);
+  const data = parseNumberList(inner);
   return { handler: 'fourier', args: data ? { mode, data } : { mode } };
 }
 

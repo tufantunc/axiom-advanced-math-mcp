@@ -81,30 +81,39 @@ export async function linearRegressionHandler(args: Record<string, unknown>) {
   const x = args.x as number[];
   const y = args.y as number[];
   const model = (args.model as string) || 'linear';
-  const degree = (args.degree as number) || 1;
+  // `|| 1` treats an explicit degree of 0 as absent, so the validation below
+  // never saw it and a degree-0 request silently became a linear fit.
+  const degree = args.degree === undefined ? 1 : (args.degree as number);
 
+  // Shape first, then values, then the parameter. Checking `degree` before the
+  // lengths matched reported "degree must be ... below the number of points (3)"
+  // for `x=[1,2,3], y=[1,2]`, naming the wrong field and citing x's length while
+  // the actual defect was that y was shorter.
   if (!Array.isArray(x) || !Array.isArray(y) || x.length < 2 || y.length < 2) {
     return formatErrorResponse(
       'linear_regression requires x and y arrays with at least 2 points each'
     );
   }
+  if (x.length !== y.length) {
+    return formatErrorResponse(
+      `x and y must have the same length (got ${x.length} and ${y.length})`
+    );
+  }
   if (!x.every(Number.isFinite) || !y.every(Number.isFinite)) {
     return formatErrorResponse('x and y must contain only finite numbers');
   }
-  // A degree at or above the point count is not identifiable, and an unbounded
-  // one builds a Vandermonde matrix large enough to trap the WASM engine —
-  // `degree=3000` used to take the whole CAS down for the process lifetime.
-  if (!Number.isInteger(degree) || degree < 1 || degree > MAX_FIT_DEGREE || degree >= x.length) {
+  // Only the polynomial branch reads `degree`, so a caller pairing an explicit
+  // degree with `model: 'exponential'` was rejected on a parameter the fit
+  // ignores. A degree at or above the point count is not identifiable, and an
+  // unbounded one builds a Vandermonde matrix large enough to trap the WASM
+  // engine — `degree=3000` used to take the CAS down for the process lifetime.
+  if (
+    model === 'polynomial' &&
+    (!Number.isInteger(degree) || degree < 1 || degree > MAX_FIT_DEGREE || degree >= x.length)
+  ) {
     return formatErrorResponse(
       `degree must be an integer between 1 and ${MAX_FIT_DEGREE}, and below the number of points (${x.length})`
     );
-  }
-
-  if (x.length !== y.length) {
-    return {
-      content: [{ type: 'text' as const, text: 'Error: x and y must have the same length' }],
-      isError: true,
-    };
   }
 
   try {
@@ -129,10 +138,7 @@ export async function linearRegressionHandler(args: Record<string, unknown>) {
       );
     } else if (model === 'exponential') {
       if (y.some((yi) => yi <= 0)) {
-        return {
-          content: [{ type: 'text' as const, text: 'Error: exponential model requires all y > 0' }],
-          isError: true,
-        };
+        return formatErrorResponse('exponential model requires all y > 0');
       }
       const logY = y.map(Math.log);
       const { coeffs } = await polynomialFit(x, logY, 1);
@@ -151,10 +157,7 @@ export async function linearRegressionHandler(args: Record<string, unknown>) {
       );
     } else if (model === 'logarithmic') {
       if (x.some((xi) => xi <= 0)) {
-        return {
-          content: [{ type: 'text' as const, text: 'Error: logarithmic model requires all x > 0' }],
-          isError: true,
-        };
+        return formatErrorResponse('logarithmic model requires all x > 0');
       }
       const logX = x.map(Math.log);
       const { coeffs } = await polynomialFit(logX, y, 1);
@@ -172,12 +175,7 @@ export async function linearRegressionHandler(args: Record<string, unknown>) {
       );
     } else if (model === 'power') {
       if (x.some((xi) => xi <= 0) || y.some((yi) => yi <= 0)) {
-        return {
-          content: [
-            { type: 'text' as const, text: 'Error: power model requires all x > 0 and y > 0' },
-          ],
-          isError: true,
-        };
+        return formatErrorResponse('power model requires all x > 0 and y > 0');
       }
       const logX = x.map(Math.log);
       const logY = y.map(Math.log);

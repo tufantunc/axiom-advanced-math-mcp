@@ -59,6 +59,21 @@ async function newtonRaphson(
   return lines;
 }
 
+/**
+ * Simpson's rule costs one Giac call per subinterval. 200 points keeps a
+ * well-behaved integrand near the cost of a single evaluation; the wall-clock
+ * budget below is what actually bounds a hostile integrand, since the caller
+ * chooses how expensive each of those calls is.
+ */
+const MAX_SIMPSON_POINTS = 200;
+const DEFAULT_SIMPSON_POINTS = 200;
+/**
+ * Read per call rather than at module load so a test can shrink it: the real
+ * budget takes ~11s to trip, which is too slow to assert in the unit suite.
+ * Mirrors AXIOM_EVAL_TIMEOUT_MS, the per-call bound this one sits above.
+ */
+const integrationBudgetMs = (): number => Number(process.env.AXIOM_INTEGRATION_BUDGET_MS ?? 10_000);
+
 async function bisection(
   expr: string,
   variable: string,
@@ -195,7 +210,20 @@ async function simpsonIntegration(
   const fb = await evalAt(expr, variable, b);
   sum = fa + fb;
 
+  // One Giac round trip per subinterval, and the caller controls the integrand,
+  // so the per-call AXIOM_EVAL_TIMEOUT_MS never fires while the total runs away:
+  // a 78-character problem measured 18.4s at 1000 points and was still running
+  // after 10 minutes with a heavier integrand. The whole handler holds the
+  // global CAS mutex, so that stalls every other client too. Bound the sum.
+  const budgetMs = integrationBudgetMs();
+  const deadline = Date.now() + budgetMs;
   for (let i = 1; i < n; i++) {
+    if (Date.now() > deadline) {
+      throw new Error(
+        `numerical_integration exceeded its ${budgetMs}ms budget after ${i} of ${n} points — ` +
+          `try a simpler integrand or a smaller n_points`
+      );
+    }
     const xi = a + i * h;
     const fxi = await evalAt(expr, variable, xi);
     sum += (i % 2 === 0 ? 2 : 4) * fxi;
@@ -251,7 +279,13 @@ export async function numericalMethodsHandler(args: Record<string, unknown>) {
       case 'numerical_integration': {
         const a = args.lower_bound as number,
           b = args.upper_bound as number;
-        const n = (args.n_points as number) || 1000;
+        const requested = (args.n_points as number) || DEFAULT_SIMPSON_POINTS;
+        if (!Number.isInteger(requested) || requested < 2 || requested > MAX_SIMPSON_POINTS) {
+          return formatErrorResponse(
+            `n_points must be an integer between 2 and ${MAX_SIMPSON_POINTS}, got ${String(requested)}`
+          );
+        }
+        const n = requested;
         if (a === undefined || b === undefined)
           return formatErrorResponse('numerical_integration requires lower_bound and upper_bound');
         lines = await simpsonIntegration(expr, variable, a, b, n);
@@ -261,9 +295,30 @@ export async function numericalMethodsHandler(args: Record<string, unknown>) {
         return formatErrorResponse(`Unknown method: ${method}`);
     }
 
-    const lastLine = lines[lines.length - 1];
-    const resultMatch = lastLine.match(/(?:Root|Result)[:\s]*(.+)/);
-    const mainResult = resultMatch ? resultMatch[1].trim() : lastLine;
+    // A failure is signalled in-band, as a line beginning `✗ Error:`. Shipping
+    // that through formatToolResponse made `bisection(x^2-2, 3, 4)` answer
+    // "Bisection requires a sign change in [x0, x1]" with isError:false — a
+    // failure the caller reads as the result. Reachable only since the extractor
+    // started emitting x0/x1, which is what makes these methods run at all.
+    const failure = lines.find((l) => /^\s*✗?\s*Error:/.test(l));
+    if (failure) {
+      return formatErrorResponse(
+        lines
+          .slice(1)
+          .join(' ')
+          .replace(/^\s*✗?\s*Error:\s*/, '')
+      );
+    }
+
+    // The answer to "find a root" is the root, not the residual. Scanning only
+    // the last line found `f(root) = 3.154474e-11`, and the `Root|Result` regex
+    // is case-sensitive so lowercase `f(root)` fell through to the raw line —
+    // so `bisection(x^2-2, 1, 2)` answered 3.15e-11 for a root of 1.4142136.
+    const answer =
+      lines.find((l) => /^Root:/.test(l)) ??
+      lines.find((l) => /^Result/.test(l)) ??
+      lines[lines.length - 1];
+    const mainResult = answer.replace(/^[^=:]*[=:]\s*/, '').trim();
 
     return formatToolResponse({
       result: mainResult,

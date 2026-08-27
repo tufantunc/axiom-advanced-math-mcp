@@ -44,11 +44,22 @@ function startsWith(problem: string, ...names: string[]): boolean {
   });
 }
 
-/** Check if problem contains keyword (whole-word, case-insensitive). */
+/**
+ * Does the problem contain this keyword as a whole verb, case-insensitive?
+ *
+ * A trailing underscore still counts as a boundary, because a handler's own
+ * operation name is usually its short verb plus a suffix: `\bbell\b` found no
+ * boundary inside `bell_number`, so `bell_number(5)` matched no rule at all,
+ * fell through to the raw CAS, and came back as its own answer. Same for
+ * `stirling_first`, `two_sample_t_test` and `romberg_integration`.
+ *
+ * A LEADING underscore or alphanumeric still blocks the match, so `bell` does
+ * not match `barbell`.
+ */
 function hasKeyword(problem: string, ...keywords: string[]): boolean {
   const lc = problem.toLowerCase();
   return keywords.some((kw) => {
-    const re = new RegExp(`\\b${kw.toLowerCase()}\\b`);
+    const re = new RegExp(`(?<![a-z0-9_])${kw.toLowerCase()}(?![a-z0-9])`);
     return re.test(lc);
   });
 }
@@ -102,15 +113,18 @@ function isBracketBalanced(problem: string): boolean {
 /**
  * `beta(...)` as the probability distribution rather than Giac's Beta function.
  *
- * README advertises `beta` as a distribution, but the router only knew
- * `beta_dist`, so `beta(a=2, b=3, x=0.5)` fell through to the CAS and came back
- * as the string "beta". The two spellings are distinguishable by their
- * arguments: a distribution query names its parameters, while Giac's Beta
- * function takes two positional numbers — `beta(2,3)`, which must keep working.
+ * README advertises `beta` as a distribution, but the router knew only
+ * `beta_dist`, so `beta(alpha=2, b=3, x=0.5)` fell through to the CAS and came
+ * back as the string "beta".
+ *
+ * Giac spells its Beta function with a capital B — `Beta(2,3)` is 1/12, while
+ * lowercase `beta(2,3)` is not a Giac function at all and was returned
+ * unevaluated as its own answer. So case is the discriminator, and claiming
+ * every lowercase call means a positional one gets the handler's own "requires
+ * params alpha and beta" instead of an echo.
  */
 function isBetaDistributionCall(problem: string): boolean {
-  if (!startsWith(problem, 'beta')) return false;
-  return /\b(a|b|alpha|beta|x|p)\s*=(?!=)/i.test(problem);
+  return /^\s*beta\s*\(/.test(problem);
 }
 
 /**
@@ -240,7 +254,7 @@ const rules: RouterRule[] = [
   // 7. ODE
   {
     name: 'calculus:solve_ode',
-    test: (p) => startsWith(p, 'desolve', 'dsolve', 'odesolve') || looksLikeOde(p),
+    test: (p) => startsWith(p, 'desolve', 'dsolve', 'odesolve', 'solve_ode') || looksLikeOde(p),
     extract: extractOde,
   },
 
@@ -356,13 +370,10 @@ const rules: RouterRule[] = [
         'derangements',
         'partitions',
         'multinomial',
-        // The handler's own operation names: `\bbell\b` has no boundary inside
-        // `bell_number`, so `bell_number(5)` answered `bell_number(5)`.
-        'bell_number',
-        'catalan_number',
-        'partition_count',
-        'stirling_first',
-        'stirling_second'
+        // `partitions` does not cover `partition_count` — that is a
+        // plural/singular mismatch, not a word boundary, so hasKeyword's
+        // trailing-underscore rule cannot reach it.
+        'partition_count'
       );
     },
     extract: extractCombinatorics,
@@ -372,7 +383,7 @@ const rules: RouterRule[] = [
   {
     name: 'probability',
     test: (p) =>
-      hasKeyword(
+      (hasKeyword(
         p,
         'binomial',
         'normal',
@@ -385,20 +396,25 @@ const rules: RouterRule[] = [
         'beta_dist',
         'exponential_dist'
       ) ||
-      startsWith(
-        p,
-        'binomial',
-        'normal',
-        'poisson',
-        'geometric',
-        'hypergeometric',
-        'chi_square',
-        'student_t',
-        'f_distribution',
-        'beta_dist',
-        'exponential'
-      ) ||
-      isBetaDistributionCall(p),
+        startsWith(
+          p,
+          'binomial',
+          'normal',
+          'poisson',
+          'geometric',
+          'hypergeometric',
+          'chi_square',
+          'student_t',
+          'f_distribution',
+          'beta_dist',
+          'exponential'
+        ) ||
+        isBetaDistributionCall(p)) &&
+      // `chi_square` names both a distribution and a test of independence, and
+      // this rule is matched before the hypothesis rule. Without this the
+      // boundary fix in hasKeyword would hand `chi_square_test(...)` and
+      // `chi_square_independence(...)` to the distribution handler.
+      !startsWith(p, 'chi_square_test', 'chi_square_independence'),
     extract: extractProbability,
   },
 
@@ -416,12 +432,7 @@ const rules: RouterRule[] = [
         'paired_t',
         'one_way_anova',
         'chi_square_independence'
-      ) ||
-      // `_test`-suffixed spellings defeat hasKeyword: `\btwo_sample_t\b` finds
-      // no boundary inside `two_sample_t_test`, so the call fell through to the
-      // raw CAS, which echoed `two_sample_t_test([1,2,3],[4,5,6])` back as the
-      // Result with isError:false — the input returned as its own answer.
-      startsWith(p, 'one_sample_t_test', 'two_sample_t_test', 'paired_t_test', 'anova_test'),
+      ),
     extract: extractHypothesisTesting,
   },
 
@@ -485,10 +496,7 @@ const rules: RouterRule[] = [
     test: (p, d) =>
       d === 'numeric' ||
       startsWith(p, 'newton', 'bisection', 'secant', 'romberg', 'simpson') ||
-      // `\bromberg\b` finds no boundary inside `romberg_integration`, so the
-      // handler's own name for the operation was claimed by no rule and fell
-      // through to the CAS, which returned the call unevaluated as the answer.
-      hasKeyword(p, 'newton_raphson', 'numerical_integration', 'romberg_integration'),
+      hasKeyword(p, 'newton_raphson', 'numerical_integration', 'romberg', 'simpson'),
     extract: extractNumericalMethods,
   },
 

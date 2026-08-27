@@ -1,4 +1,5 @@
 import { giacEngine } from '../giac/index.js';
+import { splitTopLevel } from './output-cleanup.js';
 import { formatToolResponse, formatErrorResponse } from './response-formatter.js';
 import { erf } from './stats-utils.js';
 
@@ -12,6 +13,17 @@ function combinations(n: number, k: number): number {
   }
   return result;
 }
+
+/**
+ * Bounds the discrete count parameters (n, k, N, K).
+ *
+ * `factorial` below is a plain-number loop, and the Poisson cdf branch calls it
+ * once per i up to k — so `poisson(lambda=2, k=1e9)` ran a billion-iteration
+ * loop in the server process, where the Giac worker timeout cannot reach it.
+ * Beyond ~170 the double overflows to Infinity anyway, so nothing exact is lost:
+ * the cap only replaces a NaN answer with an error.
+ */
+const MAX_COUNT = 100_000;
 
 function factorial(n: number): number {
   let result = 1;
@@ -91,7 +103,8 @@ function binomial(op: string, params: Record<string, number>): CalcResult {
     const prob = combinations(n, k) * Math.pow(p, k) * Math.pow(q, n - k);
     lines.push(`P(X = ${k}) = C(${n},${k}) × ${p}^${k} × ${q}^${n - k}`);
     lines.push(`P(X = ${k}) = ${prob}`);
-    lines.push(`E[X] = ${ev}, Var(X) = ${variance}`);
+    lines.push(`E[X] = ${ev}`);
+    lines.push(`Var(X) = ${variance}`);
     return { lines };
   }
 
@@ -102,7 +115,8 @@ function binomial(op: string, params: Record<string, number>): CalcResult {
     }
     lines.push(`P(X ≤ ${k}) = Σ P(X=i) for i=0..${k}`);
     lines.push(`P(X ≤ ${k}) = ${cumProb}`);
-    lines.push(`E[X] = ${ev}, Var(X) = ${variance}`);
+    lines.push(`E[X] = ${ev}`);
+    lines.push(`Var(X) = ${variance}`);
     return { lines };
   }
 
@@ -444,7 +458,8 @@ function exponentialDist(op: string, params: Record<string, number>): CalcResult
   if (x === undefined) return { lines: ['Error: pmf/cdf requires param x'] };
   if (op === 'pmf') {
     const pdf = lambda * Math.exp(-lambda * x);
-    lines.push(`f(${x}) = λ×e^(-λx) = ${pdf}`);
+    lines.push(`f(x) = λ×e^(-λx)`);
+    lines.push(`f(${x}) = ${pdf}`);
     return { lines };
   }
   if (op === 'cdf') {
@@ -456,20 +471,80 @@ function exponentialDist(op: string, params: Record<string, number>): CalcResult
 }
 
 /**
- * Every distribution here implements its density/mass branch under the name
- * `pmf`, and nothing branches on `pdf` — so a query carrying `pdf`, or no
- * operation at all, fell past every branch and returned only the header line:
- * `normal(mu=0, sigma=1, x=1)` answered "Normal(μ=0, σ=1)" instead of the
- * density at x = 1, with isError:false.
+ * The density/mass branch is implemented under the name `pmf`, and nothing
+ * branches on `pdf` — so a query carrying `pdf`, or no operation at all, fell
+ * past every branch and returned only the header line: `normal(mu=0, sigma=1,
+ * x=1)` answered "Normal(μ=0, σ=1)" instead of the density at 1, isError:false.
+ *
+ * The extractor now emits `pmf` directly. `pdf` is kept as an alias because it
+ * is the standard name for the continuous case and a caller invoking this
+ * handler directly may well use it.
  */
 function densityOrGiven(op: string | undefined): string {
   return op === undefined || op === 'pdf' ? 'pmf' : op;
+}
+
+/**
+ * The line carrying the answer to the operation that was actually asked for.
+ *
+ * The headline used to be `lines[lines.length - 1]` — whatever a branch happened
+ * to push last. Once the pdf->pmf alias made the density branches reachable that
+ * became the trailing note rather than the value: `normal(mu=0, sigma=1, x=1)`
+ * answered "1" (the z-score) for a density of 0.2419707, and
+ * `binomial(n=10, p=0.5, k=3)` answered "5, Var(X) = 2.5" for a mass of
+ * 0.1171875. A plausible wrong number is worse than the header-only non-answer
+ * it replaced.
+ *
+ * Each branch pushes its formula first and its value second, so scan backwards
+ * and take the last line matching the operation's own shape.
+ */
+const ANSWER_LINE: Record<string, RegExp> = {
+  pmf: /^(f\(|P\(X = )/,
+  cdf: /^P\(X \u2264 /,
+  expected_value: /^E\[X\]/,
+  variance: /^Var\(X\)/,
+  quantile: /\u2192 x = /,
+};
+
+/**
+ * The value on a `label = value` line.
+ *
+ * The old strip cut at the FIRST `=` or `:`, which for `P(X = 3) = 0.1171875`
+ * sits inside the label — so the headline read "3) = 0.1171875". Split on
+ * top-level separators only and take the last part.
+ */
+function valueOf(line: string): string {
+  const parts = splitTopLevel(line, '=');
+  if (parts.length > 1) return parts[parts.length - 1].trim();
+  return line.replace(/^[^:]*:\s*/, '').trim();
+}
+
+function answerLine(op: string, lines: string[]): string {
+  const shape = ANSWER_LINE[op];
+  if (shape) {
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (shape.test(lines[i])) return lines[i];
+    }
+  }
+  return lines[lines.length - 1];
 }
 
 export async function probabilityCalcHandler(args: Record<string, unknown>) {
   const dist = args.distribution as string;
   const op = densityOrGiven(args.operation as string | undefined);
   const params = args.params as Record<string, number>;
+
+  // Each distribution reads these with a default (`params.sigma ?? 1`), so a
+  // value that is not a number would silently become the default rather than a
+  // reported problem.
+  for (const [key, value] of Object.entries(params ?? {})) {
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      return formatErrorResponse(`${key} must be a finite number, got ${String(value)}`);
+    }
+    if (['n', 'k', 'N', 'K'].includes(key) && Math.abs(value) > MAX_COUNT) {
+      return formatErrorResponse(`${key} is limited to ${MAX_COUNT}, got ${value}`);
+    }
+  }
 
   try {
     let result: CalcResult;
@@ -509,17 +584,34 @@ export async function probabilityCalcHandler(args: Record<string, unknown>) {
         result = { lines: [`Error: Unknown distribution: ${dist}`] };
     }
 
-    // These functions signal a validation failure by returning a single
-    // `Error: ...` line, which formatToolResponse ships with isError:false — so
+    // These functions signal a validation failure by returning an `Error: ...`
+    // line, which formatToolResponse ships with isError:false — so
     // `beta(a=2, b=3, x=0.5)` answered "The answer is beta requires params
     // alpha and beta" as a SUCCESS, which an LLM caller reads as a result.
-    // Same convention, same fix as hypothesis-testing.ts (audit F-S10-b); the
-    // proper fix is a discriminated outcome instead of prose plus a convention.
-    if (result.lines.length === 1 && result.lines[0].startsWith('Error: ')) {
-      return formatErrorResponse(result.lines[0].slice('Error: '.length));
+    //
+    // Test the LAST line, not a one-line array: handleGiacDistOps prepends the
+    // `Distribution: ...` header to its errors, so chi_square, student_t,
+    // f_distribution and beta never produced a single-line failure and kept
+    // reporting `chi_square(df=3)` as "The answer is pmf/cdf requires param x".
+    //
+    // These functions should return a discriminated outcome rather than prose
+    // plus a convention; until they do, each entry point enforces it. The same
+    // convention is honoured in numerical-methods.ts.
+    const lastLine = result.lines[result.lines.length - 1];
+    if (lastLine.startsWith('Error: ')) {
+      return formatErrorResponse(lastLine.slice('Error: '.length));
     }
 
-    const mainResult = result.lines[result.lines.length - 1].replace(/^[^=:]*[=:]\s*/, '');
+    const mainResult = valueOf(answerLine(op, result.lines));
+
+    // A numeric branch that overflowed or divided by zero used to report its
+    // NaN as the answer with isError:false — `poisson(lambda=2, k=1e9)` said
+    // "The answer is NaN", and `normal(mu=0, sigma=0, x=1)` said "Infinity".
+    if (/^-?(NaN|Infinity)$/.test(mainResult)) {
+      return formatErrorResponse(
+        `${dist} ${op} is not defined for these parameters (computed ${mainResult})`
+      );
+    }
     return formatToolResponse({
       result: mainResult,
       notes: result.lines,

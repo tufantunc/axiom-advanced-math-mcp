@@ -137,9 +137,13 @@ export class WasmGiacEngine implements GiacEngine {
     try {
       return _caseval(expression);
     } catch (error) {
-      throw new Error(
-        `Giac WASM evaluation error: ${error instanceof Error ? error.message : String(error)}`
-      );
+      // Keep the constructor name, not just the message. A WebAssembly trap
+      // carries its identity in `name` (`RuntimeError`) while `message` is the
+      // bare reason ("memory access out of bounds"), so flattening to `.message`
+      // left the worker's trap classifier matching Emscripten's exact wording
+      // and nothing else.
+      const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+      throw new Error(`Giac WASM evaluation error: ${detail}`);
     }
   }
 

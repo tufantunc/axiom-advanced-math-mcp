@@ -47,13 +47,13 @@ const CAPABILITIES: [string, RegExp][] = [
   ['diff(x^3, x)', /^Result: 3\*x\^2$/m],
   ['int(x^2, x, 0, 1)', /^Result: 1\/3$/m],
   ['limit(sin(x)/x, x, 0)', /^Result: 1$/m],
-  ['taylor(exp(x), x=0, 5)', /x\^2/],
-  ["desolve(y'=x, y)", /x\*y|y\^2|c_0/],
+  ['taylor(exp(x), x=0, 5)', /^Result: 1\+x\+1\/2\*x\^2\+1\/6\*x\^3\+1\/24\*x\^4\+1\/120\*x\^5$/m],
+  ["desolve(y'=x, y)", /^Result: \(2\*c_0\+x\^2\)\/2$/m],
   // Algebra
   ['factor(x^2-4)', /^Result: \(x-2\)\*\(x\+2\)$/m],
   ['simplify((x^2-1)/(x-1))', /^Result: x\+1$/m],
-  ['expand((x+1)^3)', /x\^3/],
-  ['partfrac(1/(x^2-1))', /x-1|x\+1/],
+  ['expand((x+1)^3)', /^Result: x\^3\+3\*x\^2\+3\*x\+1$/m],
+  ['partfrac(1/(x^2-1))', /^Result: 1\/2\/\(x-1\)-1\/2\/\(x\+1\)$/m],
   // Linear algebra
   ['det([[1,2],[3,4]])', /^Result: -2$/m],
   ['inv([[1,2],[3,4]])', /^Result: \[\[-2,1\],\[3\/2,-1\/2\]\]$/m],
@@ -65,7 +65,7 @@ const CAPABILITIES: [string, RegExp][] = [
   ['C(10,3)', /^Result: 120$/m],
   ['multinomial(5, [2,2,1])', /^Result: 30$/m],
   // Probability / statistics
-  ['normal(mu=0, sigma=1, x=1)', /Normal|0\.24/],
+  ['normal(mu=0, sigma=1, x=1)', /^Result: 0\.24197072451/m],
   ['t_test(mu0=5, data=[1,2,3,4,5])', /^t-statistic = -2\.828427$/m],
   ['two_sample_t([1,2,3],[4,5,6])', /^t-statistic = -3\.674235$/m],
   ['paired_t([10,12,14],[12,15,16])', /^t-statistic = -7\.000000$/m],
@@ -76,16 +76,16 @@ const CAPABILITIES: [string, RegExp][] = [
   ['two_sample_t_test([1,2,3],[4,5,6])', /^t-statistic = -3\.674235$/m],
   ['paired_t_test([10,12,14],[12,15,16])', /^t-statistic = -7\.000000$/m],
   // Exact values — extractor emitted `expression`, handler read `value`
-  ['to_exact(0.5)', /1\/2/],
-  ['to_decimal(1/3)', /0\.333/],
-  ['simplify_fraction(4/8)', /1\/2/],
+  ['to_exact(0.5)', /^Result: 1\/2$/m],
+  ['to_decimal(1/3)', /^Result: 0\.3333333333333333$/m],
+  ['simplify_fraction(4/8)', /^Result: 1\/2$/m],
   // Regression — extractor emitted a bare array, handler read x/y
-  ['linear_regression([[1,2],[2,4],[3,6]])', /Linear|Equation/],
-  ['polynomial_regression([[1,2],[2,5],[3,10]], 2)', /Polynomial/],
+  ['linear_regression([[1,2],[2,4],[3,6]])', /^Equation: ŷ = 2\.00000x$/m],
+  ['polynomial_regression([[1,2],[2,5],[3,10]], 2)', /^Equation: ŷ = x\^2 \+ 1\.00000$/m],
   // Sequences
-  ['sequence(2,4,6,8)', /Arithmetic/],
+  ['sequence(2,4,6,8)', /^Next 3 terms: 10, 12, 14$/m],
   // Geometry — named arguments landed in a `raw` field nobody read
-  ['area_circle(radius=2)', /12\.56/],
+  ['area_circle(radius=2)', /^Result: 12\.5663706144$/m],
   ['area_triangle(base=4, height=3)', /^Result: 6$/m],
   ['distance([0,0],[3,4])', /^Result: 5$/m],
   // A polygon given as one bracketed list arrived double-nested — read as a
@@ -98,26 +98,30 @@ const CAPABILITIES: [string, RegExp][] = [
   ['point_line_distance([0,0],[3,4,-5])', /^Result: 1$/m],
   ['point_line_distance([0,0], 3, 4, -5)', /^Result: 1$/m],
   // 3D geometry
-  ['distance3d([0,0,0],[1,1,1])', /1\.73/],
-  ['volume_sphere(2)', /33\.5|Volume/],
+  ['distance3d([0,0,0],[1,1,1])', /^Result: 1\.7320508076$/m],
+  ['volume_sphere(2)', /^Result: 33\.5103216383$/m],
   // Multivariable
   ['gradient(x*y, [x,y])', /^Result: \[y,x\]$/m],
-  ['critical_points(x^2+y^2, [x,y])', /minimum/],
+  ['critical_points(x^2+y^2, [x,y])', /^Result: \(0, 0\): local minimum \[D=4, f_xx=2\]$/m],
   ['lagrange(x*y, x+y, 1, [x, y])', /^Result: \(1\/2, 1\/2\): f = 1\/4$/m],
   // Transforms — every field name missed; crashed on all input
-  ['fft([1,2,3,4])', /n = 4 samples/],
-  ['ifft([1,0,1,0])', /Reconstructed/],
+  ['fft([1,2,3,4])', /^\s+\[1\] f=0\.2500\s+-2\.000000 \+2\.000000i$/m],
+  ['ifft([1,0,1,0])', /^\s+\[0\]\s+0\.50000000$/m],
   ['laplace(exp(-2*t),t,s)', /^Result: 1\/\(s\+2\)$/m],
   // Numerical methods
-  ['newton(x^2-2, x, 1)', /^Root: x = 1\.41421356/m],
+  ['newton(x^2-2, x, 1)', /^Result: x = 1\.41421356/m],
   // bisection and secant need a bracket; the extractor only emitted
   // `initial_guess`, and took the bracket's lower bound as the variable name.
-  ['bisection(x^2-2, 1, 2)', /^Root: x = 1\.41421356/m],
-  ['bisection(x^2-2, x, 1, 2)', /^Root: x = 1\.41421356/m],
-  ['secant(x^2-2, 1, 2)', /^Root: x = 1\.41421356/m],
-  ['secant(x^2-2, x, 1, 2)', /^Root: x = 1\.41421356/m],
+  ['bisection(x^2-2, 1, 2)', /^Result: x = 1\.41421356/m],
+  ['bisection(x^2-2, x, 1, 2)', /^Result: x = 1\.41421356/m],
+  ['secant(x^2-2, 1, 2)', /^Result: x = 1\.41421356/m],
+  ['secant(x^2-2, x, 1, 2)', /^Result: x = 1\.41421356/m],
+  // Giac's Beta function is capital-B; the lowercase spelling is the
+  // distribution, and a positional call must say what it needs rather than
+  // coming back as its own answer.
+  ['Beta(2,3)', /^Result: 1\/12$/m],
   // Arithmetic fast path
-  ['2+3*sin(pi/4)', /4\.12|√2/],
+  ['2+3*sin(pi/4)', /^Result: 2\+3\*√2\/2$/m],
 ];
 
 /**
@@ -152,7 +156,9 @@ describe('every advertised capability answers through compute', () => {
     // failures as ordinary output lines, so a seam mismatch there surfaces as
     // isError:false with an `Error:` body. This is the dominant failure
     // signature in this codebase, not a thrown TypeError.
-    expect(text(r), problem).not.toMatch(/(^|: )Error:/m);
+    // `/(^|: )Error:/m` missed " Error:" with a leading space, which is how a
+    // GIAC_ERROR reply reads.
+    expect(text(r), problem).not.toMatch(/Error:|GIAC_ERROR/i);
 
     // Match the answer, not the whole response. The `Command:` line echoes the
     // input, so an unanchored regex can be satisfied by the problem string —

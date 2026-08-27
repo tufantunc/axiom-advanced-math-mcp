@@ -2,13 +2,11 @@
  * Parsing primitives for a problem string's argument list.
  *
  * These are the "how do I read an argument" half of routing; `extractors.ts`
- * keeps the "which handler owns this verb" half. They were interleaved until
- * three separate `name=value` parsers with three different coercion policies
- * ended up in one file — `area_circle(radius=2)` worked, `t_test(mu0=5, ...)`
- * worked, and `linear_regression(x=[1,2,3], y=[2,4,6])` returned NaN.
+ * keeps the "which handler owns this verb" half.
  *
- * One coercion policy lives here: JSON if the text is JSON, else a finite
- * number, else the raw string. No Giac calls, no I/O.
+ * One coercion policy lives here — JSON if the text is JSON, else a finite
+ * number, else the raw string — and every caller goes through it, so a fix to
+ * named-argument handling lands in one place. No Giac calls, no I/O.
  */
 
 /** The text between a call's outermost parentheses, or the whole string. */
@@ -59,7 +57,13 @@ export function splitArgs(inner: string, splitOnSemicolons = false): string[] {
 function coerceValue(raw: string): unknown {
   const text = raw.trim();
   try {
-    return JSON.parse(text) as unknown;
+    const parsed: unknown = JSON.parse(text);
+    // The JSON branch skipped the finiteness check the Number branch applies,
+    // and `JSON.parse('1e999')` is Infinity — so `t_test(mu0=1e999, ...)`
+    // reported "H₀: μ = Infinity" and a maximally confident rejection. Keep the
+    // text so a caller sees what they typed rather than a degenerate number.
+    if (typeof parsed === 'number' && !Number.isFinite(parsed)) return text;
+    return parsed;
   } catch {
     const num = Number(text);
     return Number.isFinite(num) ? num : text;
@@ -117,28 +121,12 @@ export function parseBracketList(s: string): string[] {
 export function parseNumberList(s: string): number[] | null {
   const parts = parseBracketList(s);
   if (parts.length === 0) return null;
+  // `Number('')` is 0, and a doubled comma yields an empty part — so `[1,,3]`
+  // parsed as [1, 0, 3] and passed the finiteness check below, answering
+  // `dot([1,,3],[1,2,3])` = 10 for a vector the caller never wrote.
+  if (parts.some((part) => part.trim() === '')) return null;
   const nums = parts.map(Number);
   return nums.every((n) => Number.isFinite(n)) ? nums : null;
-}
-
-/** A flat list of finite numeric samples, from `f([1,2,3])` or `f(1,2,3)`. */
-export function parseSampleList(inner: string): number[] | null {
-  const trimmed = inner.trim();
-  if (!trimmed) return null;
-  const source = trimmed.startsWith('[') ? trimmed : `[${trimmed}]`;
-  try {
-    const parsed: unknown = JSON.parse(source);
-    if (
-      Array.isArray(parsed) &&
-      parsed.length > 0 &&
-      parsed.every((n) => typeof n === 'number' && Number.isFinite(n))
-    ) {
-      return parsed as number[];
-    }
-  } catch {
-    /* not a sample list */
-  }
-  return null;
 }
 
 /** `[[1,2],[2,4]]` as (x, y) pairs, or null if it is not that shape. */
@@ -181,20 +169,6 @@ function tryJson(text: string): unknown {
   } catch {
     return undefined;
   }
-}
-
-/** True when every element is a finite number and there is at least one. */
-export function isNumberList(value: unknown): value is number[] {
-  return (
-    Array.isArray(value) &&
-    value.length > 0 &&
-    value.every((n) => typeof n === 'number' && Number.isFinite(n))
-  );
-}
-
-/** True when every element is itself a non-empty list of finite numbers. */
-export function isNumberMatrix(value: unknown): value is number[][] {
-  return Array.isArray(value) && value.length > 0 && value.every(isNumberList);
 }
 
 /**

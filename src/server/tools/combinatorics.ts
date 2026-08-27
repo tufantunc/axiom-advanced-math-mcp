@@ -4,11 +4,42 @@ import { formatToolResponse, formatErrorResponse } from './response-formatter.js
 // --- Pure-JS helpers ---
 
 /**
- * Above this, the BigInt loop below blocks the event loop for seconds to
- * minutes — it runs in the main process, so the Giac timeout cannot fire.
- * `multinomial(500000, ...)` froze the whole server for 77 seconds.
+ * Per-operation input ceilings.
+ *
+ * Every loop in this file is pure-JS BigInt running in the server process, so
+ * the Giac worker timeout cannot interrupt one and a long one blocks every
+ * other request. Each ceiling is a round number whose measured cost on the
+ * reference machine stays near 100–200ms:
+ *
+ *   factorial       20000 ->  33ms      partition_count   5000 -> 113ms
+ *   bell_number      1500 -> ~110ms     derangements     30000 -> ~150ms
+ *   catalan_number  20000 ->  81ms      stirling n*k     10^6 ->  81ms
+ *
+ * `stirling_first` is bounded by the product because it allocates an
+ * (n+1)×(k+1) BigInt table: `stirling_first(4000,2000)` allocated past V8's
+ * heap limit and aborted the whole process — 25 characters of input.
+ *
+ * combinations/permutations are absent because `comb` is O(min(k,n-k)) with no
+ * table: C(20000,3) is under a millisecond.
  */
-const MAX_FACTORIAL_N = 1000;
+/** The largest n for which the factorial loop stays cheap: 33ms at 20000. */
+const MAX_FACTORIAL_N = 20000;
+
+const MAX_N: Record<string, number> = {
+  bell_number: 1500,
+  catalan_number: 20000,
+  derangements: 30000,
+  multinomial: MAX_FACTORIAL_N,
+  partition_count: 5000,
+  stirling_first: 20000,
+  stirling_second: 20000,
+};
+
+/** Above this many digits the exact integer is elided in the response. */
+const MAX_RESULT_DIGITS = 2000;
+
+/** Bounds the (n+1)×(k+1) BigInt table the Stirling helpers allocate. */
+const MAX_STIRLING_CELLS = 1_000_000;
 
 function factorial(n: number): bigint {
   if (n < 0) throw new Error('factorial of negative number');
@@ -18,6 +49,40 @@ function factorial(n: number): bigint {
   let r = 1n;
   for (let i = 2; i <= n; i++) r *= BigInt(i);
   return r;
+}
+
+/**
+ * Rejects an out-of-range n/k before any loop runs.
+ *
+ * This has to sit at the entry, not inside a leaf helper: `bell_number`,
+ * `partition_count`, `derangements` and `catalan_number` never call
+ * `factorial`, so a bound living there covered none of them — and `stirling2`
+ * called it only on its last line, after the expensive loop, so an
+ * out-of-range request paid the full cost and then got an error anyway.
+ *
+ * NaN is rejected here for the same reason. The extractor forwards an
+ * unparsable argument as NaN so it can be reported rather than silently
+ * becoming 0, and every downstream comparison (`k > n`, `k === undefined`) is
+ * false for NaN — so `combinations(a,b)` used to answer C(NaN,NaN) = 1.
+ */
+function checkRange(operation: string, n: number, k: number | undefined): string | null {
+  if (!Number.isInteger(n) || n < 0) {
+    return `n must be a non-negative integer, got ${String(n)}`;
+  }
+  if (k !== undefined && (!Number.isInteger(k) || k < 0)) {
+    return `k must be a non-negative integer, got ${String(k)}`;
+  }
+  const ceiling = MAX_N[operation];
+  if (ceiling !== undefined && n > ceiling) {
+    return `${operation} is limited to n <= ${ceiling} (got ${n}) — it runs on the main thread`;
+  }
+  if (operation === 'stirling_first' || operation === 'stirling_second') {
+    const cells = (n + 1) * ((k ?? 0) + 1);
+    if (cells > MAX_STIRLING_CELLS) {
+      return `${operation} is limited to (n+1)*(k+1) <= ${MAX_STIRLING_CELLS} (got ${cells})`;
+    }
+  }
+  return null;
 }
 
 function comb(n: number, k: number): bigint {
@@ -101,6 +166,9 @@ export async function combinatoricsHandler(args: Record<string, unknown>) {
   const n = args.n as number;
   const k = args.k as number | undefined;
   const groups = args.groups as number[] | undefined;
+
+  const rangeError = checkRange(operation, n, k);
+  if (rangeError) return error(rangeError);
 
   try {
     let result: bigint;
@@ -201,9 +269,23 @@ export async function combinatoricsHandler(args: Record<string, unknown>) {
 
     const rawResult = result.toString();
 
+    // `factorial(20000)` is 77338 digits — a 77 KB response for 33ms of work,
+    // which lands whole in the caller's context. The digit count below already
+    // states the true length, so elide the middle rather than the fact.
+    const shown =
+      rawResult.length > MAX_RESULT_DIGITS
+        ? `${rawResult.slice(0, 40)}…${rawResult.slice(-40)}`
+        : rawResult;
+
     return formatToolResponse({
-      result: rawResult,
-      notes: [description, `Formula: ${formula}`, `(exact integer, ${rawResult.length} digits)`],
+      result: shown,
+      notes: [
+        description,
+        `Formula: ${formula}`,
+        `(exact integer, ${rawResult.length} digits${
+          shown === rawResult ? '' : ' — first and last 40 shown'
+        })`,
+      ],
     });
   } catch (err) {
     return formatErrorResponse(err instanceof Error ? err.message : String(err));

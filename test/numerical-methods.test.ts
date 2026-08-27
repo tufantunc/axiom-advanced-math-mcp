@@ -77,7 +77,9 @@ describe('numerical_methods', () => {
         tolerance: 1e-8,
         max_iterations: 50,
       });
-      expect(result.isError).toBe(false);
+      // Was `isError: false` with the failure text as the answer — the caller
+      // read "Bisection requires a sign change in [x0, x1]" as the root.
+      expect(result.isError).toBe(true);
       expect(allText(result)).toContain('same sign');
     });
   });

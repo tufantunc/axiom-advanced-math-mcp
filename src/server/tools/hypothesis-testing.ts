@@ -1,5 +1,5 @@
 import { giacEngine } from '../giac/index.js';
-import { isNumberList, isNumberMatrix } from './compute/arg-parsing.js';
+import { isNumberList, isNumberMatrix } from './value-guards.js';
 import { formatToolResponse, formatErrorResponse } from './response-formatter.js';
 import { normalCdf } from './stats-utils.js';
 
@@ -272,7 +272,10 @@ const DEFAULT_SIGNIFICANCE = 0.05;
 export function coerceTestData(
   named: Record<string, unknown>,
   positional: unknown[],
-  test?: string
+  // Required: the single caller always knows the test, and when this was
+  // optional an absent value silently landed a contingency table under
+  // `groups` and a positional alpha under `mu0`.
+  test: string
 ): Record<string, unknown> {
   const aliases: Record<string, string> = {
     data: 'sample1',
@@ -294,9 +297,46 @@ export function coerceTestData(
     if (lists[1]) out['sample2'] ??= lists[1];
   }
 
-  const scalar = positional.find((v) => typeof v === 'number' && Number.isFinite(v));
-  if (scalar !== undefined) out['mu0'] ??= scalar;
+  // Only these two read mu0. For the others a bare number was absorbed into an
+  // unread field and the caller's α was replaced by the default, so
+  // `two_sample_t([1,2,3],[4,5,6], 0.01)` reported "✗ Reject H₀ (p = 0.0213 <
+  // α = 0.05)" — the opposite verdict at the α that was actually supplied.
+  const scalar = positional.find((v): v is number => typeof v === 'number' && Number.isFinite(v));
+  if (scalar !== undefined) {
+    const readsMu0 = test === 'one_sample_t' || test === 'paired_t';
+    if (readsMu0) out['mu0'] ??= scalar;
+    else if (scalar > 0 && scalar < 1) out['significance'] ??= scalar;
+  }
   return out;
+}
+
+/**
+ * Rejects data that is not the numeric shape the tests below index into.
+ *
+ * Every field here is read as `number[]`, `number[][]` or `number` with no
+ * runtime check, and the values arrive from `coerceValue`, which returns
+ * `unknown`. The predicates are the same ones the extractor uses on the
+ * positional half of the same input.
+ */
+function checkDataShape(data: Record<string, unknown> | undefined): string | null {
+  if (!data) return null;
+  for (const field of ['sample1', 'sample2'] as const) {
+    const value = data[field];
+    if (value !== undefined && !isNumberList(value)) {
+      return `${field} must be a list of finite numbers`;
+    }
+  }
+  for (const field of ['groups', 'contingency_table'] as const) {
+    const value = data[field];
+    if (value !== undefined && !isNumberMatrix(value)) {
+      return `${field} must be a list of lists of finite numbers`;
+    }
+  }
+  const mu0 = data['mu0'];
+  if (mu0 !== undefined && !(typeof mu0 === 'number' && Number.isFinite(mu0))) {
+    return `mu0 must be a finite number, got ${String(mu0)}`;
+  }
+  return null;
 }
 
 export async function hypothesisTestingHandler(args: Record<string, unknown>) {
@@ -322,6 +362,15 @@ export async function hypothesisTestingHandler(args: Record<string, unknown>) {
       `significance must be a number strictly between 0 and 1, got ${String(alpha)}`
     );
   }
+
+  // The cast above is the only thing standing between an argument and the
+  // arithmetic, and `coerceValue` hands through whatever the caller typed. A
+  // non-numeric element made every statistic NaN while `formatTestConclusion`'s
+  // isNaN guard was bypassed (tPValue's normalCdf fallback returns 0, not NaN),
+  // so `t_test(sample1=[1,2,"x"], mu0=2)` answered "✗ Reject H₀ (p = 0.0000)".
+  const shapeError = checkDataShape(rawData);
+  if (shapeError) return formatErrorResponse(shapeError);
+
   const data = { ...rawData, significance: alpha ?? DEFAULT_SIGNIFICANCE };
   const alternative = (args.alternative as string) ?? 'two_sided';
 
@@ -354,10 +403,6 @@ export async function hypothesisTestingHandler(args: Record<string, unknown>) {
     // one_sample_t requires sample1 with at least 2 values" as a SUCCESS. An
     // LLM caller reads that as a result.
     //
-    // Interim: honour the convention here. The proper fix is for those
-    // functions to return a discriminated outcome instead of prose plus a
-    // convention (audit finding F-S10-b, shared with probability-calc.ts and
-    // numerical-methods.ts).
     if (lines.length === 1 && lines[0].startsWith('Error: ')) {
       return formatErrorResponse(lines[0].slice('Error: '.length));
     }

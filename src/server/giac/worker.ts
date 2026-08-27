@@ -1,4 +1,5 @@
 import { WasmGiacEngine } from './wasm-wrapper.js';
+import { isFatalWasmTrap } from './fatal-trap.js';
 
 /**
  * Giac worker (run as a forked child process). Hosts the WASM engine off the
@@ -45,13 +46,3 @@ process.on('message', async (msg: { id: number; expr: string }) => {
     }
   }
 });
-
-/** Whether an evaluation error left the WASM instance unusable. */
-function isFatalWasmTrap(message: string): boolean {
-  return (
-    /memory access out of bounds/i.test(message) ||
-    /unreachable/i.test(message) ||
-    /RuntimeError/i.test(message) ||
-    /table index is out of bounds/i.test(message)
-  );
-}
