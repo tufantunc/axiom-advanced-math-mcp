@@ -5,7 +5,8 @@ export async function sequenceIdentifyHandler(args: Record<string, unknown>) {
   const terms = args.terms as number[];
 
   try {
-    const { lines } = await identifySequenceCore(terms);
+    const { lines, isError } = await identifySequenceCore(terms);
+    if (isError) return formatRawError(new Error(lines.join(' ')));
     lines.push('Suggestion: Try providing more terms or check if the sequence is correct.');
     return formatRawResponse(lines);
   } catch (error) {
