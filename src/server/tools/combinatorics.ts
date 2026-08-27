@@ -4,42 +4,64 @@ import { formatToolResponse, formatErrorResponse } from './response-formatter.js
 // --- Pure-JS helpers ---
 
 /**
- * Per-operation input ceilings.
+ * Per-operation input ceilings, in `n`.
  *
- * Every loop in this file is pure-JS BigInt running in the server process, so
+ * Most loops in this file are pure-JS BigInt running in the server process, so
  * the Giac worker timeout cannot interrupt one and a long one blocks every
- * other request. Each ceiling is a round number whose measured cost on the
- * reference machine stays near 100–200ms:
+ * other request. Each ceiling is a round number whose cost, measured on the
+ * author's machine through the real handler, stays near 100–200ms.
  *
- *   factorial       20000 ->  33ms      partition_count   5000 -> 113ms
- *   bell_number      1500 -> ~110ms     derangements     30000 -> ~150ms
- *   catalan_number  20000 ->  81ms      stirling n*k     10^6 ->  81ms
+ * `combinations` and `permutations` are the exception: they hand the work to
+ * the Giac worker, where AXIOM_EVAL_TIMEOUT_MS bounds it. They need a ceiling
+ * for a different reason — `combinations(200000,100000)` traps the WASM engine
+ * in 32ms, and the recycle that follows fails every other in-flight call, so
+ * repeating it drove a concurrent client to a 98% error rate.
  *
- * `stirling_first` is bounded by the product because it allocates an
- * (n+1)×(k+1) BigInt table: `stirling_first(4000,2000)` allocated past V8's
- * heap limit and aborted the whole process — 25 characters of input.
- *
- * combinations/permutations are absent because `comb` is O(min(k,n-k)) with no
- * table: C(20000,3) is under a millisecond.
+ * The Stirling helpers are bounded separately below: their cost depends on k as
+ * well as n, and a ceiling in n alone cannot express that.
  */
-/** The largest n for which the factorial loop stays cheap: 33ms at 20000. */
-const MAX_FACTORIAL_N = 20000;
+const MAX_FACTORIAL_N = 20000; // 33ms; reached via multinomial and stirling2
 
 const MAX_N: Record<string, number> = {
-  bell_number: 1500,
-  catalan_number: 20000,
-  derangements: 30000,
+  bell_number: 1500, // 107ms
+  catalan_number: 20000, // 80ms
+  combinations: 50_000, // Giac-bound; ceiling is to avoid trapping the engine
+  derangements: 30000, // 157ms
   multinomial: MAX_FACTORIAL_N,
-  partition_count: 5000,
-  stirling_first: 20000,
-  stirling_second: 20000,
+  partition_count: 5000, // 125ms
+  permutations: 50_000, // Giac-bound, as combinations
+  stirling_first: 20000, // plus the n²·k bound below
+  stirling_second: 20000, // plus the k bound below
 };
 
-/** Above this many digits the exact integer is elided in the response. */
-const MAX_RESULT_DIGITS = 2000;
+/**
+ * Bounds the Stirling recurrences by the work they do, not by their cell count.
+ *
+ * Cost is n·k BigInt operations on operands of O(n·log n) digits, so it scales
+ * as n²k. Measured on the reference machine, ~155ms per 10⁹:
+ *
+ *   n=1000  k=500 -> 5.0e8,   49ms      n=15000 k=30 -> 6.8e9, 1051ms
+ *   n=5000  k=50  -> 1.3e9,  173ms      n=19999 k=49 -> 2.0e10, 3155ms
+ *
+ * A cell-count ceiling was the wrong axis entirely: `stirling_first(20000,48)`
+ * is 980049 cells — inside a 10⁶ cap — and aborted the process.
+ */
+const MAX_STIRLING_WORK = 1_500_000_000;
 
-/** Bounds the (n+1)×(k+1) BigInt table the Stirling helpers allocate. */
-const MAX_STIRLING_CELLS = 1_000_000;
+const KNOWN_OPERATIONS = new Set([
+  'combinations',
+  'permutations',
+  'multinomial',
+  'stirling_first',
+  'stirling_second',
+  'bell_number',
+  'catalan_number',
+  'derangements',
+  'partition_count',
+]);
+
+/** Terms in stirling_second's sum; 500 measured 205ms at n = 20000. */
+const MAX_STIRLING_TERMS = 500;
 
 function factorial(n: number): bigint {
   if (n < 0) throw new Error('factorial of negative number');
@@ -76,11 +98,17 @@ function checkRange(operation: string, n: number, k: number | undefined): string
   if (ceiling !== undefined && n > ceiling) {
     return `${operation} is limited to n <= ${ceiling} (got ${n}) — it runs on the main thread`;
   }
-  if (operation === 'stirling_first' || operation === 'stirling_second') {
-    const cells = (n + 1) * ((k ?? 0) + 1);
-    if (cells > MAX_STIRLING_CELLS) {
-      return `${operation} is limited to (n+1)*(k+1) <= ${MAX_STIRLING_CELLS} (got ${cells})`;
+  if (operation === 'stirling_first') {
+    const work = n * n * Math.min(k ?? 0, n);
+    if (work > MAX_STIRLING_WORK) {
+      return `stirling_first is limited to n²·k <= ${MAX_STIRLING_WORK} (got ${work}) — it runs on the main thread`;
     }
+  }
+  // stirling_second builds no table: its cost is the k+1 `j**n` exponentiations,
+  // so n²·k is the wrong shape — it rejected `stirling_second(20000,60)` at 19ms
+  // while accepting shapes three orders of magnitude dearer.
+  if (operation === 'stirling_second' && (k ?? 0) > MAX_STIRLING_TERMS) {
+    return `stirling_second is limited to k <= ${MAX_STIRLING_TERMS} (got ${String(k)})`;
   }
   return null;
 }
@@ -114,16 +142,24 @@ function stirling1Unsigned(n: number, k: number): bigint {
   if (n === 0 && k === 0) return 1n;
   if (n === 0 || k === 0) return 0n;
   if (k > n) return 0n;
-  // Recurrence: |s(n,k)| = (n-1)*|s(n-1,k)| + |s(n-1,k-1)|
-  // Build table bottom-up
-  const table: bigint[][] = Array.from({ length: n + 1 }, () => new Array(k + 1).fill(0n));
-  table[0][0] = 1n;
+
+  // Two rolling rows, not an (n+1)×(k+1) table. Each cell holds a BigInt whose
+  // width grows with n — |s(n,1)| = (n-1)!, 77338 digits at n = 20000 — so the
+  // table's cost is cells × digits(n!), and a cell-count ceiling was blind to
+  // the axis that actually exhausted the heap: `stirling_first(20000,48)` is
+  // 980049 cells, under the old 10^6 cap, and aborted the process at ~4 GB.
+  // Rolling rows hold k+1 cells regardless of n (measured 189 MB at n = 20000).
+  let prev = new Array<bigint>(k + 1).fill(0n);
+  prev[0] = 1n;
   for (let i = 1; i <= n; i++) {
-    for (let j = 1; j <= k; j++) {
-      table[i][j] = BigInt(i - 1) * table[i - 1][j] + (j > 0 ? table[i - 1][j - 1] : 0n);
+    const cur = new Array<bigint>(k + 1).fill(0n);
+    const upper = Math.min(i, k);
+    for (let j = 1; j <= upper; j++) {
+      cur[j] = BigInt(i - 1) * prev[j] + prev[j - 1];
     }
+    prev = cur;
   }
-  return table[n][k];
+  return prev[k];
 }
 
 /** Bell number B(n): total number of partitions of a set of n elements */
@@ -167,6 +203,13 @@ export async function combinatoricsHandler(args: Record<string, unknown>) {
   const k = args.k as number | undefined;
   const groups = args.groups as number[] | undefined;
 
+  // Operation first: every case below needs `n`, so validating it for a verb
+  // that does not exist reported "n must be a non-negative integer, got
+  // undefined" for an ordinary spelling mistake and never reached the
+  // `Unknown operation` arm at all.
+  if (!KNOWN_OPERATIONS.has(operation)) {
+    return error(`Unknown operation: ${operation}`);
+  }
   const rangeError = checkRange(operation, n, k);
   if (rangeError) return error(rangeError);
 
@@ -269,23 +312,14 @@ export async function combinatoricsHandler(args: Record<string, unknown>) {
 
     const rawResult = result.toString();
 
-    // `factorial(20000)` is 77338 digits — a 77 KB response for 33ms of work,
-    // which lands whole in the caller's context. The digit count below already
-    // states the true length, so elide the middle rather than the fact.
-    const shown =
-      rawResult.length > MAX_RESULT_DIGITS
-        ? `${rawResult.slice(0, 40)}…${rawResult.slice(-40)}`
-        : rawResult;
-
+    // The exact integer, always. Eliding the middle put `…` inside a field the
+    // envelope types as a scalar and that the CLI's -q mode prints for scripting,
+    // so `derangements(1000)` returned a non-numeric string with the true value
+    // recoverable from nothing in the response. Response size is bounded by the
+    // input ceilings above instead.
     return formatToolResponse({
-      result: shown,
-      notes: [
-        description,
-        `Formula: ${formula}`,
-        `(exact integer, ${rawResult.length} digits${
-          shown === rawResult ? '' : ' — first and last 40 shown'
-        })`,
-      ],
+      result: rawResult,
+      notes: [description, `Formula: ${formula}`, `(exact integer, ${rawResult.length} digits)`],
     });
   } catch (err) {
     return formatErrorResponse(err instanceof Error ? err.message : String(err));

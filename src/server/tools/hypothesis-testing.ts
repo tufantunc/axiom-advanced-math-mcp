@@ -1,6 +1,6 @@
 import { giacEngine } from '../giac/index.js';
 import { isNumberList, isNumberMatrix } from './value-guards.js';
-import { formatToolResponse, formatErrorResponse } from './response-formatter.js';
+import { formatToolResponse, formatErrorResponse, inBandFailure } from './response-formatter.js';
 import { normalCdf } from './stats-utils.js';
 
 function mean(data: number[]): number {
@@ -371,6 +371,19 @@ export async function hypothesisTestingHandler(args: Record<string, unknown>) {
   const shapeError = checkDataShape(rawData);
   if (shapeError) return formatErrorResponse(shapeError);
 
+  // A zero-variance sample passes every shape check and then divides by zero:
+  // `one_sample_t(sample1=[2,2,2], mu0=1)` produced t = Infinity and, because
+  // tPValue's normalCdf fallback returns 0 rather than NaN, formatTestConclusion's
+  // isNaN guard never fired — so it reported "✗ Reject H₀ (p = 0.0000)".
+  for (const field of ['sample1', 'sample2'] as const) {
+    const sample = rawData?.[field];
+    if (Array.isArray(sample) && sample.length > 1 && new Set(sample).size === 1) {
+      return formatErrorResponse(
+        `${field} has zero variance — a t-statistic is undefined for a constant sample`
+      );
+    }
+  }
+
   const data = { ...rawData, significance: alpha ?? DEFAULT_SIGNIFICANCE };
   const alternative = (args.alternative as string) ?? 'two_sided';
 
@@ -403,9 +416,8 @@ export async function hypothesisTestingHandler(args: Record<string, unknown>) {
     // one_sample_t requires sample1 with at least 2 values" as a SUCCESS. An
     // LLM caller reads that as a result.
     //
-    if (lines.length === 1 && lines[0].startsWith('Error: ')) {
-      return formatErrorResponse(lines[0].slice('Error: '.length));
-    }
+    const failure = inBandFailure(lines);
+    if (failure) return formatErrorResponse(failure);
 
     const mainResult = lines[lines.length - 1];
     return formatToolResponse({

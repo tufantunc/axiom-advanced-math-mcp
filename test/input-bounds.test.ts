@@ -3,6 +3,7 @@ import { isFatalWasmTrap } from '../src/server/giac/fatal-trap.js';
 import { computeHandler } from '../src/server/tools/compute/index.js';
 import { hypothesisTestingHandler } from '../src/server/tools/hypothesis-testing.js';
 import { linearRegressionHandler } from '../src/server/tools/linear-regression.js';
+import { numericalMethodsHandler } from '../src/server/tools/numerical-methods.js';
 
 const text = (r: { content: { text: string }[] }): string =>
   r.content.map((c) => c.text).join('\n');
@@ -118,7 +119,13 @@ describe('combinatorics input is bounded at the handler entry', () => {
   // `bell_number(9000)` blocked the event loop for 52 seconds and answered with
   // isError:false.
   it.each([
-    ['stirling_first(4000,2000)', /\(n\+1\)\*\(k\+1\)/],
+    ['stirling_first(4000,2000)', /stirling_first is limited to n²·k/],
+    // Cells was the wrong axis: 980049 cells is inside a 10⁶ cap and aborted
+    // the process, while 20000×20000 cells is cheap because k > n short-circuits.
+    ['stirling_first(20000,48)', /stirling_first is limited to n²·k/],
+    ['stirling_first(19999,20)', /stirling_first is limited to n²·k/],
+    ['stirling_second(20000,600)', /stirling_second is limited to k <= 500/],
+    ['combinations(200000,100000)', /combinations is limited to n <= 50000/],
     ['bell_number(9000)', /bell_number is limited to n <= 1500/],
     ['partition_count(30000)', /partition_count is limited to n <= 5000/],
     ['derangements(200000)', /derangements is limited to n <= 30000/],
@@ -186,7 +193,7 @@ describe('the integration budget actually fires', () => {
     try {
       const r = await computeHandler({ problem: 'numerical_integration(x^2, x, 0, 1)' });
       expect(r.isError, text(r)).toBe(true);
-      expect(text(r)).toMatch(/exceeded its 1ms budget after \d+ of 200 points/);
+      expect(text(r)).toMatch(/exceeded its 1ms budget after \d+ of 200 steps/);
     } finally {
       delete process.env.AXIOM_INTEGRATION_BUDGET_MS;
     }
@@ -221,5 +228,110 @@ describe('a validation message names the field that is actually wrong', () => {
       degree: 7,
     });
     expect(r.isError, text(r)).toBe(false);
+  });
+});
+
+describe('the data a test runs on is the shape it claims', () => {
+  // checkDataShape could be neutered — `if (data) return null;` — with the whole
+  // suite green: nothing anywhere passed a malformed sample.
+  it.each([
+    [{ sample1: [1, 2, 'x'], mu0: 2 }, /sample1 must be a list of finite numbers/],
+    [{ sample1: 'abcd', mu0: 2 }, /sample1 must be a list of finite numbers/],
+    [{ sample1: [1, 2, 3], sample2: [1, 'y'] }, /sample2 must be a list of finite numbers/],
+    [{ sample1: [1, 2, 3], mu0: [9, 9] }, /mu0 must be a finite number/],
+    [{ sample1: [1, 2, 3], mu0: '5' }, /mu0 must be a finite number/],
+    [{ groups: [[1, 2], 'x'] }, /groups must be a list of lists of finite numbers/],
+  ])('rejects malformed data (%#)', async (data, expected) => {
+    const r = await hypothesisTestingHandler({
+      test: 'one_sample_t',
+      data: { ...data, significance: 0.05 },
+      alternative: 'two_sided',
+    });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(expected);
+  });
+
+  it('rejects a constant sample rather than reporting t = Infinity', async () => {
+    // Passes every shape check, then divides by zero. tPValue's normalCdf
+    // fallback returns 0 rather than NaN, so the isNaN guard never fired and it
+    // reported "✗ Reject H₀ (p = 0.0000)".
+    const r = await hypothesisTestingHandler({
+      test: 'one_sample_t',
+      data: { sample1: [2, 2, 2], mu0: 1, significance: 0.05 },
+      alternative: 'two_sided',
+    });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/zero variance/);
+  });
+});
+
+describe('a trap is recognised by its type, not only by its wording', () => {
+  // Both existing RuntimeError rows also contain a phrase an earlier clause
+  // matches, so the clause this commit added was never exercised alone.
+  it('classifies a trap that identifies itself only by type', () => {
+    expect(
+      isFatalWasmTrap(
+        'Giac WASM evaluation error: RuntimeError: null function or function signature mismatch'
+      )
+    ).toBe(true);
+  });
+
+  it('does not match RuntimeError inside a longer identifier', () => {
+    expect(isFatalWasmTrap('Giac WASM evaluation error: MyRuntimeErrorHandler failed')).toBe(false);
+  });
+
+  it('classifies the message wasm-wrapper actually builds', () => {
+    // Crosses the seam: the predicate is tested against hand-written strings
+    // everywhere else, so reverting the wrapper's `error.name` prefix was
+    // invisible. Rebuild the string the wrapper produces.
+    const trap = new Error('null function or function signature mismatch');
+    trap.name = 'RuntimeError';
+    const built = `Giac WASM evaluation error: ${trap.name}: ${trap.message}`;
+    expect(built).toMatch(/^Giac WASM evaluation error: RuntimeError: /);
+    expect(isFatalWasmTrap(built)).toBe(true);
+  });
+});
+
+describe('a root-finder is bounded by wall clock too', () => {
+  // The budget went to Simpson only; a wide bracket runs all 100 iterations and
+  // measured 455.8s, holding the single CAS worker for the whole window.
+  it('aborts a root search that outlives its budget', async () => {
+    process.env.AXIOM_INTEGRATION_BUDGET_MS = '1';
+    try {
+      const r = await computeHandler({ problem: 'bisection(x^2-2, 1, 2)' });
+      expect(r.isError, text(r)).toBe(true);
+      expect(text(r)).toMatch(/root finding exceeded its 1ms budget/);
+    } finally {
+      delete process.env.AXIOM_INTEGRATION_BUDGET_MS;
+    }
+  });
+
+  it('rejects a max_iterations above the cap', async () => {
+    const r = await numericalMethodsHandler({
+      method: 'bisection',
+      expression: 'x^2-2',
+      variable: 'x',
+      x0: 1,
+      x1: 2,
+      max_iterations: 100000,
+    });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/max_iterations must be an integer between 1 and 100/);
+  });
+
+  it('rejects an n_points above the cap', async () => {
+    // Reachable only by calling the handler directly — the extractor forwards no
+    // fifth positional argument — so the previous row asserted the default path
+    // and the guard could be deleted with the suite green.
+    const r = await numericalMethodsHandler({
+      method: 'numerical_integration',
+      expression: 'x^2',
+      variable: 'x',
+      lower_bound: 0,
+      upper_bound: 1,
+      n_points: 100000,
+    });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/n_points must be an integer between 2 and 200/);
   });
 });

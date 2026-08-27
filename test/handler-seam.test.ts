@@ -226,3 +226,31 @@ describe('ANOVA reports a real p-value', () => {
     expect(out).toMatch(/p-value = 0\.9/);
   });
 });
+
+describe('spellings the router has to tell apart', () => {
+  // hasKeyword treats a trailing underscore as a boundary so `bell` reaches
+  // `bell_number`. The leading side must still block, or an unrelated verb
+  // ending in a known keyword would be claimed.
+  it.each(['my_bell(5)', 'sub_partitions(5)'])('does not claim %s', async (problem) => {
+    const r = await computeHandler({ problem });
+    // Either an honest error or the raw CAS — the one thing it must not be is a
+    // combinatorics answer computed for a verb nobody published.
+    expect(text(r)).not.toMatch(/Bell number|partitions of/);
+  });
+
+  // The three-argument ODE branch had no test in either direction: the only
+  // fixtures were two-argument, where the branch never runs.
+  it.each([
+    ["desolve(y'=x, y)", /^Result: \(2\*c_0\+x\^2\)\/2$/m],
+    ["desolve(y'=x, x)", /^Result: \(2\*c_0\+x\^2\)\/2$/m],
+    ["desolve(y'=x, x, y)", /^Result: \(2\*c_0\+x\^2\)\/2$/m],
+    // The spelling prompts/index.ts tells callers to write, minus its last
+    // argument — read as the function, it answered `[1/2]`.
+    ["desolve(y'=2*x, x)", /^Result: c_0\+x\^2$/m],
+    ["desolve(y'=2*x, y)", /^Result: c_0\+x\^2$/m],
+  ])('%s resolves variable and function correctly', async (problem, expected) => {
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(false);
+    expect(text(r)).toMatch(expected);
+  });
+});

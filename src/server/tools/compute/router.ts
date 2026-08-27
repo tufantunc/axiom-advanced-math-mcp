@@ -226,7 +226,8 @@ const rules: RouterRule[] = [
   // Multiple integrals — MUST precede single integrate (nested int starts with "int(").
   {
     name: 'multivariable:multiple_integral',
-    test: (p) => startsWith(p, 'iint', 'iiint') || /int\s*\(\s*int\s*\(/i.test(p),
+    test: (p) =>
+      startsWith(p, 'iint', 'iiint', 'multiple_integral') || /int\s*\(\s*int\s*\(/i.test(p),
     extract: extractMultivariable,
   },
 
@@ -381,45 +382,13 @@ const rules: RouterRule[] = [
 
   // 19. Probability distributions
   {
-    name: 'probability',
-    test: (p) =>
-      (hasKeyword(
-        p,
-        'binomial',
-        'normal',
-        'poisson',
-        'geometric',
-        'hypergeometric',
-        'chi_square',
-        'student_t',
-        'f_distribution',
-        'beta_dist',
-        'exponential_dist'
-      ) ||
-        startsWith(
-          p,
-          'binomial',
-          'normal',
-          'poisson',
-          'geometric',
-          'hypergeometric',
-          'chi_square',
-          'student_t',
-          'f_distribution',
-          'beta_dist',
-          'exponential'
-        ) ||
-        isBetaDistributionCall(p)) &&
-      // `chi_square` names both a distribution and a test of independence, and
-      // this rule is matched before the hypothesis rule. Without this the
-      // boundary fix in hasKeyword would hand `chi_square_test(...)` and
-      // `chi_square_independence(...)` to the distribution handler.
-      !startsWith(p, 'chi_square_test', 'chi_square_independence'),
-    extract: extractProbability,
-  },
-
-  // 20. Hypothesis testing
-  {
+    // Ordered ahead of `probability` deliberately: `chi_square` names both a
+    // distribution and a test of independence, and hasKeyword's trailing-
+    // underscore rule makes the short name match every `chi_square_*` spelling.
+    // Ordering settles it once. The alternative — a hand-maintained list of
+    // chi-square tests to exclude from the distribution rule — silently
+    // misrouted the next one added: `chi_square_gof(...)` went to the density
+    // handler and asked for degrees of freedom.
     name: 'hypothesis_testing',
     test: (p) =>
       hasKeyword(
@@ -434,6 +403,40 @@ const rules: RouterRule[] = [
         'chi_square_independence'
       ),
     extract: extractHypothesisTesting,
+  },
+
+  // 20. Hypothesis testing
+  {
+    name: 'probability',
+    test: (p) =>
+      hasKeyword(
+        p,
+        'binomial',
+        'normal',
+        'poisson',
+        'geometric',
+        'hypergeometric',
+        'chi_square',
+        'student_t',
+        'f_distribution',
+        'beta_dist',
+        'exponential_dist'
+      ) ||
+      startsWith(
+        p,
+        'binomial',
+        'normal',
+        'poisson',
+        'geometric',
+        'hypergeometric',
+        'chi_square',
+        'student_t',
+        'f_distribution',
+        'beta_dist',
+        'exponential'
+      ) ||
+      isBetaDistributionCall(p),
+    extract: extractProbability,
   },
 
   // 21. Fourier

@@ -1,6 +1,6 @@
 import { giacEngine } from '../giac/index.js';
 import { splitTopLevel } from './output-cleanup.js';
-import { formatToolResponse, formatErrorResponse } from './response-formatter.js';
+import { formatToolResponse, formatErrorResponse, inBandFailure } from './response-formatter.js';
 import { erf } from './stats-utils.js';
 
 function combinations(n: number, k: number): number {
@@ -17,13 +17,19 @@ function combinations(n: number, k: number): number {
 /**
  * Bounds the discrete count parameters (n, k, N, K).
  *
- * `factorial` below is a plain-number loop, and the Poisson cdf branch calls it
- * once per i up to k — so `poisson(lambda=2, k=1e9)` ran a billion-iteration
- * loop in the server process, where the Giac worker timeout cannot reach it.
- * Beyond ~170 the double overflows to Infinity anyway, so nothing exact is lost:
- * the cap only replaces a NaN answer with an error.
+ * These branches are plain-double loops on the main thread, where the Giac
+ * worker timeout cannot reach them. A single scalar ceiling was the wrong shape:
+ * the cdf loops call an O(k)-inner helper once per iteration, so their cost is
+ * O(n·k), and at a ceiling of 100000 `binomial(n=100000, p=0.5, k=100000, cdf)`
+ * measured 9.8s and `hypergeometric(N=100000, ..., cdf)` 14.2s — both blocking
+ * the event loop outright, and both answering NaN because a double overflows
+ * past ~170 anyway.
+ *
+ * So: a generous ceiling on any single count, and a much tighter one on the
+ * product that actually drives the summation.
  */
 const MAX_COUNT = 100_000;
+const MAX_CDF_WORK = 2_000_000;
 
 function factorial(n: number): number {
   let result = 1;
@@ -514,19 +520,26 @@ const ANSWER_LINE: Record<string, RegExp> = {
  * top-level separators only and take the last part.
  */
 function valueOf(line: string): string {
-  const parts = splitTopLevel(line, '=');
+  // The erf fallback (used when Giac is unavailable) writes `P(X ≤ 1) ≈ 0.84`,
+  // which has no top-level `=` — so both branches fell through and the whole
+  // labelled line became the answer.
+  const parts = splitTopLevel(line.replace('≈', '='), '=');
   if (parts.length > 1) return parts[parts.length - 1].trim();
   return line.replace(/^[^:]*:\s*/, '').trim();
 }
 
-function answerLine(op: string, lines: string[]): string {
+function answerLine(op: string, lines: string[]): string | null {
   const shape = ANSWER_LINE[op];
-  if (shape) {
-    for (let i = lines.length - 1; i >= 0; i--) {
-      if (shape.test(lines[i])) return lines[i];
-    }
+  if (!shape) return lines[lines.length - 1];
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (shape.test(lines[i])) return lines[i];
   }
-  return lines[lines.length - 1];
+  // No line of the right shape means the branch was never written — several
+  // distributions implement pmf/cdf and fall through to `return { lines }` for
+  // anything else. Falling back to the last line handed back the
+  // `Distribution: ...` header as the answer, which is the header-as-answer bug
+  // this function exists to remove.
+  return null;
 }
 
 export async function probabilityCalcHandler(args: Record<string, unknown>) {
@@ -543,6 +556,19 @@ export async function probabilityCalcHandler(args: Record<string, unknown>) {
     }
     if (['n', 'k', 'N', 'K'].includes(key) && Math.abs(value) > MAX_COUNT) {
       return formatErrorResponse(`${key} is limited to ${MAX_COUNT}, got ${value}`);
+    }
+  }
+
+  // Only the summing operations pay the product cost; expected_value and
+  // variance are closed forms and must stay available at any n.
+  if (op === 'cdf') {
+    const n = Math.abs(Number(params?.n ?? params?.N ?? 0));
+    const k = Math.abs(Number(params?.k ?? 0));
+    if (n * k > MAX_CDF_WORK) {
+      return formatErrorResponse(
+        `a cdf over n=${n}, k=${k} is too large to sum on the main thread ` +
+          `(n*k must be <= ${MAX_CDF_WORK})`
+      );
     }
   }
 
@@ -597,17 +623,19 @@ export async function probabilityCalcHandler(args: Record<string, unknown>) {
     // These functions should return a discriminated outcome rather than prose
     // plus a convention; until they do, each entry point enforces it. The same
     // convention is honoured in numerical-methods.ts.
-    const lastLine = result.lines[result.lines.length - 1];
-    if (lastLine.startsWith('Error: ')) {
-      return formatErrorResponse(lastLine.slice('Error: '.length));
-    }
+    const failure = inBandFailure(result.lines);
+    if (failure) return formatErrorResponse(failure);
 
-    const mainResult = valueOf(answerLine(op, result.lines));
+    const answer = answerLine(op, result.lines);
+    if (answer === null) {
+      return formatErrorResponse(`${dist} does not implement ${op}`);
+    }
+    const mainResult = valueOf(answer);
 
     // A numeric branch that overflowed or divided by zero used to report its
     // NaN as the answer with isError:false — `poisson(lambda=2, k=1e9)` said
     // "The answer is NaN", and `normal(mu=0, sigma=0, x=1)` said "Infinity".
-    if (/^-?(NaN|Infinity)$/.test(mainResult)) {
+    if (/^-?(NaN|Infinity)$|^undefined\b/.test(mainResult)) {
       return formatErrorResponse(
         `${dist} ${op} is not defined for these parameters (computed ${mainResult})`
       );

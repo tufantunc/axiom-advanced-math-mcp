@@ -34,22 +34,25 @@ const PROBES: Record<string, { call: string; expect: RegExp }> = {
   stirling_second: { call: 'stirling_second(5,2)', expect: /^Result: 15$/m },
 
   // geometry — x+y=0 and x−y=0 meet at right angles; x+y=2 and x−y=0 at (1,1)
-  angle_between_lines: { call: 'angle_between_lines([1,1,0],[1,-1,0])', expect: /^Result: 90°$/m },
+  angle_between_lines: { call: 'angle_between_lines([1,0,0],[1,1,0])', expect: /^Result: 45°$/m },
   line_intersection: {
-    call: 'line_intersection([1,1,-2],[1,-1,0])',
-    expect: /^Result: \(1, 1\)$/m,
+    call: 'line_intersection([1,1,-3],[1,-1,-1])',
+    expect: /^Result: \(2, 1\)$/m,
   },
   area_circle: { call: 'area_circle(radius=2)', expect: /^Result: 12\.5663706144$/m },
   area_polygon: { call: 'area_polygon([[0,0],[4,0],[4,3],[0,3]])', expect: /^Result: 12$/m },
   area_triangle: { call: 'area_triangle(base=4, height=3)', expect: /^Result: 6$/m },
   circumference: { call: 'circumference(2)', expect: /^Result: 12\.5663706144$/m },
   distance: { call: 'distance([0,0],[3,4])', expect: /^Result: 5$/m },
-  midpoint: { call: 'midpoint([0,0],[4,4])', expect: /^Result: \(2, 2\)$/m },
+  // Asymmetric on purpose: (2,2) survives an x/y swap, (2,3) does not.
+  midpoint: { call: 'midpoint([0,0],[4,6])', expect: /^Result: \(2, 3\)$/m },
   perimeter_polygon: {
     call: 'perimeter_polygon([[0,0],[4,0],[4,3],[0,3]])',
     expect: /^Result: 14$/m,
   },
-  point_line_distance: { call: 'point_line_distance([0,0],[3,4,-5])', expect: /^Result: 1$/m },
+  // |3·1 + 4·2 − 5| / 5. With the point at the origin a handler that ignores
+  // its point argument entirely was certified correct.
+  point_line_distance: { call: 'point_line_distance([1,2],[3,4,-5])', expect: /^Result: 1\.2$/m },
   slope: { call: 'slope([0,0],[2,4])', expect: /^Result: 2$/m },
 
   // numerical methods — all four converge on √2
@@ -69,16 +72,21 @@ const PROBES: Record<string, { call: string; expect: RegExp }> = {
   beta: { call: 'beta(alpha=2,beta=3,x=0.5)', expect: /^Result: 1\.5$/m },
   binomial: { call: 'binomial(n=10,p=0.5,k=5)', expect: /^Result: 0\.24609375$/m },
   chi_square: { call: 'chi_square(df=3,x=2)', expect: /^Result: 0\.20755374871$/m },
-  exponential: { call: 'exponential(lambda=1,x=1)', expect: /^Result: 0\.36787944117/m },
+  // 2·e^-2, not e^-2 — with lambda=1 the missing density normaliser is invisible.
+  exponential: { call: 'exponential(lambda=2,x=1)', expect: /^Result: 0\.27067056647/m },
   f_distribution: { call: 'f_distribution(df1=2,df2=6,x=2)', expect: /^Result: 0\.1296$/m },
   geometric: { call: 'geometric(p=0.5,k=3)', expect: /^Result: 0\.125$/m },
   hypergeometric: { call: 'hypergeometric(N=50,K=5,n=10,k=2)', expect: /^Result: 0\.20983971757/m },
-  normal: { call: 'normal(mu=0,sigma=1,x=1)', expect: /^Result: 0\.24197072451/m },
+  // Off the identity: with mu=0 and sigma=1 both parameters are algebraic
+  // no-ops, so hardcoding either passed. f(1) for N(2,3) = (1/(3√(2π)))·e^(-1/18).
+  normal: { call: 'normal(mu=2,sigma=5,x=11)', expect: /^Result: 0\.015790031660/m },
   poisson: { call: 'poisson(lambda=2,k=3)', expect: /^Result: 0\.18044704431/m },
   student_t: { call: 'student_t(df=5,x=2)', expect: /^Result: 0\.0650903103262$/m },
 
   // 3D geometry
-  angle_vectors: { call: 'angle_vectors([1,0,0],[0,1,0])', expect: /^Result: 90°$/m },
+  // 45°, not 90° — 90 is its own supplement, so a supplementary-angle bug was
+  // undetectable by every angle row at once.
+  angle_vectors: { call: 'angle_vectors([1,0,0],[1,1,0])', expect: /^Result: 45°$/m },
   cross: { call: 'cross([1,0,0],[0,1,0])', expect: /^Result: \[0, 0, 1\]$/m },
   distance3d: { call: 'distance3d([0,0,0],[1,1,1])', expect: /^Result: 1\.7320508076$/m },
   dot: { call: 'dot([1,2,3],[4,5,6])', expect: /^Result: 32$/m },
@@ -97,16 +105,18 @@ const PROBES: Record<string, { call: string; expect: RegExp }> = {
     call: 'plane_from_points([0,0,0],[1,0,0],[0,1,0])',
     expect: /^Result: \[0, 0, 1, 0\]$/m,
   },
-  plane_plane_angle: { call: 'plane_plane_angle([1,0,0,0],[0,1,0,0])', expect: /^Result: 90°$/m },
+  plane_plane_angle: { call: 'plane_plane_angle([1,0,0,0],[1,1,0,0])', expect: /^Result: 45°$/m },
   // |1*0 + 0 + 0 - 5| / 1. `/\b5\b/` matched the "-5" echoed in the note, so a
   // hardcoded wrong distance passed the whole suite.
   point_plane_distance: {
     call: 'point_plane_distance([0,0,0],[1,0,0,-5])',
     expect: /^Result: 5$/m,
   },
+  // A sheared basis: the identity has |det| = 1 under every argument
+  // permutation, so an order bug in the scalar triple product passed.
   volume_parallelepiped: {
-    call: 'volume_parallelepiped([1,0,0],[0,1,0],[0,0,1])',
-    expect: /^Result: 1$/m,
+    call: 'volume_parallelepiped([1,2,0],[0,1,0],[0,0,3])',
+    expect: /^Result: 3$/m,
   },
   volume_sphere: { call: 'volume_sphere(2)', expect: /^Result: 33\.5103216383$/m },
   volume_tetrahedron: {
@@ -168,8 +178,10 @@ const PROBES: Record<string, { call: string; expect: RegExp }> = {
   },
   // The spelling is (expression, var, lo, hi, var, lo, hi) — the integral of
   // x*y over the unit square is 1/4.
+  // Probed by its own published name, not only the `iint` alias: the alias
+  // answered while `multiple_integral(...)` came back as its own input.
   multiple_integral: {
-    call: 'iint(x*y,x,0,1,y,0,1)',
+    call: 'multiple_integral(x*y,x,0,1,y,0,1)',
     expect: /^Result: 1\/4$/m,
   },
 

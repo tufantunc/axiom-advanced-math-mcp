@@ -194,10 +194,7 @@ export async function linearRegressionHandler(args: Record<string, unknown>) {
         r2
       );
     } else {
-      return {
-        content: [{ type: 'text' as const, text: `Error: Unknown model: ${model}` }],
-        isError: true,
-      };
+      return formatErrorResponse(`Unknown model: ${model}`);
     }
 
     return formatRawResponse(lines);

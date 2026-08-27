@@ -1,5 +1,5 @@
 import { giacEngine } from '../giac/index.js';
-import { formatToolResponse, formatErrorResponse } from './response-formatter.js';
+import { formatToolResponse, formatErrorResponse, inBandFailure } from './response-formatter.js';
 
 /** Evaluate f(x) at a point using Giac */
 async function evalAt(expr: string, variable: string, x: number): Promise<number> {
@@ -24,6 +24,7 @@ async function newtonRaphson(
   tol: number,
   maxIter: number
 ): Promise<string[]> {
+  const checkIterationBudget = startBudget('root finding');
   const lines = [
     `Method: Newton-Raphson`,
     `f(${variable}) = ${expr}`,
@@ -36,6 +37,7 @@ async function newtonRaphson(
 
   let x = x0;
   for (let i = 0; i < maxIter; i++) {
+    checkIterationBudget(i, maxIter);
     const fx = await evalAt(expr, variable, x);
     const fpx = await evalDerivAt(expr, variable, x);
     lines.push(
@@ -60,19 +62,61 @@ async function newtonRaphson(
 }
 
 /**
- * Simpson's rule costs one Giac call per subinterval. 200 points keeps a
- * well-behaved integrand near the cost of a single evaluation; the wall-clock
- * budget below is what actually bounds a hostile integrand, since the caller
- * chooses how expensive each of those calls is.
+ * Simpson's rule costs one Giac call per subinterval, so 200 points is ~200
+ * round trips — measured at ~18ms each on a moderate integrand, ~3.7s total.
+ * The caller chooses how expensive each call is, so the wall-clock budget below
+ * is the real bound; this constant only bounds the call COUNT.
+ *
+ * One value, not a range: the default is the maximum.
  */
-const MAX_SIMPSON_POINTS = 200;
-const DEFAULT_SIMPSON_POINTS = 200;
+const SIMPSON_POINTS = 200;
+
 /**
- * Read per call rather than at module load so a test can shrink it: the real
- * budget takes ~11s to trip, which is too slow to assert in the unit suite.
- * Mirrors AXIOM_EVAL_TIMEOUT_MS, the per-call bound this one sits above.
+ * Iterations a root-finder may take. Each costs one or two Giac calls the
+ * caller prices via the expression, so an unbounded count is an unbounded hold
+ * on the single CAS worker: a 41-character `secant(...)` measured 69.8s.
  */
-const integrationBudgetMs = (): number => Number(process.env.AXIOM_INTEGRATION_BUDGET_MS ?? 10_000);
+const MAX_ROOT_ITERATIONS = 100;
+
+const DEFAULT_CALL_TIMEOUT_MS = Number(process.env.AXIOM_EVAL_TIMEOUT_MS ?? 10_000);
+
+/**
+ * Wall-clock budget for one multi-call numerical routine.
+ *
+ * Read per call rather than at module load so a test can shrink it. Validated
+ * rather than coerced: `Number('10s')` is NaN and `Date.now() > NaN` is always
+ * false, so an unvalidated typo removed the guard silently, while `Number('')`
+ * is 0, which failed every integration on its first subinterval.
+ *
+ * This bounds a SUM of CAS calls, so it sits ABOVE the per-call bound rather
+ * than equal to it — at 1x, one slow evaluation consumes the whole budget.
+ */
+/**
+ * A wall-clock checker for a loop that calls the CAS repeatedly.
+ *
+ * The budget went to Simpson only, leaving the three root-finders — the same
+ * shape, in the same file — unbounded: a 55-byte `bisection(...)` with a wide
+ * bracket runs all 100 iterations and measured 455.8s, holding the single CAS
+ * worker and therefore every other client for that whole window.
+ */
+function startBudget(label: string): (done: number, total: number) => void {
+  const budgetMs = integrationBudgetMs();
+  const deadline = Date.now() + budgetMs;
+  return (done, total) => {
+    if (Date.now() > deadline) {
+      throw new Error(
+        `${label} exceeded its ${budgetMs}ms budget after ${done} of ${total} steps — ` +
+          `try a simpler expression`
+      );
+    }
+  };
+}
+
+const integrationBudgetMs = (): number => {
+  const configured = Number(process.env.AXIOM_INTEGRATION_BUDGET_MS);
+  if (Number.isFinite(configured) && configured > 0) return configured;
+  return Math.max(DEFAULT_CALL_TIMEOUT_MS * 3, 30_000);
+};
 
 async function bisection(
   expr: string,
@@ -82,6 +126,7 @@ async function bisection(
   tol: number,
   maxIter: number
 ): Promise<string[]> {
+  const checkIterationBudget = startBudget('root finding');
   const fa = await evalAt(expr, variable, a);
   const fb = await evalAt(expr, variable, b);
 
@@ -107,6 +152,7 @@ async function bisection(
   let lo = a,
     hi = b;
   for (let i = 0; i < maxIter; i++) {
+    checkIterationBudget(i, maxIter);
     const mid = (lo + hi) / 2;
     const fmid = await evalAt(expr, variable, mid);
     const flo = await evalAt(expr, variable, lo);
@@ -135,6 +181,7 @@ async function secant(
   tol: number,
   maxIter: number
 ): Promise<string[]> {
+  const checkIterationBudget = startBudget('root finding');
   const lines = [
     `Method: Secant`,
     `f(${variable}) = ${expr}`,
@@ -148,6 +195,7 @@ async function secant(
   let prev = x0,
     curr = x1;
   for (let i = 0; i < maxIter; i++) {
+    checkIterationBudget(i, maxIter);
     const fprev = await evalAt(expr, variable, prev);
     const fcurr = await evalAt(expr, variable, curr);
     lines.push(
@@ -205,25 +253,20 @@ async function simpsonIntegration(
     `∫ ${expr} d${variable} from ${a} to ${b}`,
   ];
 
+  // The deadline has to exist before the first CAS call. Setting it after the
+  // two endpoint evaluations left them entirely unbudgeted, so a 10s budget
+  // measured 29.3s end to end on a caller-priced integrand.
+  const checkBudget = startBudget('numerical_integration');
+
   let sum = 0;
+  checkBudget(0, n);
   const fa = await evalAt(expr, variable, a);
+  checkBudget(0, n);
   const fb = await evalAt(expr, variable, b);
   sum = fa + fb;
 
-  // One Giac round trip per subinterval, and the caller controls the integrand,
-  // so the per-call AXIOM_EVAL_TIMEOUT_MS never fires while the total runs away:
-  // a 78-character problem measured 18.4s at 1000 points and was still running
-  // after 10 minutes with a heavier integrand. The whole handler holds the
-  // global CAS mutex, so that stalls every other client too. Bound the sum.
-  const budgetMs = integrationBudgetMs();
-  const deadline = Date.now() + budgetMs;
   for (let i = 1; i < n; i++) {
-    if (Date.now() > deadline) {
-      throw new Error(
-        `numerical_integration exceeded its ${budgetMs}ms budget after ${i} of ${n} points — ` +
-          `try a simpler integrand or a smaller n_points`
-      );
-    }
+    checkBudget(i, n);
     const xi = a + i * h;
     const fxi = await evalAt(expr, variable, xi);
     sum += (i % 2 === 0 ? 2 : 4) * fxi;
@@ -240,7 +283,17 @@ export async function numericalMethodsHandler(args: Record<string, unknown>) {
   const expr = args.expression as string;
   const variable = (args.variable as string) || 'x';
   const tol = (args.tolerance as number) ?? 1e-10;
-  const maxIter = (args.max_iterations as number) ?? 100;
+  const requestedIter = (args.max_iterations as number) ?? MAX_ROOT_ITERATIONS;
+  if (
+    !Number.isInteger(requestedIter) ||
+    requestedIter < 1 ||
+    requestedIter > MAX_ROOT_ITERATIONS
+  ) {
+    return formatErrorResponse(
+      `max_iterations must be an integer between 1 and ${MAX_ROOT_ITERATIONS}, got ${String(requestedIter)}`
+    );
+  }
+  const maxIter = requestedIter;
 
   try {
     let lines: string[];
@@ -279,10 +332,10 @@ export async function numericalMethodsHandler(args: Record<string, unknown>) {
       case 'numerical_integration': {
         const a = args.lower_bound as number,
           b = args.upper_bound as number;
-        const requested = (args.n_points as number) || DEFAULT_SIMPSON_POINTS;
-        if (!Number.isInteger(requested) || requested < 2 || requested > MAX_SIMPSON_POINTS) {
+        const requested = args.n_points === undefined ? SIMPSON_POINTS : (args.n_points as number);
+        if (!Number.isInteger(requested) || requested < 2 || requested > SIMPSON_POINTS) {
           return formatErrorResponse(
-            `n_points must be an integer between 2 and ${MAX_SIMPSON_POINTS}, got ${String(requested)}`
+            `n_points must be an integer between 2 and ${SIMPSON_POINTS}, got ${String(requested)}`
           );
         }
         const n = requested;
@@ -295,30 +348,25 @@ export async function numericalMethodsHandler(args: Record<string, unknown>) {
         return formatErrorResponse(`Unknown method: ${method}`);
     }
 
-    // A failure is signalled in-band, as a line beginning `✗ Error:`. Shipping
-    // that through formatToolResponse made `bisection(x^2-2, 3, 4)` answer
-    // "Bisection requires a sign change in [x0, x1]" with isError:false — a
-    // failure the caller reads as the result. Reachable only since the extractor
-    // started emitting x0/x1, which is what makes these methods run at all.
-    const failure = lines.find((l) => /^\s*✗?\s*Error:/.test(l));
-    if (failure) {
-      return formatErrorResponse(
-        lines
-          .slice(1)
-          .join(' ')
-          .replace(/^\s*✗?\s*Error:\s*/, '')
-      );
-    }
+    // Matching only `✗ Error:` caught bisection's sign-change return and none of
+    // the five siblings in this file — `✗ Failed: ...` and `✗ Did not converge
+    // within N iterations.` fell through to the headline scan below, where the
+    // label strip turned them into answers: `newton(x^3-2*x+2, x, 0)` reported
+    // "0" for a point where f = 2, and `secant(x^2-2, 1, 1)` reported "division
+    // by zero (f(x1) ≈ f(x0))".
+    const failure = inBandFailure(lines);
+    if (failure) return formatErrorResponse(failure);
 
     // The answer to "find a root" is the root, not the residual. Scanning only
     // the last line found `f(root) = 3.154474e-11`, and the `Root|Result` regex
     // is case-sensitive so lowercase `f(root)` fell through to the raw line —
     // so `bisection(x^2-2, 1, 2)` answered 3.15e-11 for a root of 1.4142136.
-    const answer =
-      lines.find((l) => /^Root:/.test(l)) ??
-      lines.find((l) => /^Result/.test(l)) ??
-      lines[lines.length - 1];
-    const mainResult = answer.replace(/^[^=:]*[=:]\s*/, '').trim();
+    const labelled = lines.find((l) => /^Root:/.test(l)) ?? lines.find((l) => /^Result/.test(l));
+    // Strip the label only from a line that has one. Applying the strip to the
+    // raw last line is what turned `Last x = 0` into a bare `0`.
+    const mainResult = labelled
+      ? labelled.replace(/^[^=:]*[=:]\s*/, '').trim()
+      : lines[lines.length - 1];
 
     return formatToolResponse({
       result: mainResult,

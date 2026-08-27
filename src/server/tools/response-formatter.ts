@@ -43,6 +43,42 @@ export function formatToolResponse(data: MathToolResponse): {
   };
 }
 
+/**
+ * The failure message carried in a handler's own output lines, or null.
+ *
+ * Several handlers build a `string[]` and signal a validation or convergence
+ * failure by putting a marked line in it, then hand the whole array to
+ * `formatToolResponse` — which sets `isError: false`. The caller then reads the
+ * failure as the answer.
+ *
+ * This lived as three separate checks that disagreed on what the convention IS:
+ * one matched only a single-element array, one only the last line, one only the
+ * `Error:` spelling — so `newton(x^3-2*x+2, x, 0)` answered "0" for an input
+ * with no root there, and `chi_square(df=3)` answered "pmf/cdf requires param x".
+ * Match the marker rather than one wording: `✗` prefixes every failure line
+ * these handlers emit, and `Error:` covers the ones without it.
+ *
+ * The real fix is a discriminated outcome from those functions; until they have
+ * one, this is the single place the convention is interpreted.
+ */
+export function inBandFailure(lines: string[]): string | null {
+  // Match the failure WORD, not the ✗ glyph. Hypothesis testing uses ✗ as its
+  // reject-the-null marker — `✗ Reject H₀ (p = 0.0474 < α = 0.05)` is a result,
+  // not a failure — so keying on the symbol alone turned every significant test
+  // into an error.
+  const failureWord = /^\s*(?:✗\s*)?(Error:|Failed:|Did not converge)/;
+  const marker = /^\s*(?:✗\s*)?(?:Error:\s*|Failed:\s*)?/;
+  const hit = lines.find((line) => failureWord.test(line));
+  if (!hit) return null;
+  const from = lines.indexOf(hit);
+  return lines
+    .slice(from)
+    .filter((line) => line.trim() !== '')
+    .join(' ')
+    .replace(marker, '')
+    .trim();
+}
+
 export function formatErrorResponse(message: string): {
   content: { type: 'text'; text: string }[];
   isError: boolean;

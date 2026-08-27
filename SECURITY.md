@@ -154,5 +154,11 @@ Named plainly, because they are the things most likely to bite you:
 - Set `MCP_ALLOWED_HOSTS` explicitly when reaching the server by hostname or
   LAN address; the loopback default will reject those.
 - Leave `AXIOM_EVAL_TIMEOUT_MS` at its default unless you have measured a need.
+- **`AXIOM_INTEGRATION_BUDGET_MS` bounds a whole routine, not one call.** Numerical
+  integration and root finding make up to a few hundred CAS calls each, and the
+  caller chooses the expression and therefore the cost of every one of them.
+  `AXIOM_EVAL_TIMEOUT_MS` cannot bound that sum. Raising this budget, or setting
+  it below the per-call timeout, both make a single request able to hold the CAS
+  worker — and therefore every other client — for longer.
 - Run `npm audit` after updating dependencies. The tree is clean as of the
   latest release.

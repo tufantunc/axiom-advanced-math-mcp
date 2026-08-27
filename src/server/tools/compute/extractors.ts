@@ -34,6 +34,19 @@ function guessVariable(expr: string): string {
 }
 
 /**
+ * The unknown function in an ODE: the name that appears differentiated.
+ *
+ * Matches Lagrange notation (`y'`, `f''`) and Leibniz notation (`dy/dx`), which
+ * are the two spellings looksLikeOde already recognises in the router.
+ */
+function differentiatedName(equation: string): string | undefined {
+  const lagrange = /\b([A-Za-z]\w*)'/.exec(equation);
+  if (lagrange) return lagrange[1];
+  const leibniz = /\bd([A-Za-z]\w*)\s*\/\s*d[A-Za-z]/.exec(equation);
+  return leibniz?.[1];
+}
+
+/**
  * The variable an ODE is solved with respect to: the first single-letter
  * identifier that is neither the unknown function nor a constant.
  */
@@ -243,18 +256,33 @@ export function extractOde(problem: string): RouteResult {
     const parts = splitArgs(inner);
     const equation = parts[0] || '';
 
-    // Giac takes (equation, independent variable, function). Reading the second
-    // argument as the variable unconditionally made the two-argument spelling
-    // `desolve(y'=x, y)` build `desolve(y'=x,y,y)` — variable and function both
-    // `y` — which Giac answered with `c_0+x*y-y` instead of x²/2 + c.
+    // Giac takes (equation, independent variable, function), and with three
+    // arguments that is exactly what arrives. With ONE identifier argument the
+    // arity says nothing about which role it plays, and both spellings are in
+    // use: `desolve(y'=x, y)` names the function, while `desolve(y'=2*x, x)` —
+    // the form prompts/index.ts tells callers to write, minus its last argument
+    // — names the variable.
     //
-    // With two arguments the second names the FUNCTION, so the independent
-    // variable has to be inferred: it is the identifier in the equation that
-    // is not the function.
+    // Reading it as the variable made `desolve(y'=x, y)` build
+    // `desolve(y'=x,y,y)`, answered `c_0+x*y-y` instead of x²/2 + c. Reading it
+    // as the function broke the other spelling just as quietly: `desolve(y'=2*x,
+    // x)` became `[1/2]`. The equation settles it — the unknown function is the
+    // one that appears differentiated.
     const named = parts.slice(1).filter((part) => /^[A-Za-z]\w*$/.test(part.trim()));
-    const function_name = (named.length >= 2 ? named[1] : named[0])?.trim() || 'y';
-    const variable =
-      named.length >= 2 ? named[0].trim() : independentVariable(equation, function_name);
+    const differentiated = differentiatedName(equation);
+    let variable: string;
+    let function_name: string;
+    if (named.length >= 2) {
+      variable = named[0].trim();
+      function_name = named[1].trim();
+    } else {
+      const only = named[0]?.trim();
+      const namesTheFunction = only !== undefined && only === differentiated;
+      function_name = namesTheFunction ? only : (differentiated ?? 'y');
+      variable = namesTheFunction
+        ? independentVariable(equation, function_name)
+        : (only ?? independentVariable(equation, function_name));
+    }
 
     return {
       handler: 'calculus',
@@ -633,8 +661,8 @@ export function extractGeometry(problem: string): RouteResult {
     // non-JSON element threw and dropped every point, where the shared parser
     // coerces element by element and keeps the rest.
     {
-      const parsed: unknown[] = callArgs.positional;
-      if (Array.isArray(parsed)) {
+      const parsed = callArgs.positional;
+      {
         if (operation === 'area_circle' || operation === 'circumference') {
           args['radius'] = parsed[0];
         } else if (
@@ -720,7 +748,13 @@ export function extractNumericalMethods(problem: string): RouteResult {
   const expression = parts[0] || '';
   const hasVariable = /^[A-Za-z]\w*$/.test((parts[1] ?? '').trim());
   const variable = hasVariable ? parts[1].trim() : guessVariable(expression);
-  const numbers = parts.slice(hasVariable ? 2 : 1).map((n) => parseFloat(n));
+  // `parseFloat` is lenient in exactly the way this file condemns elsewhere:
+  // `parseFloat('2abc')` is 2, so `bisection(x^2-2, 1, 2abc)` emitted x1 = 2 and
+  // answered confidently for a bracket nobody wrote. coerceValue rejects it.
+  const positional = parseCallArgs(inner).positional;
+  const numbers = positional
+    .slice(hasVariable ? 2 : 1)
+    .map((value) => (typeof value === 'number' ? value : Number.NaN));
 
   // Only `initial_guess` was ever emitted, so bisection and secant reported
   // "requires x0 and x1" and both integrations reported "requires lower_bound
@@ -873,7 +907,7 @@ export function extractMultivariable(problem: string): RouteResult {
   parts[0] = expressionArg(parts[0]);
 
   // Multiple integrals.
-  if (lc.startsWith('iint') || lc.startsWith('iiint')) {
+  if (lc.startsWith('iint') || lc.startsWith('iiint') || lc.startsWith('multiple_integral')) {
     const expression = parts[0] || '';
     const bounds: { variable: string; lower: string; upper: string }[] = [];
     for (let i = 1; i + 2 < parts.length; i += 3) {
