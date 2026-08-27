@@ -233,6 +233,13 @@ function declaredOperations(): string[] {
       for (const m of set[1].matchAll(/'([a-z][a-z0-9_]*)'/g)) names.add(m[1]);
     }
     for (const m of source.matchAll(/operation === '([a-z][a-z0-9_]*)'/g)) names.add(m[1]);
+    // A fourth idiom: combinatorics dispatches through a Record keyed by
+    // operation name, having moved its arithmetic into the bounded worker. The
+    // scan knowing only three idioms is why 11 multivariable operations were
+    // invisible to it before, so add this one rather than special-casing.
+    for (const record of source.matchAll(/Record<string, TaskName> = \{([^}]*)\}/g)) {
+      for (const m of record[1].matchAll(/^\s*([a-z][a-z0-9_]*):/gm)) names.add(m[1]);
+    }
   }
   return [...names].sort();
 }

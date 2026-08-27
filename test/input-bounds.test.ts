@@ -4,6 +4,8 @@ import { computeHandler } from '../src/server/tools/compute/index.js';
 import { hypothesisTestingHandler } from '../src/server/tools/hypothesis-testing.js';
 import { linearRegressionHandler } from '../src/server/tools/linear-regression.js';
 import { numericalMethodsHandler } from '../src/server/tools/numerical-methods.js';
+import { createJsComputeHost } from '../src/server/js-compute/index.js';
+import { probabilityCalcHandler } from '../src/server/tools/probability-calc.js';
 
 const text = (r: { content: { text: string }[] }): string =>
   r.content.map((c) => c.text).join('\n');
@@ -112,56 +114,121 @@ describe('a polynomial fit is bounded', () => {
   });
 });
 
-describe('combinatorics input is bounded at the handler entry', () => {
-  // These loops are pure-JS BigInt in the server process, where the Giac worker
-  // timeout cannot reach them. `stirling_first(4000,2000)` — 25 characters —
-  // allocated past V8's heap limit and aborted the whole process;
-  // `bell_number(9000)` blocked the event loop for 52 seconds and answered with
-  // isError:false.
+describe('arbitrary-precision work is bounded outside the server process', () => {
+  // Four rounds of per-operation ceilings each landed on the wrong axis for at
+  // least one operation: `factorial` alone missed five siblings, cell count
+  // missed cell WIDTH, n²·k rejected cheap shapes, k alone made S(n,n) = 1
+  // unreachable above 500, and the n ceiling on permutations still let the call
+  // trap the CAS engine. The bound is now a child process with a wall-clock
+  // timeout and a heap cap, which covers every operation and every one added
+  // later. These tests pin that contract, not a set of numbers.
+
   it.each([
-    ['stirling_first(4000,2000)', /stirling_first is limited to n²·k/],
-    // Cells was the wrong axis: 980049 cells is inside a 10⁶ cap and aborted
-    // the process, while 20000×20000 cells is cheap because k > n short-circuits.
-    ['stirling_first(20000,48)', /stirling_first is limited to n²·k/],
-    ['stirling_first(19999,20)', /stirling_first is limited to n²·k/],
-    ['stirling_second(20000,600)', /stirling_second is limited to k <= 500/],
-    ['combinations(200000,100000)', /combinations is limited to n <= 50000/],
-    ['bell_number(9000)', /bell_number is limited to n <= 1500/],
-    ['partition_count(30000)', /partition_count is limited to n <= 5000/],
-    ['derangements(200000)', /derangements is limited to n <= 30000/],
-    ['multinomial(500000,[1,1])', /multinomial is limited to n <= 20000/],
-  ])('rejects %s quickly', async (problem, expected) => {
-    const started = Date.now();
+    // Each of these was rejected by a ceiling that should not have applied.
+    ['combinations(100000,3)', /^Result: 166661666700000$/m],
+    ['stirling_second(600,600)', /^Result: 1$/m],
+    ['stirling_second(1000,600)', /^Result: 305134181871302850583718528780/m],
+    // 24 characters. Aborted the whole server under the cell-count ceiling;
+    // refused by the n²·k one. It is simply an answer.
+    ['stirling_first(20000,48)', /^Result: 131276123551409011274941445553/m],
+    // Trapped the WASM engine and failed the NEXT client's in-flight call.
+    ['permutations(50000,25000)', /^Result: \d{20}/m],
+  ])('%s answers instead of being refused', async (problem, expected) => {
     const r = await computeHandler({ problem });
-    // The property at stake is not just the error but that it is cheap: the
-    // bound has to fire before the loop, not after it.
-    expect(Date.now() - started).toBeLessThan(1000);
+    expect(r.isError, text(r)).toBe(false);
+    expect(text(r)).toMatch(expected);
+  });
+
+  it('an expensive computation does not take the next call down with it', async () => {
+    // The permutations ceiling existed to stop a WASM trap whose recycle failed
+    // every other in-flight call. Moving the arithmetic off the CAS removes the
+    // trap; this pins that the neighbour survives.
+    await computeHandler({ problem: 'permutations(50000,25000)' });
+    const neighbour = await computeHandler({ problem: 'C(20,3)' });
+    expect(neighbour.isError, text(neighbour)).toBe(false);
+    expect(text(neighbour)).toMatch(/^Result: 1140$/m);
+  });
+
+  it.each([
+    ['combinations(a,b)', /n must be a non-negative integer/],
+    ['bell_number(-5)', /n must be a non-negative integer/],
+    ['derangements(-5)', /n must be a non-negative integer/],
+    ['stirling_first(5)', /k is required for stirling_first/],
+    ['combinations(3,5)', /k \(5\) cannot exceed n \(3\)/],
+  ])('%s is rejected on its shape, which the worker cannot judge', async (problem, expected) => {
+    const r = await computeHandler({ problem });
     expect(r.isError, text(r)).toBe(true);
     expect(text(r)).toMatch(expected);
   });
 
   it.each([
     ['bell_number(5)', /^Result: 52$/m],
-    ['partition_count(5)', /^Result: 7$/m],
+    ['catalan_number(5)', /^Result: 42$/m],
     ['derangements(5)', /^Result: 44$/m],
     ['stirling_first(5,2)', /^Result: 50$/m],
+    ['stirling_second(5,2)', /^Result: 15$/m],
     ['multinomial(5,[2,2,1])', /^Result: 30$/m],
+    ['partition_count(10)', /^Result: 42$/m],
   ])('still answers %s', async (problem, expected) => {
     const r = await computeHandler({ problem });
     expect(r.isError, text(r)).toBe(false);
     expect(text(r)).toMatch(expected);
   });
+});
 
-  // NaN passed every downstream comparison (`k > n` is false for NaN), so an
-  // unparsable argument answered C(NaN, NaN) = 1.
-  it.each(['combinations(a,b)', 'bell_number(-5)', 'derangements(-5)'])(
-    'rejects %s rather than answering',
-    async (problem) => {
-      const r = await computeHandler({ problem });
-      expect(r.isError, text(r)).toBe(true);
-      expect(text(r)).toMatch(/must be a non-negative integer/);
+describe('the compute worker bounds both axes', () => {
+  // Tested against the host factory rather than the singleton so the budget can
+  // be shrunk: the real one is AXIOM_EVAL_TIMEOUT_MS, too slow to assert.
+  it('kills a computation that outlives its timeout', async () => {
+    const host = createJsComputeHost({ timeoutMs: 50 });
+    try {
+      await expect(host.run('bell_number', { n: 100000 })).rejects.toThrow(
+        /exceeded its 50ms budget/
+      );
+    } finally {
+      await host.dispose();
     }
-  );
+  });
+
+  it('survives the timeout and answers the next call', async () => {
+    // A synchronous BigInt loop cannot be interrupted, so the timeout kills the
+    // child. The next call must transparently get a fresh one.
+    const host = createJsComputeHost({ timeoutMs: 60 });
+    try {
+      await expect(host.run('bell_number', { n: 100000 })).rejects.toThrow(/budget/);
+      await expect(host.run('bell_number', { n: 5 })).resolves.toBe('52');
+    } finally {
+      await host.dispose();
+    }
+  });
+
+  it('contains an out-of-memory computation instead of aborting the server', async () => {
+    // This is the axis no input ceiling expressed: cost is the WIDTH of the
+    // BigInts, not the iteration count. Under a tight heap the child dies and
+    // the server keeps running — the previous behaviour was a SIGABRT of the
+    // whole process from 24 characters of input.
+    const host = createJsComputeHost({ timeoutMs: 30_000, heapMb: 32 });
+    try {
+      await expect(host.run('stirling_first', { n: 60000, k: 20000 })).rejects.toThrow(
+        /memory budget|stopped unexpectedly/
+      );
+      // The server is still here, and so is the next answer.
+      await expect(host.run('bell_number', { n: 5 })).resolves.toBe('52');
+    } finally {
+      await host.dispose();
+    }
+  }, 40_000);
+
+  it('reports an unknown task rather than hanging', async () => {
+    const host = createJsComputeHost({ timeoutMs: 2000 });
+    try {
+      await expect(host.run('not_a_task' as Parameters<typeof host.run>[0], {})).rejects.toThrow(
+        /unknown task/
+      );
+    } finally {
+      await host.dispose();
+    }
+  });
 });
 
 describe('an integration is bounded by wall clock, not just per call', () => {
@@ -333,5 +400,38 @@ describe('a root-finder is bounded by wall clock too', () => {
     });
     expect(r.isError, text(r)).toBe(true);
     expect(text(r)).toMatch(/n_points must be an integer between 2 and 200/);
+  });
+});
+
+describe('a discrete cdf is summed in log space', () => {
+  // The sums were quadratic (a fresh binomial coefficient or factorial per term)
+  // and no ceiling on the parameter names could bound all three: poisson has no
+  // `n`, and hypergeometric's cost is driven by `K`. A running-term recurrence
+  // fixed the complexity but not the range — its first term underflows, so
+  // `binomial(n=100000, p=0.5, k=100000)` summed zeros and answered 0 for a
+  // probability of 1. Log space fixes both.
+  it.each([
+    // Textbook values, computed independently of the implementation.
+    [{ distribution: 'binomial', params: { n: 10, p: 0.5, k: 5 } }, 0.623046875],
+    [{ distribution: 'binomial', params: { n: 20, p: 0.3, k: 7 } }, 0.7722717974],
+    [{ distribution: 'poisson', params: { lambda: 2, k: 3 } }, 0.8571234605],
+    [{ distribution: 'poisson', params: { lambda: 5, k: 8 } }, 0.9319063653],
+    [{ distribution: 'hypergeometric', params: { N: 50, K: 5, n: 10, k: 2 } }, 0.9517396968],
+    [{ distribution: 'hypergeometric', params: { N: 100, K: 30, n: 20, k: 8 } }, 0.9115435242],
+    // The whole distribution: exactly 1, and the cases that answered 0.
+    [{ distribution: 'binomial', params: { n: 100000, p: 0.5, k: 100000 } }, 1],
+    [{ distribution: 'poisson', params: { lambda: 2, k: 100000 } }, 1],
+    [{ distribution: 'hypergeometric', params: { N: 100000, K: 99999, n: 20, k: 100000 } }, 1],
+    // Rejected outright by the n·k ceiling; 0.03ms of real work.
+    [{ distribution: 'binomial', params: { n: 100000, p: 0.0001, k: 30 } }, 0.9999999202],
+  ])('cdf %# is correct and cheap', async (args, expected) => {
+    const started = Date.now();
+    const r = await probabilityCalcHandler({ ...args, operation: 'cdf' });
+    // The property that matters as much as the value: no ceiling is doing this,
+    // the algorithm is. The worst of these measured 11.3s before.
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(r.isError, text(r)).toBe(false);
+    const value = Number(/P\(X ≤ [\d.]+\) = ([\d.e+-]+)/.exec(text(r))?.[1]);
+    expect(value).toBeCloseTo(expected, 8);
   });
 });
