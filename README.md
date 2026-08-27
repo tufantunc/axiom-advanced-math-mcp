@@ -255,10 +255,14 @@ scales horizontally with no shared state.
 | `MCP_PORT`               | `3000`      | HTTP server port                                    |
 | `MCP_HOST`               | `127.0.0.1` | HTTP server host                                    |
 | `MCP_ALLOWED_HOSTS`      | loopback only (`localhost`, `127.0.0.1`, `[::1]`) | Comma-separated `Host` header allowlist for `POST /mcp` (DNS-rebinding protection). An explicit value replaces the default rather than extending it. |
-| `AXIOM_EVAL_TIMEOUT_MS`  | `10000`     | Per-evaluation CAS timeout, in milliseconds         |
+| `AXIOM_EVAL_TIMEOUT_MS`  | `10000`     | Per-evaluation timeout, in milliseconds. Bounds one CAS call **and** one js-compute call (arbitrary-precision integer work, arithmetic, plot sampling), so lowering it tightens both. |
 | `AXIOM_INTEGRATION_BUDGET_MS` | `max(3 × AXIOM_EVAL_TIMEOUT_MS, 30000)` | Wall-clock budget for one multi-call numerical routine (integration, root finding). Bounds the SUM of CAS calls, where `AXIOM_EVAL_TIMEOUT_MS` bounds one. |
-| `AXIOM_JS_COMPUTE_HEAP_MB` | `512` | Heap ceiling for the child process that runs arbitrary-precision integer work and mathjs evaluation. Exceeding it fails that one computation and leaves the server up. |
+| `AXIOM_JS_COMPUTE_HEAP_MB` | `512` | Heap ceiling for the child process that runs arbitrary-precision integer work and mathjs evaluation. Exceeding it fails the computation that caused it — calls queued behind it are re-sent to the replacement worker — and leaves the server up. |
 | `AXIOM_COMPUTE_HYGIENE`  | unset       | Set to `1` to enable compute output post-processing |
+
+One bound is not configurable: a result over **100,000 characters** is refused
+rather than returned, so an expression like `1:2000000` reports its element count
+instead of shipping 24 million characters into the caller's context.
 
 ### MCP Inspector
 

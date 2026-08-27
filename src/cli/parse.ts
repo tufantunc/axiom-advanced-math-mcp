@@ -99,7 +99,7 @@ export const USAGE_COMPUTE = `axiom-math compute — evaluate a math expression 
 
 Flags:
   --domain <d>     real|complex|numeric|exact — solution domain
-  --precision <n>  decimal places, 1..50
+  --precision <n>  significant digits, 1..50 (omit for full precision)
   --json           structured output (parseable envelope)
   --latex          LaTeX-formatted result
   -q, --quiet      print one value only (for scripting)

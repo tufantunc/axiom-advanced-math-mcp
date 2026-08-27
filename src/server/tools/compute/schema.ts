@@ -7,9 +7,9 @@ import { MAX_EXPRESSION_LENGTH } from '../limits.js';
  * The transport already caps the whole HTTP body at 1 MB (see
  * `MAX_MCP_BODY_BYTES` in http-app.ts), but that limit exists to bound
  * memory use for an unauthenticated caller -- it says nothing about what's a
- * *reasonable* CAS expression. Without a tighter cap here, an oversized
- * `problem` that happens to classify as arithmetic gets routed straight to a
- * synchronous, un-timed-out `mathjs.evaluate()` on the event loop.
+ * *reasonable* CAS expression. Evaluation itself is bounded out of process now,
+ * but the routing and preprocessing an oversized `problem` goes through first
+ * are not, and neither is parse cost.
  *
  * 8 KB comfortably covers realistic symbolic-math input -- even a gnarly
  * multi-line system of equations or a long Taylor expansion request -- while
@@ -35,7 +35,9 @@ export const computeSchema = z.object({
         '  C(10,3)                   — combinations\n' +
         '  ifactor(2310)             — prime factorization\n' +
         '  2+3*sin(pi/4)            — arithmetic\n' +
-        'Or any valid Giac/Xcas expression as fallback.'
+        'Or any valid Giac/Xcas expression as fallback.\n' +
+        'Results larger than 100,000 characters are refused rather than returned — ask for a ' +
+        'smaller range or fewer elements.'
     ),
   domain: z
     .enum(['real', 'complex', 'numeric', 'exact'])
@@ -47,7 +49,15 @@ export const computeSchema = z.object({
         '  numeric — force numerical methods\n' +
         '  exact — exact symbolic form'
     ),
-  precision: z.number().min(1).max(50).optional().describe('Decimal precision (default: 10)'),
+  precision: z
+    .number()
+    .min(1)
+    .max(50)
+    .optional()
+    .describe(
+      'Significant digits for a numeric result. Omit for full precision. Values above ~17 have no ' +
+        'effect: the result is a double.'
+    ),
   format: z
     .enum(['text', 'latex', 'json'])
     .optional()

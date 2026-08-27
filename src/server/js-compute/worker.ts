@@ -1,4 +1,6 @@
-import { TASKS, type TaskName } from './tasks.js';
+import { TASKS } from './tasks.js';
+import { JsComputeError } from './errors.js';
+import type { TaskFn, TaskModule } from './task-module.js';
 
 /**
  * Runs one bounded pure-JS computation per message (a forked child process).
@@ -19,24 +21,29 @@ process.on('disconnect', () => process.exit(0));
 /**
  * The mathjs tasks, imported on first use.
  *
- * `require('mathjs')` costs ~143ms and tens of MB, and most tasks here do not
- * need it — a `bell_number` call must not pay for it.
+ * `require('mathjs')` costs ~170ms and ~50MB, and most tasks here do not need
+ * it. The saving is once per worker process, not per call: the child is reused
+ * until it faults.
  */
-type TaskRegistry = Record<string, (args: Record<string, never>) => string>;
+let mathjsTasks: TaskModule | null = null;
 
-let mathjsTasks: TaskRegistry | null = null;
-
-async function resolveTask(task: string): Promise<TaskRegistry[string] | undefined> {
-  const own = (TASKS as unknown as TaskRegistry)[task];
+async function resolveTask(task: string): Promise<TaskFn | undefined> {
+  const own: TaskFn | undefined = TASKS[task as keyof typeof TASKS];
   if (own) return own;
   if (!mathjsTasks) {
     const loaded = await import('./mathjs-tasks.js');
-    mathjsTasks = loaded.MATHJS_TASKS as unknown as TaskRegistry;
+    mathjsTasks = loaded.MATHJS_TASKS;
   }
   return mathjsTasks[task];
 }
 
-process.on('message', (msg: { id: number; task: TaskName; args: Record<string, unknown> }) => {
+interface TaskMessage {
+  id: number;
+  task: string;
+  args: Record<string, unknown>;
+}
+
+process.on('message', (msg: TaskMessage) => {
   void (async () => {
     try {
       const run = await resolveTask(msg.task);
@@ -44,9 +51,17 @@ process.on('message', (msg: { id: number; task: TaskName; args: Record<string, u
         send({ type: 'result', id: msg.id, error: `unknown task: ${String(msg.task)}` });
         return;
       }
-      send({ type: 'result', id: msg.id, value: run(msg.args as Record<string, never>) });
+      // Acked before the synchronous body runs, so the host charges the per-call
+      // clock to execution rather than to time spent queued behind another call.
+      send({ type: 'start', id: msg.id });
+      send({ type: 'result', id: msg.id, value: run(msg.args as never) });
     } catch (e) {
-      send({ type: 'result', id: msg.id, error: e instanceof Error ? e.message : String(e) });
+      send({
+        type: 'result',
+        id: msg.id,
+        error: e instanceof Error ? e.message : String(e),
+        code: e instanceof JsComputeError ? e.code : undefined,
+      });
     }
   })();
 });

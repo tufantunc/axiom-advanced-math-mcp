@@ -1,38 +1,34 @@
-import { runJsCompute } from '../../js-compute/index.js';
+import { runJsComputeJson } from '../../js-compute/index.js';
+import type { PlotPoint, PlotSegment, SampledFunction } from '../../js-compute/index.js';
 
 /**
  * Function sampling for the plot tool, bounded outside the server process.
  *
- * The mathjs instance and the sampling loop now live in
- * `js-compute/mathjs-tasks.ts`, under the same wall-clock timeout, heap cap and
- * response-size limit as the arithmetic path. They ran here, synchronously: the
- * sample count is fixed at 200 but the CALLER writes the expression, and
- * `sum(1:2000000)*x` — sixteen characters — took 10.9s of blocked event loop
- * across those 200 points. `plot` is not behind the CAS session mutex, so that
- * stalled every other client directly rather than queueing.
+ * The mathjs instance and the sampling loop live in
+ * `js-compute/mathjs-tasks.ts`, under the same wall-clock timeout and heap cap
+ * as the arithmetic path. They ran here, synchronously: the sample count is
+ * fixed at 200 but the CALLER writes the expression, and `sum(1:200000)*x` took
+ * 9.5s of blocked event loop across those 200 points. `plot` is not behind the
+ * CAS session mutex, so that stalled every other client directly rather than
+ * queueing.
  */
 
 /** Samples taken across the x range when a caller does not say otherwise. */
 export const DEFAULT_PLOT_POINTS = 200;
 
-export interface PlotPoint {
-  x: number;
-  y: number;
-}
-
-export interface PlotSegment {
-  points: PlotPoint[];
-}
-
-export interface EvaluationResult {
-  segments: PlotSegment[];
-  yMin: number;
-  yMax: number;
-}
+// Re-exported from the module that produces them: the two sides of the IPC
+// boundary previously declared identical shapes with no type relationship, so a
+// renamed field compiled clean on both.
+export type { PlotPoint, PlotSegment };
+export type EvaluationResult = SampledFunction;
 
 /**
  * Evaluate a mathematical expression over a range, splitting at
- * discontinuities (NaN, Infinity, very large jumps).
+ * discontinuities (non-finite samples) and at poles.
+ *
+ * Throws when nothing evaluated: an expression that failed at every point used
+ * to come back as a successful plot of empty axes, so `plot notafunction(x)`
+ * returned ok with a picture of nothing.
  */
 export async function evaluateFunction(
   expression: string,
@@ -41,12 +37,19 @@ export async function evaluateFunction(
   xMax: number,
   numPoints: number = DEFAULT_PLOT_POINTS
 ): Promise<EvaluationResult> {
-  const raw = await runJsCompute('mathjs_sample', {
+  const result = await runJsComputeJson('mathjs_sample', {
     expression,
     variable,
     xMin,
     xMax,
     numPoints,
   });
-  return JSON.parse(raw) as EvaluationResult;
+  if (result.sampled === 0) {
+    throw new Error(
+      result.firstError !== undefined
+        ? `the expression could not be evaluated: ${result.firstError}`
+        : `the expression produced no finite values over [${xMin}, ${xMax}]`
+    );
+  }
+  return result;
 }

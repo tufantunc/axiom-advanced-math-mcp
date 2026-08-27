@@ -1,3 +1,5 @@
+import type { TaskModule } from './task-module.js';
+
 /**
  * The pure-JS arbitrary-precision computations, isolated from the server process.
  *
@@ -163,6 +165,9 @@ function binomialCdf(n: number, p: number, k: number): number {
 
 export type TaskName = keyof typeof TASKS;
 
+/** Argument shape per task, so the IPC seam is checked rather than asserted. */
+export type TaskArgs = { [K in TaskName]: Parameters<(typeof TASKS)[K]>[0] };
+
 /**
  * Every task the host may run, keyed by name.
  *
@@ -181,4 +186,4 @@ export const TASKS = {
   partition_count: (a: { n: number }) => partitionCount(a.n).toString(),
   poisson_cdf: (a: { lambda: number; k: number }) => String(poissonCdf(a.lambda, a.k)),
   binomial_cdf: (a: { n: number; p: number; k: number }) => String(binomialCdf(a.n, a.p, a.k)),
-} as const;
+} as const satisfies TaskModule;

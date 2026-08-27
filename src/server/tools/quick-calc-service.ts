@@ -1,4 +1,4 @@
-import { runJsCompute } from '../js-compute/index.js';
+import { runJsCompute, type EvaluatedExpression } from '../js-compute/index.js';
 
 // Words that unambiguously indicate natural language (not valid math operators/identifiers)
 const NATURAL_LANGUAGE_WORDS =
@@ -34,20 +34,19 @@ export interface QuickCalcResult {
 /**
  * Arithmetic evaluation, bounded outside the server process.
  *
- * The mathjs instance, its hardening and the evaluation itself now live in
+ * The mathjs instance, its hardening and the evaluation itself live in
  * `js-compute/mathjs-tasks.ts`, which runs in a forked child under a wall-clock
  * timeout, a heap cap and a response-size limit. It ran here, synchronously, on
  * the main thread — where an unbounded expression cannot be interrupted:
- * `1:20000000` is eleven characters and blocked the event loop for 20s while
- * building a 532MB response.
+ * `1:20000000` is eleven characters and blocked the event loop for 18.5s while
+ * building a 266-million-character result.
  *
- * A guard on the construct would not have been enough. `zeros(3000,3000)` costs
- * 3.7s and `ones(2000,2000)*ones(2000,2000)` 21s with no range syntax in sight,
- * so the three bounds are on time, memory and response size — none of them named
- * after a mathjs feature.
+ * The bounds are on time, memory and response size rather than on any mathjs
+ * construct, because the reachable surface is whatever `isPureArithmetic`
+ * (compute/router.ts) admits — which is open-ended, and covers syntax nobody has
+ * thought of yet.
  *
- * The class shape is kept because two handlers construct one per call; it holds
- * no state now, and the worker behind it is a lazily-forked process singleton.
+ * The class holds no state: it is a typed stub over the worker.
  */
 export class QuickCalcService {
   async evaluate(options: QuickCalcOptions): Promise<QuickCalcResult> {
@@ -62,9 +61,12 @@ export class QuickCalcService {
 
     let raw: string;
     try {
+      // `precision` is forwarded only when the caller supplied it: applying the
+      // documented default of 10 would reformat every existing caller's result
+      // (`0.1+0.2` would answer `0.3`).
       raw = await runJsCompute('mathjs_evaluate', {
         expression,
-        precision: precision ?? 10,
+        ...(precision !== undefined ? { precision } : {}),
         latex: format === 'latex' || format === 'json',
       });
     } catch (error) {
@@ -73,7 +75,7 @@ export class QuickCalcService {
       );
     }
 
-    const parsed = JSON.parse(raw) as { value: string; isNumber: boolean; latex?: string };
+    const parsed = JSON.parse(raw) as EvaluatedExpression;
     const output: QuickCalcResult = {
       result: parsed.isNumber ? Number(parsed.value) : parsed.value,
     };

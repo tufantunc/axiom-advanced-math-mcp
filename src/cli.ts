@@ -73,7 +73,8 @@ async function main(): Promise<number | null> {
  * agent skill teaches.
  *
  * Setting `exitCode` lets Node flush and exit on its own. Nothing keeps the loop
- * open: the Giac worker child is `unref()`d by the worker host.
+ * open: both worker children — Giac and js-compute — are `unref()`d by their
+ * hosts, along with their IPC channels.
  */
 function finish(code: number): void {
   process.exitCode = code;
