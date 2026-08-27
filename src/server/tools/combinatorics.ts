@@ -1,5 +1,5 @@
 import { formatToolResponse, formatErrorResponse } from './response-formatter.js';
-import { runJsCompute, type TaskName } from '../js-compute/index.js';
+import { runJsCompute, type TaskName, type TaskArgs } from '../js-compute/index.js';
 
 /**
  * Combinatorics over arbitrary-precision integers.
@@ -71,7 +71,10 @@ export async function combinatoricsHandler(args: Record<string, unknown>) {
   const shapeError = checkShape(operation, n, k);
   if (shapeError) return error(shapeError);
 
-  let taskArgs: Record<string, unknown> = { n, k };
+  // Shapes the combinatorics tasks accept. The task itself is chosen at
+  // runtime from `operation`, so the call below casts: a literal-keyed generic
+  // cannot check a dynamic key. `checkShape` is what validates the pairing.
+  let taskArgs: { n: number; k?: number; groups?: number[] } = { n, k };
   if (operation === 'multinomial') {
     const grps = groups ?? (k !== undefined ? [k, n - k] : undefined);
     if (!grps) return error('groups array is required for multinomial');
@@ -85,7 +88,7 @@ export async function combinatoricsHandler(args: Record<string, unknown>) {
 
   let rawResult: string;
   try {
-    rawResult = await runJsCompute(task, taskArgs);
+    rawResult = await runJsCompute(task, taskArgs as TaskArgs[TaskName]);
   } catch (err) {
     // A timeout or the heap cap lands here. The message names the budget rather
     // than the input, because there is no single input dimension to name — that

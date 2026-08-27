@@ -79,7 +79,9 @@ The expression is read from stdin when no positional argument is given.
 Use \`--\` before an expression that starts with a minus sign, e.g.
 \`axiom-math compute -- '-2+2'\`.
 Set AXIOM_EVAL_TIMEOUT_MS to change the per-evaluation timeout (default 10000).
-Set AXIOM_INTEGRATION_BUDGET_MS to bound one integration or root search (default 30000).
+Set AXIOM_INTEGRATION_BUDGET_MS to bound one integration or root search (default 3x the
+per-evaluation timeout, minimum 30000). Set AXIOM_JS_COMPUTE_HEAP_MB to cap the memory of
+one arbitrary-precision or arithmetic computation (default 512).
 
 Examples:
   axiom-math compute 'integrate(sin(x)^3,x)'
@@ -97,7 +99,7 @@ export const USAGE_COMPUTE = `axiom-math compute — evaluate a math expression 
 
 Flags:
   --domain <d>     real|complex|numeric|exact — solution domain
-  --precision <n>  decimal places, 1..50
+  --precision <n>  significant digits, 1..50 (omit for full precision)
   --json           structured output (parseable envelope)
   --latex          LaTeX-formatted result
   -q, --quiet      print one value only (for scripting)

@@ -34,7 +34,7 @@ export function registerPlotTools(server: McpServer): void {
     plotFunctionSchema,
     async (args) => {
       try {
-        const result = plotToSvg({
+        const result = await plotToSvg({
           expression: args.expression as string,
           variable: args.variable as string | undefined,
           xMin: args.x_min as number | undefined,

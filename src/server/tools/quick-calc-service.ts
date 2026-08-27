@@ -1,4 +1,4 @@
-import { create, all, MathJsInstance } from 'mathjs';
+import { runJsCompute, type EvaluatedExpression } from '../js-compute/index.js';
 
 // Words that unambiguously indicate natural language (not valid math operators/identifiers)
 const NATURAL_LANGUAGE_WORDS =
@@ -31,61 +31,55 @@ export interface QuickCalcResult {
   latex?: string;
 }
 
+/**
+ * Arithmetic evaluation, bounded outside the server process.
+ *
+ * The mathjs instance, its hardening and the evaluation itself live in
+ * `js-compute/mathjs-tasks.ts`, which runs in a forked child under a wall-clock
+ * timeout, a heap cap and a response-size limit. It ran here, synchronously, on
+ * the main thread — where an unbounded expression cannot be interrupted:
+ * `1:20000000` is eleven characters and blocked the event loop for 18.5s while
+ * building a 266-million-character result.
+ *
+ * The bounds are on time, memory and response size rather than on any mathjs
+ * construct, because the reachable surface is whatever `isPureArithmetic`
+ * (compute/router.ts) admits — which is open-ended, and covers syntax nobody has
+ * thought of yet.
+ *
+ * The class holds no state: it is a typed stub over the worker.
+ */
 export class QuickCalcService {
-  private math: MathJsInstance;
-
-  constructor() {
-    this.math = create(all, {});
-    // mathjs has no ln(); models write it constantly. Alias to natural log.
-    this.math.import({ ln: (x: number) => Math.log(x) });
-    // Expressions handed to evaluate() below come straight from the model /
-    // caller, i.e. untrusted input. `import` and `createUnit` are reachable
-    // from the expression parser (e.g. `import({foo:...})` inside a string)
-    // and can be used to redefine trusted built-ins or fabricate fake units,
-    // so mathjs's own security guidance is to disable them on any instance
-    // that evaluates third-party expressions:
-    // https://mathjs.org/docs/expressions/security.html
-    this.math.import(
-      {
-        import: function () {
-          throw new Error('Function import is disabled');
-        },
-        createUnit: function () {
-          throw new Error('Function createUnit is disabled');
-        },
-      },
-      { override: true }
-    );
-  }
-
-  evaluate(options: QuickCalcOptions): QuickCalcResult {
+  async evaluate(options: QuickCalcOptions): Promise<QuickCalcResult> {
     const { expression, precision, format } = options;
 
+    // Stays in-process: a bounded regex over an input the schema already caps.
     if (detectNaturalLanguage(expression)) {
       throw new Error(
         "Expression appears to contain natural language. quick_calc only accepts mathematical expressions (e.g., '3*x + 2', 'sin(pi/4)'). For symbolic reasoning use solve_equation or advanced_solve."
       );
     }
 
+    let raw: string;
     try {
-      const result = this.math.evaluate(expression, {
-        precision: precision || 10,
+      // `precision` is forwarded only when the caller supplied it: applying the
+      // documented default of 10 would reformat every existing caller's result
+      // (`0.1+0.2` would answer `0.3`).
+      raw = await runJsCompute('mathjs_evaluate', {
+        expression,
+        ...(precision !== undefined ? { precision } : {}),
+        latex: format === 'latex' || format === 'json',
       });
-
-      const output: QuickCalcResult = {
-        result: typeof result === 'number' ? result : result.toString(),
-      };
-
-      if (format === 'latex' || format === 'json') {
-        output.latex = this.math.parse(expression).toTex();
-      }
-
-      return output;
     } catch (error) {
-      if (error instanceof Error) {
-        throw new Error(`Math evaluation error: ${error.message}`);
-      }
-      throw new Error(`Math evaluation error: ${String(error)}`);
+      throw new Error(
+        `Math evaluation error: ${error instanceof Error ? error.message : String(error)}`
+      );
     }
+
+    const parsed = JSON.parse(raw) as EvaluatedExpression;
+    const output: QuickCalcResult = {
+      result: parsed.isNumber ? Number(parsed.value) : parsed.value,
+    };
+    if (parsed.latex !== undefined) output.latex = parsed.latex;
+    return output;
   }
 }

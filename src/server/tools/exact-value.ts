@@ -26,9 +26,15 @@ export async function exactValueHandler(args: Record<string, unknown>) {
       }
 
       case 'to_decimal': {
-        const precision = (args.precision as number) ?? 10;
+        // Forwarded only when the caller asked: `precision` now actually formats
+        // the result, so defaulting it to 10 would truncate every existing
+        // to_decimal answer (1/3 would become 0.3333333333).
+        const precision = args.precision as number | undefined;
         const service = new QuickCalcService();
-        const result = service.evaluate({ expression: value, precision });
+        const result = await service.evaluate({
+          expression: value,
+          ...(precision !== undefined ? { precision } : {}),
+        });
         const numeric =
           typeof result.result === 'number' ? result.result : parseFloat(String(result.result));
         return formatToolResponse({

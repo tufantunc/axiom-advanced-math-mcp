@@ -6,6 +6,7 @@ import { linearRegressionHandler } from '../src/server/tools/linear-regression.j
 import { numericalMethodsHandler } from '../src/server/tools/numerical-methods.js';
 import { createJsComputeHost } from '../src/server/js-compute/index.js';
 import { probabilityCalcHandler } from '../src/server/tools/probability-calc.js';
+import { plotToSvg } from '../src/server/tools/plot/render.js';
 
 const text = (r: { content: { text: string }[] }): string =>
   r.content.map((c) => c.text).join('\n');
@@ -183,7 +184,7 @@ describe('the compute worker bounds both axes', () => {
     const host = createJsComputeHost({ timeoutMs: 50 });
     try {
       await expect(host.run('bell_number', { n: 100000 })).rejects.toThrow(
-        /exceeded its 50ms budget/
+        /exceeded its time budget/
       );
     } finally {
       await host.dispose();
@@ -193,14 +194,19 @@ describe('the compute worker bounds both axes', () => {
   it('survives the timeout and answers the next call', async () => {
     // A synchronous BigInt loop cannot be interrupted, so the timeout kills the
     // child. The next call must transparently get a fresh one.
-    const host = createJsComputeHost({ timeoutMs: 60 });
+    //
+    // 2s rather than the 50ms used above: this test needs the SECOND call to
+    // succeed, and under a parallel suite run a fork plus a cold start can
+    // itself outlast a tight budget. bell_number(100000) takes minutes, so the
+    // first call still times out reliably.
+    const host = createJsComputeHost({ timeoutMs: 2000 });
     try {
       await expect(host.run('bell_number', { n: 100000 })).rejects.toThrow(/budget/);
       await expect(host.run('bell_number', { n: 5 })).resolves.toBe('52');
     } finally {
       await host.dispose();
     }
-  });
+  }, 30_000);
 
   it('contains an out-of-memory computation instead of aborting the server', async () => {
     // This is the axis no input ceiling expressed: cost is the WIDTH of the
@@ -434,4 +440,322 @@ describe('a discrete cdf is summed in log space', () => {
     const value = Number(/P\(X ≤ [\d.]+\) = ([\d.e+-]+)/.exec(text(r))?.[1]);
     expect(value).toBeCloseTo(expected, 8);
   });
+});
+
+describe('mathjs evaluation is bounded outside the server process', () => {
+  // It ran synchronously on the main thread, where an unbounded expression
+  // cannot be interrupted: `1:20000000` is eleven characters and blocked the
+  // event loop for 20s while building a 532MB response. A guard on range syntax
+  // would not have been enough — the cost shows up as time, as memory, or as
+  // response size depending on the expression, so all three are bounded and none
+  // of the bounds names a mathjs construct.
+  it.each([
+    ['1:200000', /response limit/],
+    ['1:2000000', /response limit/],
+  ])('%s is refused on response size', async (problem, expected) => {
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(expected);
+    // The refusal itself must be small — the point is not to ship 48MB.
+    expect(text(r).length).toBeLessThan(500);
+  });
+
+  it('a runaway expression is refused on time or memory, not answered', async () => {
+    const host = createJsComputeHost({ timeoutMs: 400, heapMb: 64 });
+    try {
+      await expect(host.run('mathjs_evaluate', { expression: '1:50000000' })).rejects.toThrow(
+        /budget|response limit/
+      );
+      // And the worker is usable again straight after.
+      await expect(host.run('mathjs_evaluate', { expression: '2+2' })).resolves.toContain('"4"');
+    } finally {
+      await host.dispose();
+    }
+  }, 30_000);
+
+  it.each([
+    ['2+2', '4'],
+    ['sin(pi/4)', '0.7071067811865475'],
+    ['ln(e)', '1'],
+    ['sqrt(2)*100', '141.4213562373095'],
+  ])('still evaluates %s', async (expression, expected) => {
+    const host = createJsComputeHost({ timeoutMs: 10_000 });
+    try {
+      const raw = await host.run('mathjs_evaluate', { expression });
+      expect((JSON.parse(raw) as { value: string }).value).toBe(expected);
+    } finally {
+      await host.dispose();
+    }
+  });
+
+  it('keeps mathjs import and createUnit disabled in the worker', async () => {
+    // The two in-process instances this replaces both disabled these per mathjs's
+    // security guidance; the move must not quietly drop that.
+    const host = createJsComputeHost({ timeoutMs: 5000 });
+    try {
+      await expect(host.run('mathjs_evaluate', { expression: 'import({evil:1})' })).rejects.toThrow(
+        /import is disabled/
+      );
+      await expect(host.run('mathjs_evaluate', { expression: 'createUnit("zz")' })).rejects.toThrow(
+        /createUnit is disabled/
+      );
+    } finally {
+      await host.dispose();
+    }
+  });
+
+  it('bounds the plot sampler too, and still plots an ordinary function', async () => {
+    // 200 samples is fixed, but the CALLER writes the expression:
+    // `sum(1:2000000)*x` measured 10.9s across those points, and plot is not
+    // behind the CAS session mutex, so it stalled every client directly.
+    const host = createJsComputeHost({ timeoutMs: 500 });
+    try {
+      await expect(
+        host.run('mathjs_sample', {
+          expression: 'sum(1:2000000)*x',
+          variable: 'x',
+          xMin: -5,
+          xMax: 5,
+          numPoints: 200,
+        })
+      ).rejects.toThrow(/budget/);
+    } finally {
+      await host.dispose();
+    }
+
+    const plotted = await plotToSvg({ expression: 'sin(x)', xMin: -5, xMax: 5 });
+    expect(plotted.points).toBe(200);
+    expect(plotted.segments).toBe(1);
+  }, 30_000);
+});
+
+describe('the plot sampler kept the behaviour it had in-process', () => {
+  // These two details were both wrong in the first attempt at moving this code,
+  // and nothing caught it: a fixed jump threshold instead of the relative one,
+  // and the y-range padding dropped. They are the reason the sampler is two
+  // passes — the threshold is judged against a range only known once every point
+  // is sampled — so pin them rather than the fact that it runs.
+  it('pads the y range by 5% of the sampled span', async () => {
+    const r = await plotToSvg({ expression: 'sin(x)', xMin: -5, xMax: 5 });
+    // Sampled span is very nearly [-1, 1]; 5% of 2 is 0.1 at each end.
+    expect(r.yMin).toBeCloseTo(-1.0999, 3);
+    expect(r.yMax).toBeCloseTo(1.0999, 3);
+  });
+
+  it('pads a flat function by ±1 rather than by 5% of zero', async () => {
+    const r = await plotToSvg({ expression: '5', xMin: -5, xMax: 5 });
+    expect(r.yMin).toBe(4);
+    expect(r.yMax).toBe(6);
+  });
+
+  it('splits at a pole, judging the jump against the raw sampled span', async () => {
+    // The threshold is half the span measured BEFORE padding. Padding first was
+    // the bug: it put the threshold at 2.2x the raw span while no adjacent jump
+    // can exceed the raw span, so this branch could never fire and 1/x^3 was
+    // drawn as one curve straight through its pole — while plot's own tool
+    // description promised poles were split.
+    const r = await plotToSvg({ expression: '1/x^3', xMin: -1, xMax: 1 });
+    expect(r.segments).toBe(2);
+  });
+
+  it.each([
+    ['1/x', -10, 10, 2],
+    ['tan(x)', -10, 10, 3],
+    ['1/(x^2-4)', -10, 10, 3],
+  ])('splits %s into %i segments', async (expression, xMin, xMax, segments) => {
+    const r = await plotToSvg({ expression, xMin, xMax });
+    expect(r.segments).toBe(segments);
+  });
+
+  it.each([
+    // Steep but continuous: the largest adjacent step is a fraction of the span,
+    // so none of these may be split. `100000*x^2` and `1e6*x` are the adversarial
+    // cases for a threshold expressed as a fraction of the span.
+    ['x^2', -10, 10],
+    ['exp(x)', -1, 20],
+    ['1e6*x', -10, 10],
+    ['100000*x^2', -10, 10],
+    ['x^7', -5, 5],
+    ['x^2+sin(10*x)', -10, 10],
+    ['atan(x)', -50, 50],
+  ])('does not split the continuous curve %s', async (expression, xMin, xMax) => {
+    const r = await plotToSvg({ expression, xMin, xMax });
+    expect(r.segments).toBe(1);
+  });
+});
+
+/**
+ * The worker is a process-wide singleton shared by `compute`, `quick_calc`,
+ * `exact_value` and `plot`, which makes anything it remembers a cross-caller
+ * channel. Each of these failed before the guard it exercises existed.
+ */
+describe('one caller cannot change what the next caller is told', () => {
+  it('does not let a plot expression reconfigure later arithmetic', async () => {
+    const host = createJsComputeHost({ timeoutMs: 10_000 });
+    try {
+      const before = await host.run('mathjs_evaluate', { expression: '0.1+0.2' });
+      expect(JSON.parse(before).value).toBe('0.30000000000000004');
+
+      // 32 bytes through an unauthenticated tool. `config` mutates the shared
+      // instance, so this permanently changed every later caller's answer.
+      await host
+        .run('mathjs_sample', {
+          expression: 'config({number:"BigNumber"})*0+x',
+          variable: 'x',
+          xMin: -10,
+          xMax: 10,
+          numPoints: 200,
+        })
+        .catch(() => undefined);
+
+      const after = await host.run('mathjs_evaluate', { expression: '0.1+0.2' });
+      expect(JSON.parse(after).value).toBe('0.30000000000000004');
+    } finally {
+      await host.dispose();
+    }
+  });
+
+  it('keeps formatting intact — the guard must not shadow config', async () => {
+    // Disabling `config` outright breaks mathjs internally: Matrix.toString()
+    // reads it, and `1:5` degraded to `1,2,3,4,5`.
+    const host = createJsComputeHost({ timeoutMs: 10_000 });
+    try {
+      await host
+        .run('mathjs_evaluate', { expression: 'config({number:"BigNumber"})' })
+        .catch(() => undefined);
+      const r = await host.run('mathjs_evaluate', { expression: '1:5' });
+      expect(JSON.parse(r).value).toBe('[1, 2, 3, 4, 5]');
+    } finally {
+      await host.dispose();
+    }
+  });
+
+  it('fails only the computation at fault, not the ones queued behind it', async () => {
+    const host = createJsComputeHost({ timeoutMs: 10_000, heapMb: 64 });
+    try {
+      const settled = await Promise.allSettled([
+        host.run('mathjs_evaluate', { expression: '1:20000000' }),
+        host.run('mathjs_evaluate', { expression: '2+3' }),
+        host.run('mathjs_evaluate', { expression: 'sin(pi/4)' }),
+        host.run('bell_number', { n: 5 }),
+      ]);
+      expect(settled[0].status).toBe('rejected');
+      // The innocents used to be rejected with the offender's own error, which
+      // told `2+3` that it had exhausted a 512MB heap.
+      expect(settled.slice(1).map((s) => s.status)).toEqual([
+        'fulfilled',
+        'fulfilled',
+        'fulfilled',
+      ]);
+      expect(JSON.parse((settled[1] as PromiseFulfilledResult<string>).value).value).toBe('5');
+      expect((settled[3] as PromiseFulfilledResult<string>).value).toBe('52');
+    } finally {
+      await host.dispose();
+    }
+  }, 30_000);
+});
+
+describe('a non-answer is an error, not an answer', () => {
+  it.each([['#'], ['# hello'], ['null']])(
+    'refuses %s rather than answering "undefined"',
+    async (problem) => {
+      // `String(undefined)` is "undefined", where the `.toString()` it replaced
+      // threw — so this answered with isError:false and exit 0.
+      const r = await computeHandler({ problem });
+      expect(r.isError, `${problem} -> ${text(r)}`).toBe(true);
+    }
+  );
+
+  it('refuses a plot whose expression never evaluates', async () => {
+    await expect(
+      plotToSvg({ expression: 'notafunction(x)', xMin: -10, xMax: 10 })
+    ).rejects.toThrow(/Undefined function/);
+  });
+});
+
+describe('precision is honoured, and only when asked for', () => {
+  it('leaves the default answer untouched', async () => {
+    const host = createJsComputeHost({ timeoutMs: 10_000 });
+    try {
+      const r = await host.run('mathjs_evaluate', { expression: 'sqrt(2)' });
+      expect(JSON.parse(r).value).toBe('1.4142135623730951');
+    } finally {
+      await host.dispose();
+    }
+  });
+
+  it.each([
+    [3, '1.41'],
+    [10, '1.414213562'],
+  ])('formats to %i significant digits when given', async (precision, expected) => {
+    const host = createJsComputeHost({ timeoutMs: 10_000 });
+    try {
+      const r = await host.run('mathjs_evaluate', { expression: 'sqrt(2)', precision });
+      expect(JSON.parse(r).value).toBe(expected);
+    } finally {
+      await host.dispose();
+    }
+  });
+
+  it('does not leak `precision` into the caller\'s expression namespace', async () => {
+    // It was passed as mathjs's SCOPE, so `precision+1` answered 11.
+    const r = await computeHandler({ problem: 'precision+1' });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/Undefined symbol/);
+  });
+});
+
+describe('an oversized result is refused before it is built', () => {
+  it('rejects on element count rather than stringifying 24 million characters', async () => {
+    const host = createJsComputeHost({ timeoutMs: 10_000 });
+    try {
+      const started = Date.now();
+      await expect(host.run('mathjs_evaluate', { expression: '1:2000000' })).rejects.toThrow(
+        /2000000 elements/
+      );
+      // Measuring the built string first cost ~1.8s here. Generous bound: this
+      // asserts the pre-check exists at all, not a specific machine's speed.
+      expect(Date.now() - started).toBeLessThan(1500);
+    } finally {
+      await host.dispose();
+    }
+  }, 30_000);
+
+  it('refuses LaTeX for an expression too deeply nested to render', async () => {
+    // Capping the OUTPUT cannot bound this: 157 characters of nested sqrt burn a
+    // whole 10s budget and produce 155 characters of LaTeX.
+    const host = createJsComputeHost({ timeoutMs: 10_000 });
+    try {
+      const expression = 'sqrt('.repeat(26) + '2' + ')'.repeat(26);
+      await expect(host.run('mathjs_evaluate', { expression, latex: true })).rejects.toThrow(
+        /nests more than 20 levels/
+      );
+      // A normal depth still renders.
+      const ok = await host.run('mathjs_evaluate', { expression: '2+3*4', latex: true });
+      expect(JSON.parse(ok).latex).toBe('2+3\\cdot4');
+    } finally {
+      await host.dispose();
+    }
+  }, 30_000);
+});
+
+describe('a burst is shed rather than queued without limit', () => {
+  it('refuses past the queue depth, and says so truthfully', async () => {
+    const host = createJsComputeHost({ timeoutMs: 10_000, maxQueueDepth: 3 });
+    try {
+      const settled = await Promise.allSettled(
+        Array.from({ length: 6 }, () => host.run('mathjs_evaluate', { expression: '2+2' }))
+      );
+      const refused = settled.filter(
+        (s) => s.status === 'rejected' && /busy/.test((s.reason as Error).message)
+      );
+      // The overflow must be refused as busy — not left to wait and then be
+      // reported as an oversized computation, which is what the single
+      // enqueue-time budget did.
+      expect(refused.length).toBe(3);
+      expect(settled.filter((s) => s.status === 'fulfilled').length).toBe(3);
+    } finally {
+      await host.dispose();
+    }
+  }, 30_000);
 });
