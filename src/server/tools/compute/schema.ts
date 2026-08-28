@@ -56,6 +56,13 @@ export const computeSchema = z.object({
         'than with a number\n' +
         '  - a result nested more deeply than the evaluator can certify as free of ' +
         'undefined values\n' +
+        '  - a system of differential equations that this rewrite cannot express as a ' +
+        'constant matrix. Linear constant-coefficient systems ARE solved: ' +
+        "desolve([y'=z, z'=-y], x) returns every function, and the envelope's " +
+        '`components` field says which is which. Refused: not linear in the unknowns; ' +
+        'coefficients depending on the independent variable; a derivative of order ' +
+        "above one (rewrite y''=z as y'=w, w'=z); more than 9 equations; initial " +
+        'conditions for only some of the functions, or at different points.\n' +
         'The infinite-result rule above is about arithmetic evaluation; a symbolic ' +
         '+/-infinity from the CAS routes (a limit, a divergent integral) is a normal ' +
         'answer and is not flagged.'

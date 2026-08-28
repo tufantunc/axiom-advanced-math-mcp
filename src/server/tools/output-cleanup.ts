@@ -8,6 +8,24 @@
  * Split `s` at top-level (depth-0) occurrences of `sep`, respecting (), [], {}.
  * @param sep a single-character separator.
  */
+/**
+ * Whether a Giac-printed scalar is zero, however the engine spelt it.
+ *
+ * Three spellings, all of which have shipped a defect here. `0` is the exact
+ * form. `0.0` and `-0.0` are the float forms, and comparing to the string '0'
+ * refused every system with a decimal coefficient as "not linear". At 15 or more
+ * significant digits Giac prints a negative float zero as the malformed token
+ * `0.-0000000000000000`, which `Number` reads as NaN — that one refused pi, e and
+ * sqrt(2) at double precision, and later cost `y(0)=0.3333333333333333` its
+ * verification mark, because the predicate had been written out a second time
+ * instead of shared.
+ */
+export function isPrintedZero(entry: string): boolean {
+  const t = entry.trim();
+  if (t.length === 0) return false;
+  return Number(t) === 0 || (/^[+-]?[0.+-]*$/.test(t) && /0/.test(t));
+}
+
 export function splitTopLevel(s: string, sep: string): string[] {
   const parts: string[] = [];
   let depth = 0;

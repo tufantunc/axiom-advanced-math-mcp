@@ -18,9 +18,37 @@ export interface EvalOptions {
    * strategy per expression.
    */
   verify?: (result: string) => Promise<VerificationResult | undefined>;
+  /** Extra lines placed before the summary, e.g. which component is which function. */
+  notes?: string[];
   /** Optional note about which method produced the result (e.g. escalation). */
   methodNote?: string;
 }
+
+/** Deepest nesting handed back to `latex(...)`; see the note in toLatex. */
+const MAX_LATEX_DEPTH = 100;
+
+/**
+ * Deepest run of nested CALL parentheses in a printed result.
+ *
+ * Parentheses only. Counting `[` and `{` as well seemed the cautious reading —
+ * how deep the tree goes, whichever delimiter spelt it — but it refuses LaTeX
+ * that renders perfectly well: a list nested 200 deep is 401 characters and
+ * `latex()` answers it with the worker untouched, where a 140-deep run of
+ * `sqrt(1+...)` kills it. The hazard is nested function application, so that is
+ * what this counts.
+ */
+function nestingDepth(text: string): number {
+  let depth = 0;
+  let deepest = 0;
+  for (const ch of text) {
+    if (ch === '(') deepest = Math.max(deepest, ++depth);
+    else if (ch === ')') depth -= 1;
+  }
+  return deepest;
+}
+
+/** Largest result handed back to `latex(...)`; see the note in toLatex. */
+const MAX_LATEX_INPUT = 6_000;
 
 /**
  * Best-effort LaTeX rendering of a Giac result; undefined when Giac cannot
@@ -33,6 +61,38 @@ export interface EvalOptions {
  * wrapped in literal double quotes.
  */
 export async function toLatex(result: string): Promise<string | undefined> {
+  // The result goes back INTO the engine, so its size is an input size, and this
+  // is the one bound here that every operation passes through rather than just
+  // the ODE path that motivated it.
+  //
+  // Measured on two shapes, because they trap at very different sizes: a digit
+  // string (`latex(<n digits>+x)`) renders at 9,002 characters and fatally traps
+  // at 10,002, while an expanded polynomial renders at 9,855 and traps somewhere
+  // under 100,585. A trap recycles the worker and fails whatever else was
+  // pending, and the `catch` below turns it into a quiet `undefined` — so the
+  // caller who triggered it still sees a successful-looking answer while a
+  // stranger's call dies. A 55-character ODE system with an initial condition at
+  // 10^10000 produced an 80,000-character result and did exactly that.
+  //
+  // 6,000 sits below the smallest measured trap ON THE LENGTH AXIS. It was 4,000
+  // first, chosen against the digit measurement alone, and that silently cost
+  // LaTeX for ordinary work this path also serves — `expand((x+1)^140)` is 5,041
+  // characters and main rendered it. Above this a reader gets the plain result
+  // and no LaTeX, which is a real if small loss, and the alternative is a dead
+  // worker.
+  //
+  // Length is not the only axis, and treating it as one made this worse before it
+  // made it better: `latex()` also traps on NESTING DEPTH, at about a fifth of the
+  // length cap. A depth-132 argument renders at 1,057 characters and a depth-140
+  // one traps at 1,121, so raising the length cap opened a band that a
+  // 5,605-character depth-140 result walks straight through — declined at 4,000
+  // with the worker alive, sent at 6,000 with the worker dead. Deeper still and
+  // Giac's own parser refuses gracefully ("Too many embeddings"), so the fatal
+  // band is narrow and a conservative depth bound costs nothing: 100 rendered
+  // cleanly in every probe.
+  if (result.length > MAX_LATEX_INPUT || nestingDepth(result) > MAX_LATEX_DEPTH) {
+    return undefined;
+  }
   try {
     const raw = await giacEngine.evaluate(`latex(${result})`);
     if (!raw || raw === 'undef' || raw.startsWith('latex')) return undefined;
@@ -43,7 +103,7 @@ export async function toLatex(result: string): Promise<string | undefined> {
 }
 
 export async function evalWithLatex(options: EvalOptions) {
-  const { operation, errorMessage, resultTransform, verify, methodNote } = options;
+  const { operation, errorMessage, resultTransform, verify, methodNote, notes } = options;
   // Normalize unicode math glyphs in the input before anything else (cacheKey,
   // evaluation, latex) so e.g. factor(x²-4) is not parsed as factor(xmicro-4).
   const giacExpr = unicodeToAscii(options.giacExpr);
@@ -96,5 +156,6 @@ export async function evalWithLatex(options: EvalOptions) {
     giacCommand: giacExpr,
     verification,
     methodNote,
+    ...(notes ? { notes } : {}),
   });
 }

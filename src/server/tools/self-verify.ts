@@ -1,4 +1,9 @@
 import { giacEngine } from '../giac/index.js';
+import { isPrintedZero, splitTopLevel } from './output-cleanup.js';
+import { stripEnclosingBrackets } from './compute/arg-parsing.js';
+
+/** Largest answer this will substitute back; a huge one is its own hazard. */
+const MAX_VERIFIABLE_RESULT = 4_000;
 
 export interface VerificationResult {
   verified: boolean;
@@ -32,6 +37,20 @@ async function isZeroAfterSubst(zeroForm: string, substs: string): Promise<boole
   } catch {
     return false;
   }
+}
+
+/**
+ * Every component of a printed vector is zero, however the engine spelt it.
+ *
+ * `0.0` is a zero. Comparing the components to the string '0' is the same trap
+ * this project already fixed once in the linearity check, and it reappeared here:
+ * a float initial condition makes the check subtract floats, so `y(0)=1.5` — whose
+ * answer `[[1.5*cos(x),-1.5*sin(x)]]` is trivially exact — left `[0.0,0.0]` and
+ * silently lost its check mark, on precisely the inputs the condition check had
+ * just been added for.
+ */
+function allZero(vector: string): boolean {
+  return splitTopLevel(stripEnclosingBrackets(vector), ',').every(isPrintedZero);
 }
 
 /** True iff simplify(expr) is exactly 0. Never throws. */
@@ -114,4 +133,90 @@ export async function verifyIntegrate(
       ? 'derivative of the result equals the integrand'
       : 'derivative does not equal the integrand',
   };
+}
+
+/**
+ * Whether a matrix-form ODE system's answer actually solves the system.
+ *
+ * The rewrite has several places where a well-formed but wrong answer can come
+ * back, and none of the shape guards see them: a coefficient matrix mixing a
+ * float with an exact transcendental (`[[0,1],[-1.5,ln(2)]]`) returns an
+ * ordinary-looking vector of functions whose residual is 2.1, not 0. Rather
+ * than enumerate those cases, this checks the property being claimed —
+ * `Y' = A*Y + b` — which is also what catches the next one.
+ *
+ * Numeric, at one point, with a relative tolerance: an exact symbolic check is
+ * not available for a float matrix, whose true residual is ~1e-12 rather than
+ * 0. Measured separation is twelve orders of magnitude — correct answers score
+ * below 1e-12 relative, wrong ones above 1 — so the threshold is not delicate.
+ * A single point can in principle miss a residual that vanishes there; it is a
+ * check against gross wrongness, not a proof.
+ */
+export async function verifyOdeSystem(
+  matrix: string,
+  constants: string,
+  variable: string,
+  result: string,
+  evaluate: (expr: string) => Promise<string>,
+  condition?: string
+): Promise<VerificationResult | undefined> {
+  const method = 'substitution';
+  const raw = result.trim();
+  // Anything but a solution vector is another guard's business — an unfinished
+  // `poly1[...]` or `[]` is refused downstream, and reporting it here as
+  // "unverified" would say the wrong thing about it.
+  if (!raw.startsWith('[[') || !raw.endsWith(']]')) return undefined;
+  // Undecided, not wrong. The check embeds the answer three times, so a large
+  // one is its own hazard to send back to the engine — but "I did not check" is
+  // not evidence against the answer, and returning a failure here refused a
+  // correct degree-60 forcing term whose exact residual is [0,0].
+  if (raw.length > MAX_VERIFIABLE_RESULT) return undefined;
+  const solution = raw.slice(1, -1);
+  const rhs = `(${matrix})*(${solution})${constants ? `+(${constants})` : ''}`;
+  try {
+    // Exact, or no verdict. There is no sound numeric version of this check.
+    //
+    // A float matrix's residual is never exactly zero, so an earlier version
+    // sampled points and scored the residual against the size of the answer.
+    // That cannot separate the two things it has to: a CORRECT answer whose
+    // 12-digit float coefficients are amplified by ~1e16 binomial terms scores
+    // the same as one that does not solve the system at all — measured, a
+    // correct degree-30 forcing term scored 0.89 where a genuinely wrong answer
+    // scored 1.2. Scoring the best of several points to get around that then
+    // certified an answer wrong by 60x at its own initial condition, because one
+    // forgiving point decided for all of them.
+    //
+    // So this reports ✓ only where it is proven, and no verdict otherwise —
+    // never a failure it cannot stand behind. The mixed-domain answer that
+    // motivated the check is now prevented at the source instead, by giving the
+    // matrix a single numeric domain before it is solved.
+    const exact = (await evaluate(`normal(diff(${solution},${variable})-(${rhs}))`)).trim();
+    if (!allZero(exact)) {
+      return undefined;
+    }
+    // An IVP asks a strictly stronger question, and the mark has to mean the
+    // whole of it. Satisfying `Y' = A*Y + b` while missing the conditions is a
+    // genuine solution of a DIFFERENT initial-value problem — one such answer
+    // returned y(0) = 1984 where the caller asked for 1.5, and earned an honest ✓
+    // for the half that was checked.
+    if (condition !== undefined) {
+      const parsed = /^[A-Za-z_]\w*\((.*)\)=(\[.*\])$/.exec(condition.trim());
+      if (!parsed) return undefined;
+      const [, point, values] = parsed;
+      const held = (
+        await evaluate(`normal(subst(${solution},${variable}=${point})-${values})`)
+      ).trim();
+      if (!allZero(held)) {
+        return undefined;
+      }
+      return {
+        verified: true,
+        method,
+        detail: 'substitutes back into Y’ = A·Y + b and meets the initial conditions',
+      };
+    }
+    return { verified: true, method, detail: 'substitutes back into Y’ = A·Y + b exactly' };
+  } catch {
+    return undefined;
+  }
 }

@@ -2,6 +2,25 @@ import { describe, it, expect } from 'vitest';
 import { unicodeToAscii } from '../src/server/tools/unicode-normalize.js';
 
 describe('unicodeToAscii', () => {
+  it.each([
+    // Every existing case parenthesised its argument, so the bare form was
+    // never exercised: `√2` became the free symbol `sqrt2`, and
+    // `simplify(√2*√2)` answered `sqrt2^2` instead of 2.
+    ['√2', 'sqrt(2)'],
+    ['√x', 'sqrt(x)'],
+    ['√2*√2', 'sqrt(2)*sqrt(2)'],
+    ['√2+√3', 'sqrt(2)+sqrt(3)'],
+    ['x²+√5', 'x^2+sqrt(5)'],
+    // Nothing to take an argument from: left as the word, so the engine
+    // reports it rather than this inventing an operand.
+    ['√', 'sqrt'],
+    // The parenthesised rule also normalises the space away, which the bare
+    // rule cannot do — it only matches an identifier or a number.
+    ['√ (x+1)', 'sqrt(x+1)'],
+  ])('gives a bare √ its argument: %s', (input, expected) => {
+    expect(unicodeToAscii(input)).toBe(expected);
+  });
+
   it('replaces √ with sqrt', () => {
     expect(unicodeToAscii('√(1-x^2)')).toBe('sqrt(1-x^2)');
     expect(unicodeToAscii('-1/2*2*x*(√(1-x^2))^-1')).toBe('-1/2*2*x*(sqrt(1-x^2))^-1');
