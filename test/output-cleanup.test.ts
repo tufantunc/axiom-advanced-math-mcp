@@ -7,6 +7,7 @@ import {
   stripDisplayMode,
   parseComplexTerm,
   parseComplexList,
+  giacNumber,
 } from '../src/server/tools/output-cleanup.js';
 
 describe('splitTopLevel', () => {
@@ -178,3 +179,62 @@ describe('parseComplexList', () => {
     expect(() => parseComplexList('GIAC_ERROR: Error: Invalid dimension')).toThrow();
   });
 });
+
+describe('giacNumber — the Giac reply boundary', () => {
+  // This is the parse the whole non-finite fix rests on, and it had no test:
+  // reverting it to the original `parseFloat` left the entire suite green,
+  // because the upstream finiteness guards intercepted every case that would
+  // have reached it. Only a direct test can tell the strict parse from parseFloat
+  // while those guards stand.
+  it.each([
+    ['0.393153', 0.393153],
+    ['0.5', 0.5],
+    ['1.0', 1],
+    ['0', 0],
+    ['0.0', 0],
+    ['  0.941941738242  ', 0.941941738242],
+    ['3.18309886893e-07', 3.18309886893e-7],
+    ['1e-5', 1e-5],
+    ['-0.25', -0.25],
+    ['+0.25', 0.25],
+  ])('reads %s as a number', (raw, expected) => {
+    expect(giacNumber(raw)).toBe(expected);
+  });
+
+  it.each([
+    // Giac's symbolic replies. parseFloat returns the leading term of each of
+    // these — 1, 1, 1 and 1 — which is exactly how a NaN statistic became a
+    // p-value of 0 and an expression in the wrong variable became f(x) = 1.
+    ['1-UTPC(1,NaN)'],
+    ['1-UTPT(2,NaN)'],
+    ['1.0-cos(y)'],
+    ['1-UTPC(1,2)'],
+    ['Beta(1,3,2*NaN/(2*NaN+6),1)'],
+    ['GIAC_ERROR: student_cdf(4.043,-0.7925) Error: Bad Argument Value'],
+    [''],
+    ['   '],
+    ['NaN'],
+    ['Infinity'],
+    ['1/3'],
+  ])('refuses %s rather than reading its leading term', (raw) => {
+    expect(giacNumber(raw)).toBeNull();
+  });
+
+  it.each([
+    // Giac's float range is wider than a double's, and it renders those as
+    // ordinary literals. Rejecting them reported "Cannot evaluate exp(x) at
+    // x=800" while quoting the value the CAS had just returned.
+    ['0.272637457211e348', Infinity],
+    ['-0.272637457211e348', -Infinity],
+  ])('reads %s as a value, not a parse failure', (raw, expected) => {
+    expect(giacNumber(raw)).toBe(expected);
+  });
+
+  it('is strictly narrower than parseFloat on exactly the cases that matter', () => {
+    for (const symbolic of ['1-UTPC(1,NaN)', '1.0-cos(y)', '1-UTPT(2,NaN)']) {
+      expect(Number.isNaN(parseFloat(symbolic))).toBe(false); // parseFloat accepts
+      expect(giacNumber(symbolic)).toBeNull(); // giacNumber does not
+    }
+  });
+});
+

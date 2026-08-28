@@ -264,6 +264,26 @@ One bound is not configurable: a result over **100,000 characters** is refused
 rather than returned, so an expression like `1:2000000` reports its element count
 instead of shipping 24 million characters into the caller's context.
 
+Some inputs are refused rather than answered, because any answer would be
+meaningless. Arithmetic that evaluates to `NaN` (such as `0/0`) is an error; an
+infinite result is returned with a warning, because a true infinity and a value
+that overflowed the range of a double are indistinguishable once computed. A
+t-test needs variation in whatever it actually tests — `paired_t` compares the
+differences, so it is those that must vary, while Welch's `two_sample_t` needs
+only one of the two samples to vary. A contingency table needs non-negative
+counts, no all-zero row or column, rows of equal length, and more than one row
+and column. A one-way ANOVA needs some within-group variation and more
+observations than groups. And any of these is refused when the values are large
+enough that the statistic itself overflows to infinity, because an overflowed
+statistic is no longer the statistic. A numerical method is refused when its
+expression does not depend on the variable it is solved or integrated over, or
+when the CAS answers symbolically rather than with a number — previously the
+leading term of that symbolic answer was reported as the result.
+
+The infinite-result rule covers arithmetic evaluation. A symbolic `+infinity`
+from the CAS routes — a limit, a divergent integral — is a normal answer and
+carries no warning.
+
 ### MCP Inspector
 
 ```bash

@@ -149,6 +149,131 @@ function astDepth(node: { forEach: (cb: (child: unknown) => void) => void }): nu
   return deepest + 1;
 }
 
+/**
+ * Walks a mathjs result for non-finite components.
+ *
+ * Non-finiteness is a property of the VALUE, not of its rendering. `[0/0, 1]`
+ * renders as "[NaN, 1]" and the perfectly good string "NaN" renders identically,
+ * so a check on the rendered text cannot separate them in either direction.
+ *
+ * The walk is generic on purpose. An earlier version tested a fixed list of
+ * mathjs property names (`re`, `im`, `value`, `n`, `d`) and three container
+ * shapes escaped it — a plain object literal (`{a: 0/0}`), an object inside an
+ * array (`[{a: 0/0}]`), and a ResultSet from a multi-statement expression
+ * (`1;0/0`) — each answering NaN with isError:false. Four of those five names
+ * were dead besides: a Complex is caught by the isNaN/isFinite branch below,
+ * and a Fraction's `n`/`d` are bigint. Walking `Object.values` needs no list and
+ * cannot be outgrown by a mathjs type nobody has thought of yet.
+ *
+ * Branch order is load-bearing, though not for the reason an earlier version of
+ * this comment gave. A Decimal's own fields are `{s, e, d}`, and BOTH a NaN and
+ * an Infinity carry `e = NaN` with `d = null` — so the generic walk cannot tell
+ * them apart and would classify a Decimal Infinity as NaN, refusing a perfectly
+ * answerable value. Only isNaN()/isFinite() distinguish them, so that branch
+ * must come first. (The earlier claim, that the generic walk would report a
+ * Decimal NaN clean, came from reading `JSON.stringify(Object.values(x))`, where
+ * NaN and the own `constructor` function both render as `null`.)
+ */
+interface NonFiniteScan {
+  readonly nan: boolean;
+  readonly infinite: boolean;
+  /** The walk stopped early, so `nan`/`infinite` mean "unknown", not "clean". */
+  readonly truncated: boolean;
+}
+
+/**
+ * Frozen and readonly because it is returned BY REFERENCE from several branches.
+ * Without that, `scanNonFinite(x).nan = true` typechecks and rewrites the shared
+ * instance for the life of the worker — and this worker is long-lived and shared
+ * across callers, which is exactly the class of bug commit ac55e4c exists for.
+ */
+const SCAN_CLEAN: NonFiniteScan = Object.freeze({
+  nan: false,
+  infinite: false,
+  truncated: false,
+});
+
+/**
+ * Depth ceiling, measured rather than guessed.
+ *
+ * The previous value of 64 was justified as "nothing mathjs builds from an
+ * 8192-character expression comes near it". That was wrong by two orders of
+ * magnitude in the wrong direction, and it refused correct answers: this walk
+ * costs TWO levels per AST node (node -> `args` array -> child), so a 33-term
+ * sum — 74 characters — tripped it, as did a 64-deep array literal at 129.
+ *
+ * The real bounds, measured on this repo's mathjs: it cannot evaluate an array
+ * literal deeper than 255, and its parser gives up on nested parentheses
+ * between 200 and 400. Plain recursion in this process overflows near 10,900
+ * frames. 1024 is therefore ~4x the deepest value mathjs can construct and ~10x
+ * clear of the stack.
+ *
+ * Exceeding it sets `truncated` rather than reporting clean — see the caller,
+ * which refuses what it could not certify.
+ */
+const MAX_SCAN_DEPTH = 1024;
+
+function scanNonFinite(raw: unknown, depth = 0, seen?: WeakSet<object>): NonFiniteScan {
+  if (raw === null || raw === undefined) return SCAN_CLEAN;
+  if (depth > MAX_SCAN_DEPTH) return { nan: false, infinite: false, truncated: true };
+
+  if (typeof raw === 'number') {
+    return {
+      nan: Number.isNaN(raw),
+      infinite: raw === Infinity || raw === -Infinity,
+      truncated: false,
+    };
+  }
+  // Anything that is not a number or an object — a string, whatever it spells,
+  // a boolean, a bigint — is not a non-finite number.
+  if (typeof raw !== 'object') return SCAN_CLEAN;
+
+  // Cycles are what the old depth cap claimed to guard against, which a depth
+  // counter cannot actually detect. mathjs builds trees, but a plain object
+  // literal from a caller's expression is still an object graph.
+  const visited = seen ?? new WeakSet<object>();
+  if (visited.has(raw)) return SCAN_CLEAN;
+  visited.add(raw);
+
+  const merge = (parts: unknown[]): NonFiniteScan =>
+    parts.reduce<NonFiniteScan>((acc, part) => {
+      const r = scanNonFinite(part, depth + 1, visited);
+      return {
+        nan: acc.nan || r.nan,
+        infinite: acc.infinite || r.infinite,
+        truncated: acc.truncated || r.truncated,
+      };
+    }, SCAN_CLEAN);
+
+  if (Array.isArray(raw)) return merge(raw);
+
+  const o = raw as Record<string, unknown>;
+  // BigNumber / Decimal / Complex — anything that can answer for itself. Must
+  // come before the generic walk: a Decimal's `d` is its digit array.
+  if (typeof o.isNaN === 'function' && typeof o.isFinite === 'function') {
+    return {
+      nan: (o as { isNaN: () => boolean }).isNaN(),
+      infinite: !(o as { isFinite: () => boolean }).isFinite(),
+      truncated: false,
+    };
+  }
+  // Matrix. The element check has to happen HERE, not only at the top level:
+  // refuseIfTooManyElements inspects the result itself, so one container in the
+  // way — `to_decimal({a: zeros(20000,20000,'sparse')})`, 43 characters —
+  // reached this branch, densified 4e8 elements via toArray() and exhausted the
+  // worker heap. `main` never walked into the wrapper at all, so that OOM was
+  // introduced by this walk, on an unauthenticated surface.
+  if (typeof o.toArray === 'function') {
+    const dims = typeof o.size === 'function' ? (o as { size: () => number[] }).size() : null;
+    if (Array.isArray(dims) && dims.every((d) => typeof d === 'number')) {
+      const count = dims.reduce((a, b) => a * b, 1);
+      if (count > MAX_RESULT_CHARS) return { nan: false, infinite: false, truncated: true };
+    }
+    return merge([(o as { toArray: () => unknown }).toArray()]);
+  }
+  return merge(Object.values(o));
+}
+
 function capped(value: string, what: string): string {
   if (value.length > MAX_RESULT_CHARS) {
     throw new JsComputeError(
@@ -185,7 +310,31 @@ export interface SampledFunction {
 export interface EvaluatedExpression {
   value: string;
   isNumber: boolean;
+  /**
+   * The result as a number when it IS one, else null.
+   *
+   * Carried from the worker because the callers were re-deriving it with
+   * `parseFloat(String(result))` — reading the leading term of a RENDERED value,
+   * the same laundering this module's giacNumber sibling exists to stop. It
+   * silently dropped units: `quick_calc("0.5 kg")` answered "1/2" and
+   * `to_decimal("1/2 m")` answered "0.5".
+   */
+  numeric: number | null;
   latex?: string;
+  /**
+   * The result contains an infinite component.
+   *
+   * Set here, where the value is still a value. Every caller previously
+   * re-derived it with `typeof result === 'number'`, which is false for the
+   * rendered string that actually crosses the boundary — so `[1, 1/0]` and
+   * `1/0 m` were reported with no caveat at all.
+   *
+   * Required, and assigned unconditionally rather than spread in conditionally:
+   * TypeScript does not apply excess-property checking to a spread, so
+   * `...(x ? { nonFinit: true } : {})` compiled clean with the key misspelled
+   * and silently dropped the caveat on every surface.
+   */
+  nonFinite: boolean;
 }
 
 /**
@@ -216,7 +365,32 @@ export const MATHJS_TASKS = {
       throw new Error('the expression produced no value');
     }
 
+    // Element cap first: it is an O(1) size() read, while the scan below walks
+    // the value. Running the scan first meant an oversized result was fully
+    // materialised before the check designed to refuse it cheaply ever ran.
     refuseIfTooManyElements(raw);
+
+    // NaN is not an answer. `0/0` answered "The answer is NaN" with isError:false,
+    // and `--quiet` handed a script the literal string "NaN" on exit 0. Infinity
+    // is reported rather than refused, but flagged, so no caller has to re-derive
+    // it from a rendered string.
+    const nonFinite = scanNonFinite(raw);
+    // A scan that stopped early cannot certify anything. Returning "clean" for it
+    // made the guard bypassable by nesting: at depth 8 the old cap returned
+    // {nan:false} and `[[[[[[[[0/0]]]]]]]]` was answered on exit 0.
+    if (nonFinite.truncated) {
+      throw new JsComputeError(
+        'the result could not be fully checked for undefined values — it is too ' +
+          'large or too deeply nested',
+        'evaluation_failed'
+      );
+    }
+    if (nonFinite.nan) {
+      throw new JsComputeError(
+        'the expression is undefined — it evaluated to NaN',
+        'evaluation_failed'
+      );
+    }
 
     const isNumber = typeof raw === 'number';
     // Precision is applied only when the caller actually asked for it: the
@@ -231,6 +405,8 @@ export const MATHJS_TASKS = {
     const result: EvaluatedExpression = {
       value: capped(formatted, 'result'),
       isNumber,
+      numeric: typeof raw === 'number' ? raw : null,
+      nonFinite: nonFinite.infinite,
     };
     // Capped too: `toTex` output is unbounded in the input's nesting depth, and
     // the response limit is stated as a limit on the response.

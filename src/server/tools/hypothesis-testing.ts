@@ -1,7 +1,7 @@
 import { giacEngine } from '../giac/index.js';
 import { isNumberList, isNumberMatrix } from './value-guards.js';
+import { giacNumber } from './output-cleanup.js';
 import { formatToolResponse, formatErrorResponse, inBandFailure } from './response-formatter.js';
-import { normalCdf } from './stats-utils.js';
 
 function mean(data: number[]): number {
   return data.reduce((a, b) => a + b, 0) / data.length;
@@ -27,20 +27,51 @@ function formatTestConclusion(pValue: number, significance: number, detail = '')
   return detail ? `${action} — ${detail} (${comparison})` : `${action} (${comparison})`;
 }
 
-async function tPValue(t: number, df: number, alternative: string): Promise<number> {
+/** The one wording for "the CAS did not give us a p-value", used by all five tests. */
+const P_VALUE_UNAVAILABLE =
+  'Error: the p-value could not be computed — the CAS did not return a numeric cdf';
+
+/**
+ * Student's t cdf, or null when the CAS could not give one.
+ *
+ * Giac's `student_cdf` accepts only INTEGER degrees of freedom — it answers
+ * `student_cdf(4,2.5)` and returns `GIAC_ERROR: Bad Argument Value` for
+ * `student_cdf(3.95,2.5)`. Welch's df is fractional in the general case (over
+ * 20,000 random realistic sample pairs it was integral in 0 of them), so the
+ * integer path covers almost no real two-sample call.
+ *
+ * The fractional case goes through the regularized incomplete beta, which Giac
+ * does evaluate at real df, and which agrees with `student_cdf` to all 12
+ * printed digits wherever both are defined. Beta gives the cdf of |t|, so a
+ * negative t is mirrored.
+ *
+ * This used to fall back to `normalCdf` inside a bare catch. That reported a
+ * NORMAL p-value under a heading that says "Welch's t-test", with no marker
+ * anywhere — and it INVERTED verdicts: two_sample_t([20,22,19,23],[24,25,21,26])
+ * shipped "✗ Reject H₀ (p = 0.0339)" where the t distribution at df = 5.84 gives
+ * p = 0.0794, "✓ Fail to reject". Returning null instead lets the callers report
+ * the same failure chi-square and ANOVA already report.
+ */
+async function tCdf(t: number, df: number): Promise<number | null> {
+  if (!Number.isFinite(t) || !Number.isFinite(df) || df <= 0) return null;
+  const expr = Number.isInteger(df)
+    ? `student_cdf(${df},${t})`
+    : `evalf(1-0.5*Beta(${df}/2,0.5,${df}/(${df}+(${Math.abs(t)})^2),1),12)`;
   try {
-    const rawCdf = await giacEngine.evaluate(`student_cdf(${df},${t})`);
-    const cdf = parseFloat(rawCdf.trim());
-    if (isNaN(cdf)) throw new Error('Giac returned NaN');
-    if (alternative === 'less') return cdf;
-    if (alternative === 'greater') return 1 - cdf;
-    return 2 * Math.min(cdf, 1 - cdf);
+    const value = giacNumber(await giacEngine.evaluate(expr));
+    if (value === null || !Number.isFinite(value)) return null;
+    return Number.isInteger(df) || t >= 0 ? value : 1 - value;
   } catch {
-    const cdf = normalCdf(t);
-    if (alternative === 'less') return cdf;
-    if (alternative === 'greater') return 1 - cdf;
-    return 2 * Math.min(cdf, 1 - cdf);
+    return null;
   }
+}
+
+async function tPValue(t: number, df: number, alternative: string): Promise<number | null> {
+  const cdf = await tCdf(t, df);
+  if (cdf === null) return null;
+  if (alternative === 'less') return cdf;
+  if (alternative === 'greater') return 1 - cdf;
+  return 2 * Math.min(cdf, 1 - cdf);
 }
 
 async function oneSampleT(
@@ -67,7 +98,43 @@ async function oneSampleT(
   const s = std(sample1);
   const t = (xbar - mu0) / (s / Math.sqrt(n));
   const df = n - 1;
+  // Guarded here rather than on the raw sample, because this is where the
+  // statistic exists. `paired_t` tests the DIFFERENCES, so a handler-level check
+  // on sample1/sample2 never saw them: `paired_t([1,2,3],[1,2,3])` — two
+  // identical inputs — produced t = NaN and reported "✗ Reject H₀ (p = 0.0000)",
+  // the strongest possible claim of a difference.
+  // Guard the INPUTS to the ratio, not only the ratio. t is a quotient, so an
+  // overflowed standard deviation makes s Infinity and collapses t to a finite
+  // 0, which passes a check on t alone — the same collapse oneWayAnova guards
+  // against for F. Leaving it here meant one_sample_t([1e200,-1e200,3,4]) still
+  // reported "✓ Fail to reject H₀" off a std of Infinity, with a 95% CI of
+  // [-Infinity, Infinity]. paired_t inherits this guard and needs it — but be
+  // precise about the baseline: main ANSWERED the overflow case too. What main
+  // refused, through a handler-level `new Set(sample).size === 1` rule this file
+  // no longer has, was a CONSTANT sample; paired_t's differences made that
+  // reachable. The overflow case is refused here for the first time.
+  if (!Number.isFinite(xbar) || !Number.isFinite(s)) {
+    return [
+      `Error: ${report.name} is undefined for this input — the values are too ` +
+        `large, so the sample mean or standard deviation overflowed`,
+    ];
+  }
+  if (s === 0 || !Number.isFinite(t)) {
+    // Distinguish "constant" from "varies, but the squared deviations underflowed
+    // to zero" — below ~1e-154 the latter happens while the sample plainly varies,
+    // and calling that "no variation" is the same misdiagnosis the overflow split
+    // was added to remove.
+    const varies = new Set(sample1).size > 1;
+    return [
+      varies
+        ? `Error: ${report.name} is undefined for this input — the values are too ` +
+          `small, so the variance underflowed to zero`
+        : `Error: ${report.name} is undefined for this input — the sample has no ` +
+          `variation, so the t-statistic divides by a zero standard error`,
+    ];
+  }
   const pValue = await tPValue(t, df, alternative);
+  if (pValue === null) return [P_VALUE_UNAVAILABLE];
   const ci95Half = (1.96 * s) / Math.sqrt(n);
 
   return [
@@ -107,7 +174,34 @@ async function twoSampleT(
     v2 = s2 ** 2 / n2;
   const t = (m1 - m2) / Math.sqrt(v1 + v2);
   const df = (v1 + v2) ** 2 / (v1 ** 2 / (n1 - 1) + v2 ** 2 / (n2 - 1));
+  // Welch's t divides by the POOLED standard error, so one constant sample is
+  // fine — only both being constant makes it undefined. The handler-level check
+  // this replaces rejected either sample being constant, which refused the
+  // perfectly well-defined `two_sample_t([2,2,2],[5,7,9])`.
+  // Same three-way split as oneSampleT. The single combined condition reported
+  // "neither sample varies" for an overflow, which is false whenever one sample
+  // plainly does vary — sending a caller to fix the wrong thing about their data.
+  if (![m1, m2, s1, s2, v1, v2].every((v) => Number.isFinite(v))) {
+    return [
+      'Error: two_sample_t is undefined for this input — the values are too ' +
+        'large, so the sample statistics overflowed',
+    ];
+  }
+  if (v1 + v2 === 0) {
+    const varies = new Set(sample1).size > 1 || new Set(sample2).size > 1;
+    return [
+      varies
+        ? 'Error: two_sample_t is undefined for this input — the values are too ' +
+          'small, so both variances underflowed to zero'
+        : 'Error: two_sample_t is undefined for this input — neither sample varies, ' +
+          'so the t-statistic divides by a zero standard error',
+    ];
+  }
+  if (!Number.isFinite(t) || !Number.isFinite(df)) {
+    return ['Error: two_sample_t is undefined for this input — the t-statistic is not finite'];
+  }
   const pValue = await tPValue(t, df, alternative);
+  if (pValue === null) return [P_VALUE_UNAVAILABLE];
 
   return [
     `Test: Two-sample Welch's t-test`,
@@ -157,6 +251,45 @@ async function chiSquareIndependence(data: {
   );
   const N = rowSums.reduce((a, b) => a + b, 0);
 
+  // Every expected count is (rowSum x colSum) / N, so an empty table divides by
+  // zero and an empty row or column makes one expected count zero. Either way χ²
+  // is NaN. On main that was not caught downstream either: Giac returns the
+  // symbolic `1-UTPC(1,NaN)`, whose parseFloat is 1, so p = 1 - 1 = 0 — finite,
+  // so formatTestConclusion's isNaN guard never fired. giacNumber now rejects
+  // that reply, so these guards are no longer the only thing standing in the
+  // way; they remain because they name WHICH row or column is at fault instead
+  // of reporting a bare "the p-value could not be computed". `[[0,0],[0,0]]` reported
+  // "✗ Reject H₀ — evidence of dependence (p = 0.0000)" on no data at all.
+  // Counts, so negatives are not data. `[[10,-2],[3,4]]` reported
+  // "✗ Reject H₀ — evidence of dependence (p = 0.0000)" on an impossible table.
+  for (let i = 0; i < rows; i++) {
+    const j = contingency_table[i].findIndex((v) => v < 0);
+    if (j >= 0) {
+      return [
+        `Error: row ${i + 1}, column ${j + 1} of contingency_table is ` +
+          `${contingency_table[i][j]}; a contingency table holds counts, which ` +
+          `cannot be negative`,
+      ];
+    }
+  }
+
+  // With every count non-negative, a zero total means every row is empty, so the
+  // row and column checks below cover it and report which one is at fault.
+  const emptyRow = rowSums.findIndex((sum) => sum <= 0);
+  if (emptyRow >= 0) {
+    return [
+      `Error: row ${emptyRow + 1} of contingency_table has no observations — ` +
+        `its expected counts are zero, so χ² is undefined`,
+    ];
+  }
+  const emptyCol = colSums.findIndex((sum) => sum <= 0);
+  if (emptyCol >= 0) {
+    return [
+      `Error: column ${emptyCol + 1} of contingency_table has no observations — ` +
+        `its expected counts are zero, so χ² is undefined`,
+    ];
+  }
+
   let chi2 = 0;
   for (let i = 0; i < rows; i++) {
     for (let j = 0; j < cols; j++) {
@@ -166,13 +299,32 @@ async function chiSquareIndependence(data: {
   }
   const df = (rows - 1) * (cols - 1);
 
+  // Not a backstop: this is the working guard for counts large enough that the
+  // sum overflows to Infinity, which the checks above do not touch.
+  if (!Number.isFinite(chi2)) {
+    return ['Error: the counts are too large — the χ² statistic overflowed'];
+  }
+  if (df < 1) {
+    return [`Error: df = ${df}; a ${rows}x${cols} table has no degrees of freedom to test`];
+  }
+
   let pValue: number;
   try {
     const rawCdf = await giacEngine.evaluate(`chisquare_cdf(${df},${chi2})`);
-    pValue = 1 - parseFloat(rawCdf.trim());
-    if (isNaN(pValue)) throw new Error('NaN');
+    const cdf = giacNumber(rawCdf);
+    if (cdf === null || !Number.isFinite(cdf)) throw new Error(`unparseable χ² cdf: ${rawCdf}`);
+    pValue = 1 - cdf;
   } catch {
     pValue = NaN;
+  }
+
+  // A p-value that could not be computed is a failure, not a result. Reporting
+  // it as "Could not determine significance" shipped with isError:false, because
+  // inBandFailure only recognises the Error:/Failed:/Did not converge markers —
+  // so --json said {"success": true} and --quiet exited 0 on a computation that
+  // did not happen.
+  if (Number.isNaN(pValue)) {
+    return [P_VALUE_UNAVAILABLE];
   }
 
   return [
@@ -213,6 +365,32 @@ async function oneWayAnova(data: { groups?: number[][]; significance: number }):
   const msWithin = ssWithin / dfWithin;
   const F = msBetween / msWithin;
 
+  // Same laundering as chi-square. With no within-group variation MS_within is
+  // 0, so F is 0/0 = NaN. Bare `fisher_cdf(2,6,NaN)` returns the symbolic
+  // `Beta(1,3,2*NaN/(2*NaN+6),1)`, but the expression this code actually sends
+  // is `evalf(1-fisher_cdf(...),12)`, which returns `1.0-Beta(1.0,3.0,...)/...`
+  // — and parseFloat of that is 1. So `[[5,5,5],[5,5,5],[5,5,5]]` reported
+  // "✓ Fail to reject H₀ (p = 1.0000)" from a NaN F.
+  if (dfWithin < 1) {
+    return [
+      `Error: N = ${N} across k = ${k} groups leaves ${dfWithin} within-group ` +
+        `degrees of freedom; each group needs more than one observation between them`,
+    ];
+  }
+  if (msWithin <= 0) {
+    return [
+      'Error: every group has zero variance — F is undefined when there is no ' +
+        'within-group variation to compare against',
+    ];
+  }
+  // Guarded on the INPUTS to the ratio, not only on the ratio: F is a quotient,
+  // so an infinite denominator collapses to a finite 0 rather than to NaN.
+  // `[[1e200,-1e200],[1,2],[3,4]]` gave MS_within = Infinity, F = 0, and a
+  // confident "✓ Fail to reject H₀" — clearing an `F`-only check.
+  if (!Number.isFinite(ssBetween) || !Number.isFinite(ssWithin) || !Number.isFinite(F)) {
+    return ['Error: the values are too large — the F statistic overflowed'];
+  }
+
   let pValue: number;
   try {
     // `evalf` and an explicit `1 -` inside Giac, both deliberate. Given an
@@ -221,14 +399,18 @@ async function oneWayAnova(data: { groups?: number[][]; significance: number }):
     // Giac caps the result at three significant digits, so the subtraction is
     // done there rather than on an already-rounded cdf.
     const raw = await giacEngine.evaluate(`evalf(1-fisher_cdf(${dfBetween},${dfWithin},${F}),12)`);
-    const parsed = parseFloat(raw.trim());
-    if (!Number.isFinite(parsed)) throw new Error(`unparseable F cdf: ${raw}`);
+    const parsed = giacNumber(raw);
+    if (parsed === null || !Number.isFinite(parsed)) throw new Error(`unparseable F cdf: ${raw}`);
     pValue = parsed;
   } catch {
     // Report the failure. The previous fallback was `F > 10 ? 0 : NaN`, which
     // asserted p = 0 — certainty — for any F above a hardcoded threshold, and
     // that is exactly the branch an integer F reached.
     pValue = NaN;
+  }
+
+  if (Number.isNaN(pValue)) {
+    return [P_VALUE_UNAVAILABLE];
   }
 
   return [
@@ -238,7 +420,12 @@ async function oneWayAnova(data: { groups?: number[][]; significance: number }):
     ``,
     ...groups.map(
       (g, i) =>
-        `  Group ${i + 1}: n=${ns[i]}, mean=${means[i].toFixed(4)}, std=${std(g).toFixed(4)}`
+        // `std` of a single observation divides by n-1 = 0. The test itself can
+        // still be valid (dfWithin counts across groups), so the group line
+        // reports n/a rather than rendering NaN beside a real verdict.
+        `  Group ${i + 1}: n=${ns[i]}, mean=${means[i].toFixed(4)}, std=${
+          ns[i] > 1 ? std(g).toFixed(4) : 'n/a'
+        }`
     ),
     ``,
     `SS_between = ${ssBetween.toFixed(4)}, df = ${dfBetween}, MS = ${msBetween.toFixed(4)}`,
@@ -332,6 +519,27 @@ function checkDataShape(data: Record<string, unknown> | undefined): string | nul
       return `${field} must be a list of lists of finite numbers`;
     }
   }
+
+  // Only the contingency table. `groups` is a list of samples, and unequal group
+  // sizes are an ordinary unbalanced ANOVA design, not an error.
+  //
+  // `isNumberMatrix` deliberately says nothing about row lengths, and a ragged
+  // table is not caught downstream: chiSquareIndependence takes its column count
+  // from row 0, so cells past that width are counted in the row sums and in N but
+  // never enter the χ² sum. `[[1,2],[3,4,5]]` reported "Table: 2×2, N = 15" and a
+  // confident verdict computed against marginals that summed to 10.
+  const table = data['contingency_table'];
+  if (isNumberMatrix(table)) {
+    const width = table[0].length;
+    const ragged = table.findIndex((row) => row.length !== width);
+    if (ragged >= 0) {
+      return (
+        `contingency_table row ${ragged + 1} has ${table[ragged].length} ` +
+        `entries but row 1 has ${width}; every row must be the same length`
+      );
+    }
+  }
+
   const mu0 = data['mu0'];
   if (mu0 !== undefined && !(typeof mu0 === 'number' && Number.isFinite(mu0))) {
     return `mu0 must be a finite number, got ${String(mu0)}`;
@@ -366,23 +574,16 @@ export async function hypothesisTestingHandler(args: Record<string, unknown>) {
   // The cast above is the only thing standing between an argument and the
   // arithmetic, and `coerceValue` hands through whatever the caller typed. A
   // non-numeric element made every statistic NaN while `formatTestConclusion`'s
-  // isNaN guard was bypassed (tPValue's normalCdf fallback returns 0, not NaN),
+  // isNaN guard was bypassed (on main, tPValue's normalCdf fallback returned 0),
   // so `t_test(sample1=[1,2,"x"], mu0=2)` answered "✗ Reject H₀ (p = 0.0000)".
   const shapeError = checkDataShape(rawData);
   if (shapeError) return formatErrorResponse(shapeError);
 
-  // A zero-variance sample passes every shape check and then divides by zero:
-  // `one_sample_t(sample1=[2,2,2], mu0=1)` produced t = Infinity and, because
-  // tPValue's normalCdf fallback returns 0 rather than NaN, formatTestConclusion's
-  // isNaN guard never fired — so it reported "✗ Reject H₀ (p = 0.0000)".
-  for (const field of ['sample1', 'sample2'] as const) {
-    const sample = rawData?.[field];
-    if (Array.isArray(sample) && sample.length > 1 && new Set(sample).size === 1) {
-      return formatErrorResponse(
-        `${field} has zero variance — a t-statistic is undefined for a constant sample`
-      );
-    }
-  }
+  // The zero-variance rule used to live here, on the raw samples. It now lives
+  // in each test beside the statistic it protects, because which sample must
+  // vary depends on the test: paired_t tests the differences (so a check here
+  // missed it entirely) and Welch's t only needs ONE sample to vary (so a check
+  // here refused valid input). See oneSampleT and twoSampleT.
 
   const data = { ...rawData, significance: alpha ?? DEFAULT_SIGNIFICANCE };
   const alternative = (args.alternative as string) ?? 'two_sided';

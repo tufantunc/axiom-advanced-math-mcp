@@ -194,10 +194,23 @@ export function normalize(
   const resultType = resolveResultType(handler, args);
   const data = buildData(resultType, fields);
 
+  // `Warning:` lines are carried into the envelope so a structured caller sees
+  // them. Before this they existed only in the rendered text: the scalar branch
+  // of buildData drops fields.notes, so `compute '1/0' --json` returned
+  // {"success":true,"data":{"value":"Infinity"}} with the caveat nowhere in the
+  // payload.
+  //
+  // Matched on `Warning:`, not `Note:`. Matching `Note:` swept up every other
+  // handler's advisory prose — multivariable/optimization.ts's Lagrange footnote
+  // is a `Note:`, and a correct, complete Lagrange answer was arriving with a
+  // `warnings` array, which types.ts documents as a reliability signal.
+  const warnings = fields.notes.filter((n) => n.trimStart().startsWith('Warning:'));
+
   return {
     success: true,
     result_type: resultType,
     display: fields.result || response.content.map((c) => c.text).join('\n'),
+    ...(warnings.length > 0 ? { warnings } : {}),
     ...(fields.latex ? { latex: fields.latex } : {}),
     data,
     method: handler,

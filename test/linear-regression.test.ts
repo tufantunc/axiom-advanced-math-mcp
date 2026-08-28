@@ -93,4 +93,27 @@ describe('linear_regression', () => {
       expect(result.content[0].text).toContain('same length');
     });
   });
+
+  describe('exact rational coefficients from lsq', () => {
+    it('fits y = 0.6429x + 0.5 rather than reading 1/2 and 9/14 as 1 and 9', async () => {
+      // Bare `lsq` returns EXACT RATIONALS — [[1/2],[9/14]] — and parseFloat read
+      // those as [1, 9], so this reported "ŷ = 9.00000x + 1.00000" with
+      // R² = -762 against a true fit of 0.6429x + 0.5.
+      const r = await linearRegressionHandler({ x: [1, 2, 4], y: [1, 2, 3] });
+      expect(r.isError).toBe(false);
+      const t = r.content.map((c) => c.text).join('\n');
+      expect(t).toMatch(/ŷ = 0\.642857x \+ 0\.500000/);
+      expect(t).not.toMatch(/ŷ = 9/);
+      // R² for a real fit is in [0,1]; the laundered coefficients gave -762.
+      const r2 = Number(/R² = (-?[\d.]+)/.exec(t)?.[1]);
+      expect(r2).toBeGreaterThan(0.9);
+    });
+
+    it('still fits an exactly-linear set', async () => {
+      const r = await linearRegressionHandler({ x: [1, 2, 3], y: [2, 4, 6] });
+      const t = r.content.map((c) => c.text).join('\n');
+      expect(t).toMatch(/ŷ = 2\.0*x/);
+    });
+  });
 });
+

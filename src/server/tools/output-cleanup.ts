@@ -115,7 +115,39 @@ export function listToSet(raw: string): string {
 }
 
 /** A Giac numeric literal, with optional decimal point and exponent. */
-const GIAC_NUMBER = String.raw`(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?`;
+export const GIAC_NUMBER = String.raw`(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?`;
+
+/** The whole reply must be one numeric literal — nothing before or after it. */
+const GIAC_NUMBER_ONLY = new RegExp(`^[+-]?${GIAC_NUMBER}$`);
+
+/**
+ * Reads a Giac reply as a number, or null when the reply is not a numeric
+ * literal at all. A literal beyond double range parses to ±Infinity.
+ *
+ * This is the boundary invariant, not a detail of any one caller: when Giac
+ * declines to evaluate something it returns a SYMBOLIC form, and `parseFloat`
+ * reads that form's leading term as if it were the answer.
+ *
+ *   chisquare_cdf(1, NaN)          -> "1-UTPC(1,NaN)"   parseFloat -> 1
+ *   student_cdf(2, NaN)            -> "1-UTPT(2,NaN)"   parseFloat -> 1
+ *   evalf(subst(1-cos(y),x=2))     -> "1.0-cos(y)"      parseFloat -> 1
+ *
+ * Every one of those is a confident wrong answer: a p-value of 0, or f(2) = 1
+ * for an expression that does not depend on x. Requiring the WHOLE reply to be
+ * a numeric literal is what separates "0.393153" from "1-UTPC(1,NaN)".
+ */
+export function giacNumber(raw: string): number | null {
+  const text = raw.trim();
+  if (!GIAC_NUMBER_ONLY.test(text)) return null;
+  const value = Number(text);
+  // ±Infinity is a VALUE, not a failure to parse. Giac's float range is wider
+  // than a double's and it renders those as ordinary literals — `exp(800)` comes
+  // back as "0.272637457211e348". Rejecting them told the caller "Cannot
+  // evaluate exp(x) at x=800" while quoting the value the CAS had just returned.
+  // A caller that needs a finite number checks Number.isFinite itself; this
+  // function answers only "is the reply a number".
+  return Number.isNaN(value) ? null : value;
+}
 const COMPLEX_TERM = new RegExp(`^(.*?)([+-]?(?:${GIAC_NUMBER}\\*?)?)i$`);
 
 /**

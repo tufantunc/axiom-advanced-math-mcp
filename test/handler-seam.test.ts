@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { giacEngine } from '../src/server/giac/index.js';
 import { computeHandler } from '../src/server/tools/compute/index.js';
+import { exactValueHandler } from '../src/server/tools/exact-value.js';
 
 beforeAll(async () => {
   await giacEngine.initialize();
@@ -253,4 +254,183 @@ describe('spellings the router has to tell apart', () => {
     expect(r.isError, text(r)).toBe(false);
     expect(text(r)).toMatch(expected);
   });
+
+  describe('non-finite arithmetic through the published compute tool', () => {
+    it('0/0 is an error, not an answer', async () => {
+      const r = await computeHandler({ problem: '0/0' });
+      expect(r.isError).toBe(true);
+      // The regression: it answered "The answer is NaN" with isError:false.
+      expect(text(r)).not.toMatch(/The answer is NaN/);
+    });
+
+    it('1/0 answers Infinity but never bare', async () => {
+      const r = await computeHandler({ problem: '1/0' });
+      expect(r.isError).toBe(false);
+      expect(text(r)).toContain('Infinity');
+      // 1/0 and an overflow of a finite value are indistinguishable here, so the
+      // answer has to say so rather than present them as the same number.
+      expect(text(r)).toMatch(/result is infinite/);
+    });
+
+    it('an overflow of a finite quantity carries the same caveat', async () => {
+      // The true value of 1e308*10 is 1e309 — finite. Reporting a bare
+      // "Infinity" for it is a wrong answer, not a large one.
+      const r = await computeHandler({ problem: '1e308*10' });
+      expect(text(r)).toMatch(/result is infinite/);
+    });
+
+    it.each(['[[1,2],[3,4]]', '2>1', '1:5'])(
+      'a finite result gains no caveat: %s',
+      async (problem) => {
+        // These reach the non-finite flag. Scalar arithmetic does NOT: quick-calc
+        // returns at the exact-result branch first, so '2+3*4' and even '0.1+0.2'
+        // (which has the exact form 3/10) passed this control while the caveat was
+        // hard-coded ON. parseFloat of a matrix/boolean/range is NaN, which is what
+        // skips that branch and lets the flag be read.
+        const r = await computeHandler({ problem });
+        expect(r.isError).toBe(false);
+        expect(text(r)).not.toMatch(/result is infinite/);
+      }
+    );
+
+    it('a NaN inside a container is refused too', async () => {
+      // The guard used to compare the whole rendered string, so wrapping the
+      // same undefined quantity in a list walked straight past it: `[1, 0/0]`
+      // answered "[1, NaN]" on exit 0.
+      const r = await computeHandler({ problem: '[1, 0/0]' });
+      expect(r.isError).toBe(true);
+      expect(text(r)).not.toMatch(/NaN\]/);
+    });
+
+    it('an infinity inside a container still earns the caveat', async () => {
+      const r = await computeHandler({ problem: '[1, 1/0]' });
+      expect(r.isError).toBe(false);
+      expect(text(r)).toMatch(/result is infinite/);
+    });
+
+    it('a string that spells NaN is not an undefined result', async () => {
+      // The rendered-string check refused this with "it evaluated to NaN". It is
+      // a three-character string; nothing evaluated to anything undefined.
+      const r = await computeHandler({ problem: '"NaN"' });
+      expect(r.isError).toBe(false);
+    });
+
+    it('the caveat reaches a structured caller, not only the text', async () => {
+      // The motivating failure was a machine caller getting a bare value. The
+      // scalar branch of buildData drops notes, so the caveat has to travel as an
+      // envelope warning or a JSON consumer never sees it.
+      const r = await computeHandler({ problem: '1e308*10', format: 'json' });
+      const envelope = JSON.parse(text(r)) as { warnings?: string[] };
+      expect(envelope.warnings?.join(' ')).toMatch(/result is infinite/);
+    });
+  });
+
+  describe('the non-finite caveat reaches every surface, and only where it belongs', () => {
+    it('exact_value to_decimal carries the caveat for an infinite result', async () => {
+      // Neither direction of this branch was tested: it could stop emitting the
+      // caveat, or stamp it on every exact_value answer, unnoticed.
+      const r = await exactValueHandler({ operation: 'to_decimal', value: '1e308*10' });
+      expect(r.isError).toBe(false);
+      expect(r.content.map((c) => c.text).join('\n')).toMatch(/result is infinite/);
+    });
+
+    it('exact_value to_decimal does not carry it for a finite result', async () => {
+      const r = await exactValueHandler({ operation: 'to_decimal', value: '2/3' });
+      expect(r.content.map((c) => c.text).join('\n')).not.toMatch(/result is infinite/);
+    });
+
+    it('the caveat appears once in text, not twice', async () => {
+      // normalize lifts the line into envelope.warnings and compute/index.ts
+      // prepends warnings, so the same 190-character sentence printed twice.
+      const t = text(await computeHandler({ problem: '1/0' }));
+      expect((t.match(/result is infinite/g) ?? []).length).toBe(1);
+    });
+
+    it('reaches a JSON consumer through envelope.warnings', async () => {
+      const env = JSON.parse(text(await computeHandler({ problem: '1/0', format: 'json' })));
+      expect(env.success).toBe(true);
+      expect(env.warnings?.join(' ')).toMatch(/result is infinite/);
+    });
+
+    it('does not relabel another handler\'s advisory note as a warning', async () => {
+      // Matching on `Note:` swept up multivariable/optimization.ts's Lagrange
+      // footnote, so a correct answer arrived flagged as unreliable.
+      const env = JSON.parse(
+        text(await computeHandler({ problem: 'lagrange(x*y, x+y, 10, [x,y])', format: 'json' }))
+      );
+      expect(env.success).toBe(true);
+      expect(env.warnings).toBeUndefined();
+    });
+  });
+
+  describe('containers do not hide a NaN from the published tool', () => {
+    it.each(['[{a: 0/0}]', '1;0/0', '[[[[[[[[0/0]]]]]]]]'])(
+      '%s is an error, not an answer',
+      async (problem) => {
+        const r = await computeHandler({ problem });
+        expect(r.isError).toBe(true);
+        expect(text(r)).not.toMatch(/The answer is/);
+      }
+    );
+  });
+
+  describe('a value is read as a value, not by string-sniffing its rendering', () => {
+    it.each([
+      ['0.5 kg', /0\.5 kg/],
+      ['2 m', /2 m/],
+      ['5 cm to inch', /inch/],
+    ])('quick_calc keeps the unit on %s', async (problem, expected) => {
+      // parseFloat(String(result)) read the leading term, so "0.5 kg" answered
+      // "1/2" — the unit silently gone.
+      expect(text(await computeHandler({ problem }))).toMatch(expected);
+    });
+
+    it('to_decimal keeps the unit too', async () => {
+      const r = await exactValueHandler({ operation: 'to_decimal', value: '1/2 m' });
+      expect(text(r)).toMatch(/0\.5 m/);
+    });
+
+    it('plain numbers still reach their exact form', async () => {
+      expect(text(await computeHandler({ problem: '0.1+0.2' }))).toMatch(/3\/10/);
+    });
+  });
+
+  describe('a deep or oversized result is refused, a merely deep one is not', () => {
+    it('answers a finite value nested well past the old cap of 64', async () => {
+      // The cap counted walk recursion, not value nesting, so a 33-term sum at 74
+      // characters was refused. mathjs itself cannot build an array literal deeper
+      // than 255, which is what the cap is now measured against.
+      const problem = '['.repeat(120) + '1' + ']'.repeat(120);
+      const r = await computeHandler({ problem });
+      expect(r.isError).toBe(false);
+    });
+
+    it('refuses a matrix reached through a wrapper instead of exhausting the heap', async () => {
+      // refuseIfTooManyElements only inspects the top level, so one container in
+      // the way reached toArray() and densified 4e8 elements.
+      const r = await computeHandler({
+        problem: "to_decimal({a: zeros(20000,20000,'sparse')})",
+      });
+      expect(r.isError).toBe(true);
+      expect(text(r)).not.toMatch(/memory budget/);
+    });
+  });
+
+  describe('the warning text channel', () => {
+    it('surfaces a warning the body does not already carry', async () => {
+      // The dedup filter had only its suppress direction pinned. The hygiene
+      // layer's warning is never in the response text, so a filter that dropped
+      // everything would silently delete it — with the suite green.
+      const previous = process.env.AXIOM_COMPUTE_HYGIENE;
+      process.env.AXIOM_COMPUTE_HYGIENE = '1';
+      try {
+        const r = await computeHandler({ problem: 'sign(0/0)' });
+        expect(text(r)).toMatch(/\[Warning:/);
+      } finally {
+        if (previous === undefined) delete process.env.AXIOM_COMPUTE_HYGIENE;
+        else process.env.AXIOM_COMPUTE_HYGIENE = previous;
+      }
+    });
+  });
 });
+
