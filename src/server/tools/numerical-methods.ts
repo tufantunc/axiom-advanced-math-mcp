@@ -1,19 +1,28 @@
 import { giacEngine } from '../giac/index.js';
 import { formatToolResponse, formatErrorResponse, inBandFailure } from './response-formatter.js';
+import { giacNumber } from './output-cleanup.js';
 
 /** Evaluate f(x) at a point using Giac */
 async function evalAt(expr: string, variable: string, x: number): Promise<number> {
   const raw = await giacEngine.evaluate(`evalf(subst(${expr},${variable}=${x}))`);
-  const val = parseFloat(raw.trim());
-  if (isNaN(val)) throw new Error(`Cannot evaluate ${expr} at ${variable}=${x}: got "${raw}"`);
+  // Strict: a symbolic reply is not a value. `evalf(subst(1-cos(y),x=2))` comes
+  // back as "1.0-cos(y)", whose parseFloat is 1 — so numerical_integration of an
+  // expression in the wrong variable answered "Result = 1".
+  const val = giacNumber(raw);
+  if (val === null) throw new Error(`Cannot evaluate ${expr} at ${variable}=${x}: got "${raw}"`);
   return val;
 }
 
 /** Evaluate f'(x) at a point using Giac symbolic differentiation */
 async function evalDerivAt(expr: string, variable: string, x: number): Promise<number> {
   const raw = await giacEngine.evaluate(`evalf(subst(diff(${expr},${variable}),${variable}=${x}))`);
-  const val = parseFloat(raw.trim());
-  if (isNaN(val)) throw new Error(`Cannot evaluate derivative of ${expr} at ${variable}=${x}`);
+  // Backstop, and labelled as one deliberately: this is called only from
+  // newtonRaphson, immediately after evalAt on the same expression and point.
+  // A free symbol makes the VALUE symbolic too, so evalAt refuses first — I
+  // could not construct an expression numeric at x whose derivative is not.
+  // Kept because it costs nothing and the next caller may not have that order.
+  const val = giacNumber(raw);
+  if (val === null) throw new Error(`Cannot evaluate derivative of ${expr} at ${variable}=${x}`);
   return val;
 }
 
@@ -228,12 +237,22 @@ async function rombergIntegration(
   b: number
 ): Promise<string[]> {
   const raw = await giacEngine.evaluate(`romberg(${expr},${variable},${a},${b})`);
-  const val = parseFloat(raw.trim());
+  // A non-numeric reply is a failure, not a result. Leaving it on the success
+  // path put 132KB of unevaluated Giac into `final_result` on exit 0, while the
+  // sibling numerical_integration path twelve lines up correctly errored on the
+  // same input class.
+  const val = giacNumber(raw);
+  if (val === null) {
+    return [
+      `Error: romberg could not evaluate ${expr} over [${a}, ${b}] — the CAS ` +
+        `returned "${raw.trim().slice(0, 160)}" rather than a number`,
+    ];
+  }
   const lines = [
     `Method: Romberg Integration (adaptive)`,
     `∫ ${expr} d${variable} from ${a} to ${b}`,
     ``,
-    `Result = ${isNaN(val) ? raw.trim() : val}`,
+    `Result = ${val}`,
   ];
   return lines;
 }

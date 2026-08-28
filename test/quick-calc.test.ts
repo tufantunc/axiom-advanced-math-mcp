@@ -220,4 +220,127 @@ describe('ln alias (natural log)', () => {
       6
     );
   });
+
+  describe('a non-finite result is not presented as a plain answer', () => {
+    it('refuses NaN rather than answering it', async () => {
+      const service = new QuickCalcService();
+      await expect(service.evaluate({ expression: '0/0' })).rejects.toThrow(/NaN|undefined/);
+    });
+
+    it('refuses a Complex whose components are NaN', async () => {
+      // Bare `.rejects.toThrow()` could not tell "refused for being NaN" from
+      // "refused at all", so any unrelated failure satisfied it.
+      const service = new QuickCalcService();
+      await expect(service.evaluate({ expression: 'sqrt(-1)*0/0' })).rejects.toThrow(
+        /evaluated to NaN/
+      );
+    });
+
+    it('refuses the same Complex when precision is supplied', async () => {
+      // The old check compared the whole rendered string to 'NaN'. Under
+      // `precision` mathjs renders the same value as "NaN + NaNi", so passing a
+      // documented parameter walked straight past the guard.
+      const service = new QuickCalcService();
+      await expect(
+        service.evaluate({ expression: 'sqrt(-1)*0/0', precision: 10 })
+      ).rejects.toThrow(/evaluated to NaN/);
+    });
+
+    it('refuses a NaN inside a container', async () => {
+      const service = new QuickCalcService();
+      await expect(service.evaluate({ expression: '[1, 0/0]' })).rejects.toThrow(
+        /evaluated to NaN/
+      );
+    });
+
+    it('does not refuse a string that merely spells NaN', async () => {
+      const service = new QuickCalcService();
+      expect((await service.evaluate({ expression: '"NaN"' })).result).toBe('NaN');
+    });
+
+    it('still returns Infinity, which is a different case from NaN', async () => {
+      const service = new QuickCalcService();
+      expect((await service.evaluate({ expression: '1/0' })).result).toBe(Infinity);
+    });
+  });
+
+  describe('non-finite detection walks the value, not its rendering', () => {
+    it.each([
+      // Each of these needed a branch the others do not exercise.
+      ['[{a: 0/0}]'],          // plain object inside an array — the generic walk
+      ['{a: 0/0}'],            // plain object at the top level
+      ['1;0/0'],               // ResultSet, from a multi-statement expression
+      ['0/0 m'],               // Unit — value, no isNaN()
+      ['[[[[[[[[0/0]]]]]]]]'], // deep nesting: the old cap answered this at depth 8
+    ])('refuses %s', async (expression) => {
+      const service = new QuickCalcService();
+      await expect(service.evaluate({ expression })).rejects.toThrow(/evaluated to NaN/);
+    });
+
+    it('refuses a Decimal NaN — the isNaN/isFinite branch, not the generic walk', async () => {
+      // A real Decimal, which `0/0` is NOT: precision only changes formatting, so
+      // that expression stays a plain number. This distinction is load-bearing —
+      // Object.values(bignumber(0)/bignumber(0)) is [null,null,null,null], so the
+      // generic walk alone reports a Decimal NaN clean. Only asking the value
+      // itself works, which is why the isNaN/isFinite branch must precede it.
+      const service = new QuickCalcService();
+      await expect(
+        service.evaluate({ expression: 'bignumber(0)/bignumber(0)' })
+      ).rejects.toThrow(/evaluated to NaN/);
+    });
+
+    it('flags a Decimal infinity through the same branch', async () => {
+      const service = new QuickCalcService();
+      const r = await service.evaluate({ expression: 'bignumber(1)/bignumber(0)' });
+      expect(r.nonFinite).toBe(true);
+    });
+
+    it.each([
+      ['1/0 m', 'Infinity m'],
+      ['[1, 1/0]', '[1, Infinity]'],
+    ])('flags %s as non-finite without refusing it', async (expression, expected) => {
+      const service = new QuickCalcService();
+      const r = await service.evaluate({ expression });
+      expect(r.result).toBe(expected);
+      expect(r.nonFinite).toBe(true);
+    });
+
+    it.each([
+      '2+2',
+      '[[1,2],[3,4]]',
+      'fraction(1,3)',
+      '5 m/s',
+      '"NaN"',
+      '1;2;3',
+      // These two are the ONLY shapes that reach the isNaN/isFinite branch, so
+      // without them `infinite: true` in that branch flags every BigNumber and
+      // Complex answer as infinite with the suite green.
+      'bignumber(1)/bignumber(3)',
+      'sqrt(-1)+1',
+    ])(
+      'does not flag the finite value %s',
+      async (expression) => {
+        const service = new QuickCalcService();
+        expect((await service.evaluate({ expression })).nonFinite).toBe(false);
+      }
+    );
+  });
+
+  describe('a self-referential value is answered, not refused as too deep', () => {
+    it('walks a cycle without hitting the depth cap', async () => {
+      // mathjs really does build one from a caller expression. Without the
+      // WeakSet the depth counter runs to the cap and refuses this.
+      const service = new QuickCalcService();
+      const r = await service.evaluate({ expression: 'a={}; a.b=a; a' });
+      expect(String(r.result)).toContain('object Object');
+    });
+
+    it('still finds a NaN inside a cyclic value', async () => {
+      const service = new QuickCalcService();
+      await expect(
+        service.evaluate({ expression: 'a={}; a.b=a; a.c=0/0; a' })
+      ).rejects.toThrow(/evaluated to NaN/);
+    });
+  });
 });
+

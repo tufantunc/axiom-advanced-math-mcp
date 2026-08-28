@@ -37,7 +37,28 @@ export const computeSchema = z.object({
         '  2+3*sin(pi/4)            — arithmetic\n' +
         'Or any valid Giac/Xcas expression as fallback.\n' +
         'Results larger than 100,000 characters are refused rather than returned — ask for a ' +
-        'smaller range or fewer elements.'
+        'smaller range or fewer elements.\n' +
+        'Refused rather than answered, because the answer would be meaningless:\n' +
+        '  - arithmetic evaluating to NaN (e.g. 0/0). An infinite result IS returned, ' +
+        'with a warning, since a true infinity and an overflowed finite value are ' +
+        'indistinguishable in the result.\n' +
+        '  - a t-test whose sample has no variation (paired_t compares the differences, ' +
+        'so it is those that must vary; Welch two_sample_t needs only one sample to vary)\n' +
+        '  - a contingency table with a negative count, an all-zero row or column, ' +
+        'rows of differing length, or only one row or column\n' +
+        '  - a one-way ANOVA with no within-group variation, or with no more ' +
+        'observations than groups\n' +
+        '  - any of these whose values are large enough that the statistic overflows ' +
+        'to infinity (the t-statistic, chi-square or F), since the overflowed value ' +
+        'is no longer the statistic\n' +
+        '  - a numerical method whose expression does not depend on the variable it ' +
+        'is solved or integrated over, or which the CAS answers symbolically rather ' +
+        'than with a number\n' +
+        '  - a result nested more deeply than the evaluator can certify as free of ' +
+        'undefined values\n' +
+        'The infinite-result rule above is about arithmetic evaluation; a symbolic ' +
+        '+/-infinity from the CAS routes (a limit, a divergent integral) is a normal ' +
+        'answer and is not flagged.'
     ),
   domain: z
     .enum(['real', 'complex', 'numeric', 'exact'])

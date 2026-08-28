@@ -1,7 +1,7 @@
 import { QuickCalcService, type QuickCalcOptions } from './quick-calc-service.js';
 import { preprocessExpression } from './quick-calc-preprocessor.js';
 import { tryExactResult } from './exact-arithmetic.js';
-import { formatToolResponse, formatErrorResponse } from './response-formatter.js';
+import { formatToolResponse, formatErrorResponse, NON_FINITE_NOTE } from './response-formatter.js';
 
 export async function quickCalcHandler(args: Record<string, unknown>) {
   try {
@@ -17,10 +17,12 @@ export async function quickCalcHandler(args: Record<string, unknown>) {
     };
     const result = await service.evaluate(opts);
 
-    const numericResult =
-      typeof result.result === 'number' ? result.result : parseFloat(String(result.result));
+    // From the worker, not re-derived: parseFloat(String(result)) read the leading
+    // term of a rendered value, so "0.5 kg" became 0.5 and the unit was dropped
+    // from the answer.
+    const numericResult = result.numeric;
 
-    if (!isNaN(numericResult)) {
+    if (numericResult !== null) {
       const exact = await tryExactResult(rawExpr, numericResult);
       if (exact) {
         return formatToolResponse({
@@ -31,9 +33,13 @@ export async function quickCalcHandler(args: Record<string, unknown>) {
       }
     }
 
+    // An infinite result is reported, but never bare. The flag comes from the
+    // worker rather than from `typeof result.result === 'number'`, which is false
+    // for every container — `[1, 1/0]` and `1/0 m` carried no caveat at all.
     return formatToolResponse({
       result: String(result.result),
       latex: result.latex,
+      ...(result.nonFinite ? { notes: [NON_FINITE_NOTE] } : {}),
     });
   } catch (error) {
     return formatErrorResponse(error instanceof Error ? error.message : String(error));

@@ -84,7 +84,14 @@ function formatOutput(
     case 'text':
     default:
       if (envelope.warnings && envelope.warnings.length > 0) {
-        const warnLines = envelope.warnings.map((w) => ({
+        // Only warnings the body does not already carry. The hygiene layer's
+        // warnings are not in the response text and must be surfaced here; a
+        // warning lifted out of the text by normalize already is, and prepending
+        // it printed the same 190-character caveat twice.
+        const bodyText = rawResponse.content.map((c) => c.text).join('\n');
+        const unseen = envelope.warnings.filter((w) => !bodyText.includes(w));
+        if (unseen.length === 0) return rawResponse;
+        const warnLines = unseen.map((w) => ({
           type: 'text' as const,
           text: `[Warning: ${w}]`,
         }));

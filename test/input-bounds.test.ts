@@ -327,14 +327,15 @@ describe('the data a test runs on is the shape it claims', () => {
   it('rejects a constant sample rather than reporting t = Infinity', async () => {
     // Passes every shape check, then divides by zero. tPValue's normalCdf
     // fallback returns 0 rather than NaN, so the isNaN guard never fired and it
-    // reported "✗ Reject H₀ (p = 0.0000)".
+    // reported "✗ Reject H₀ (p = 0.0000)". The guard now lives beside the
+    // statistic rather than on the raw sample, so the wording changed with it.
     const r = await hypothesisTestingHandler({
       test: 'one_sample_t',
       data: { sample1: [2, 2, 2], mu0: 1, significance: 0.05 },
       alternative: 'two_sided',
     });
     expect(r.isError, text(r)).toBe(true);
-    expect(text(r)).toMatch(/zero variance/);
+    expect(text(r)).toMatch(/no variation|zero standard error/);
   });
 });
 

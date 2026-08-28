@@ -1,4 +1,5 @@
 import { giacEngine } from '../giac/index.js';
+import { giacNumber } from './output-cleanup.js';
 import { formatRawResponse, formatRawError, formatErrorResponse } from './response-formatter.js';
 
 function mean(arr: number[]): number {
@@ -21,13 +22,18 @@ async function polynomialFit(
   const Astr = `[${Arows.map((row) => `[${row.join(',')}]`).join(',')}]`;
   const bstr = `[${y.map((yi) => `[${yi}]`).join(',')}]`;
 
-  const raw = await giacEngine.evaluate(`lsq(${Astr},${bstr})`);
+  // `evalf`, and a strict per-component parse. Bare `lsq` returns EXACT
+  // RATIONALS — `[[1/2],[9/14]]` — and parseFloat read those as [1, 9], so
+  // linear_regression(x=[1,2,4], y=[1,2,3]) reported "ŷ = 9.00000x + 1.00000"
+  // against a true fit of 0.6429x + 0.5, with R² = -762.
+  const raw = await giacEngine.evaluate(`evalf(lsq(${Astr},${bstr}))`);
 
   const stripped = raw.replace(/^\[\[?/, '').replace(/\]?\]$/, '');
-  const coeffs = stripped
-    .split(/\],?\[?/)
-    .map((s) => parseFloat(s.trim()))
-    .filter((v) => !isNaN(v));
+  const parsed = stripped.split(/\],?\[?/).map((part) => giacNumber(part));
+  if (parsed.some((v) => v === null || !Number.isFinite(v))) {
+    throw new Error(`lsq did not return numeric coefficients: got "${raw.trim().slice(0, 200)}"`);
+  }
+  const coeffs = parsed as number[];
 
   const yHat = x.map((xi) => coeffs.reduce((s, c, j) => s + c * xi ** j, 0));
   return { coeffs, yHat };

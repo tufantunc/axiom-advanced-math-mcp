@@ -8,6 +8,23 @@ export interface MathToolResponse {
   verification?: { verified: boolean; method: string; detail: string };
 }
 
+/**
+ * The caveat that accompanies an infinite result.
+ *
+ * Worded for what is actually true of every case. The first version enumerated
+ * "division by zero or an overflow", which is false for `log(0)` — a genuine
+ * limit that is neither.
+ *
+ * The `Warning:` prefix is load-bearing: it is what `compute/normalize.ts` lifts
+ * into the envelope's `warnings`. It deliberately does NOT say `Note:`, because
+ * matching on that swept up genuine notes from other handlers — a correct
+ * Lagrange result was arriving flagged as unreliable.
+ */
+export const NON_FINITE_NOTE =
+  'Warning: the result is infinite. This tool cannot distinguish a genuinely ' +
+  'infinite value from one that overflowed the range of a double, so treat the ' +
+  'magnitude as unknown rather than as a computed number.';
+
 export function formatToolResponse(data: MathToolResponse): {
   content: { type: 'text'; text: string }[];
   isError: boolean;

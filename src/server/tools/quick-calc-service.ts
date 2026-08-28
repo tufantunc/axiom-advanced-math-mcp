@@ -29,6 +29,14 @@ export interface QuickCalcOptions {
 export interface QuickCalcResult {
   result: number | string;
   latex?: string;
+  /**
+   * The result has an infinite component. Determined in the worker, where the
+   * value is still a value — a caller cannot recover this from `result`, which
+   * is a rendered string for anything that is not a plain number.
+   */
+  /** The result as a number when it is one, else null. Never re-derive this. */
+  numeric: number | null;
+  nonFinite: boolean;
 }
 
 /**
@@ -78,6 +86,11 @@ export class QuickCalcService {
     const parsed = JSON.parse(raw) as EvaluatedExpression;
     const output: QuickCalcResult = {
       result: parsed.isNumber ? Number(parsed.value) : parsed.value,
+      // Carried straight through from the worker, where the value was still a
+      // value. Required rather than set-only-when-true so a consumer that forgets
+      // to check cannot silently read `undefined` as "finite".
+      numeric: parsed.numeric,
+      nonFinite: parsed.nonFinite,
     };
     if (parsed.latex !== undefined) output.latex = parsed.latex;
     return output;

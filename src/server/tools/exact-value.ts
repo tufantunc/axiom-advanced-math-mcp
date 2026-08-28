@@ -1,4 +1,4 @@
-import { formatToolResponse, formatErrorResponse } from './response-formatter.js';
+import { formatToolResponse, formatErrorResponse, NON_FINITE_NOTE } from './response-formatter.js';
 import { tryExactResult } from './exact-arithmetic.js';
 import { QuickCalcService } from './quick-calc-service.js';
 
@@ -35,11 +35,15 @@ export async function exactValueHandler(args: Record<string, unknown>) {
           expression: value,
           ...(precision !== undefined ? { precision } : {}),
         });
-        const numeric =
-          typeof result.result === 'number' ? result.result : parseFloat(String(result.result));
+        // From the worker. Re-deriving it with parseFloat(String(...)) dropped
+        // units: `to_decimal("1/2 m")` answered "0.5".
         return formatToolResponse({
-          result: isNaN(numeric) ? String(result.result) : String(numeric),
-          notes: [`Expression: ${value}`],
+          result: result.numeric !== null ? String(result.numeric) : String(result.result),
+          // Same evaluator as quick_calc, so the same caveat: `to_decimal(1e308*10)`
+          // reported a bare "Infinity" for a quantity whose true value is finite.
+          notes: result.nonFinite
+            ? [`Expression: ${value}`, NON_FINITE_NOTE]
+            : [`Expression: ${value}`],
         });
       }
 
