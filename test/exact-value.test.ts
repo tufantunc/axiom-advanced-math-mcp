@@ -38,12 +38,33 @@ describe('exactValueHandler — to_decimal', () => {
     expect(allText(r)).toContain('Expression: 1/4');
   });
 
-  it('returns the full double-precision decimal (precision is advisory today)', async () => {
-    // QuickCalcService forwards `precision` into the mathjs scope but does not
-    // format with it — pin today's actual behavior until that changes.
-    const r = await exactValueHandler({ operation: 'to_decimal', value: 'sqrt(2)', precision: 6 });
+  it('returns the full double-precision decimal when precision is not asked for', async () => {
+    const r = await exactValueHandler({ operation: 'to_decimal', value: 'sqrt(2)' });
     expect(r.isError).toBe(false);
     expect(allText(r)).toContain('Result: 1.4142135623730951');
+  });
+
+  it('renders to the requested precision when the caller asks for it', async () => {
+    const r = await exactValueHandler({ operation: 'to_decimal', value: 'sqrt(2)', precision: 6 });
+    expect(r.isError).toBe(false);
+    expect(allText(r)).toContain('Result: 1.41421');
+    expect(allText(r)).not.toContain('1.4142135623730951');
+  });
+
+  it('renders exponent form under precision as the worker produced it', async () => {
+    // mathjs switches to exponential notation from 1e21 up; the rendering is
+    // shown verbatim, not re-derived from the double.
+    const r = await exactValueHandler({ operation: 'to_decimal', value: '1e21', precision: 3 });
+    expect(r.isError).toBe(false);
+    expect(allText(r)).toContain('Result: 1e+21');
+  });
+
+  it('keeps the unit on the rendered result', async () => {
+    // The numeric re-derivation this replaces once dropped units:
+    // `to_decimal("1/2 m")` answered "0.5".
+    const r = await exactValueHandler({ operation: 'to_decimal', value: '1/2 m' });
+    expect(r.isError).toBe(false);
+    expect(allText(r)).toContain('Result: 0.5 m');
   });
 });
 
