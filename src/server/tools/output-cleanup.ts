@@ -64,9 +64,9 @@ export function stripQuotes(s: string): string {
  */
 export function stripDisplayMode(latex: string): string {
   return latex
-    .replace(/\\dfrac\b/g, '\\frac')
-    .replace(/\\displaystyle\s*/g, '')
-    .replace(/\\textstyle\s*/g, '');
+    .replaceAll(/\\dfrac\b/g, String.raw`\frac`)
+    .replaceAll(/\\displaystyle\s*/g, '')
+    .replaceAll(/\\textstyle\s*/g, '');
 }
 
 /**
@@ -183,7 +183,7 @@ const COMPLEX_TERM = new RegExp(`^(.*?)([+-]?(?:${GIAC_NUMBER}\\*?)?)i$`);
  * term to zero turns a CAS error into a confident fabricated number.
  */
 export function parseComplexTerm(term: string): { re: number; im: number } {
-  const t = term.replace(/\s+/g, '');
+  const t = term.replaceAll(/\s+/g, '');
   if (t === '') throw new Error('empty complex term');
 
   if (!t.includes('i')) {

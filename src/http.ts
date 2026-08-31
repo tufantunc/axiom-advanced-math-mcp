@@ -5,7 +5,7 @@ import { createGiacHealthProbe } from './server/giac/health-probe.js';
 import { createServer } from './server/index.js';
 
 const rawPort = process.env.MCP_PORT || '3000';
-const port = parseInt(rawPort, 10);
+const port = Number.parseInt(rawPort, 10);
 if (!Number.isInteger(port) || port < 0 || port > 65535) {
   // parseInt('garbage', 10) is NaN, and serve() silently binds an ephemeral
   // port when given NaN — the log line below would then claim a port the

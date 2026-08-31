@@ -9,8 +9,8 @@ export async function exactValueHandler(args: Record<string, unknown>) {
 
     switch (op) {
       case 'to_exact': {
-        const n = parseFloat(value);
-        if (isNaN(n)) return formatErrorResponse(`"${value}" is not a valid number`);
+        const n = Number.parseFloat(value);
+        if (Number.isNaN(n)) return formatErrorResponse(`"${value}" is not a valid number`);
         const exact = await tryExactResult(value, n);
         if (exact) {
           return formatToolResponse({
@@ -48,11 +48,11 @@ export async function exactValueHandler(args: Record<string, unknown>) {
       }
 
       case 'simplify_fraction': {
-        const fracMatch = value.match(/^(-?\d+)\s*\/\s*(-?\d+)$/);
+        const fracMatch = /^(-?\d+)\s*\/\s*(-?\d+)$/.exec(value);
         if (!fracMatch)
           return formatErrorResponse(`"${value}" is not a valid fraction (expected "a/b")`);
-        let num = parseInt(fracMatch[1]);
-        let den = parseInt(fracMatch[2]);
+        let num = Number.parseInt(fracMatch[1]);
+        let den = Number.parseInt(fracMatch[2]);
         if (den === 0) return formatErrorResponse('Denominator cannot be zero');
         const sign = num < 0 !== den < 0 ? -1 : 1;
         num = Math.abs(num);

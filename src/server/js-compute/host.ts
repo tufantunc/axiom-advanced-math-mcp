@@ -165,7 +165,7 @@ export function createJsComputeHost(opts: JsComputeHostOptions = {}) {
    * Unrecoverable path (dispose): nothing pending can be salvaged.
    */
   function failAllPending(error: Error): void {
-    for (const [id, p] of [...pending]) settle(id, p, error);
+    for (const [id, p] of Array.from(pending)) settle(id, p, error);
   }
 
   /**
@@ -185,7 +185,7 @@ export function createJsComputeHost(opts: JsComputeHostOptions = {}) {
     if (culprit) settle(culprit[0], culprit[1], error);
 
     const survivors: [number, Pending][] = [];
-    for (const [id, p] of [...pending]) {
+    for (const [id, p] of Array.from(pending)) {
       if (p.redispatches >= MAX_REDISPATCHES) {
         settle(
           id,
@@ -246,7 +246,7 @@ export function createJsComputeHost(opts: JsComputeHostOptions = {}) {
           ready = true;
           // Anything enqueued during the cold start restarts its clock now, so
           // the fork is not charged against the admission budget.
-          for (const [id, p] of [...pending]) {
+          for (const [id, p] of Array.from(pending)) {
             if (p.phase === 'queued') armAdmission(id);
           }
           return;

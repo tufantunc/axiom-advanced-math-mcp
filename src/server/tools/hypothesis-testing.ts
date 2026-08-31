@@ -18,7 +18,7 @@ function std(data: number[], sampleStd = true): number {
 }
 
 function formatTestConclusion(pValue: number, significance: number, detail = ''): string {
-  if (isNaN(pValue)) return 'Could not determine significance';
+  if (Number.isNaN(pValue)) return 'Could not determine significance';
   const action = pValue < significance ? '✗ Reject H₀' : '✓ Fail to reject H₀';
   const comparison =
     pValue < significance
@@ -225,7 +225,7 @@ async function pairedT(
   const { sample1, sample2, significance } = data;
   if (!sample1 || sample1.length < 2)
     return ['Error: paired_t requires sample1 with at least 2 values'];
-  if (!sample2 || sample2.length !== sample1.length)
+  if (sample2?.length !== sample1.length)
     return ['Error: paired_t requires sample1 and sample2 of equal length'];
 
   const diffs = sample1.map((v, i) => v - sample2[i]);
@@ -315,7 +315,7 @@ async function chiSquareIndependence(data: {
     if (cdf === null || !Number.isFinite(cdf)) throw new Error(`unparseable χ² cdf: ${rawCdf}`);
     pValue = 1 - cdf;
   } catch {
-    pValue = NaN;
+    pValue = Number.NaN;
   }
 
   // A p-value that could not be computed is a failure, not a result. Reporting
@@ -333,7 +333,7 @@ async function chiSquareIndependence(data: {
     `Table: ${rows}×${cols}, N = ${N}`,
     `df = (${rows}-1)×(${cols}-1) = ${df}`,
     `χ² = ${chi2.toFixed(6)}`,
-    `p-value = ${isNaN(pValue) ? 'computation error' : pValue.toFixed(6)}`,
+    `p-value = ${Number.isNaN(pValue) ? 'computation error' : pValue.toFixed(6)}`,
     `α = ${significance}`,
     ``,
     formatTestConclusion(
@@ -406,7 +406,7 @@ async function oneWayAnova(data: { groups?: number[][]; significance: number }):
     // Report the failure. The previous fallback was `F > 10 ? 0 : NaN`, which
     // asserted p = 0 — certainty — for any F above a hardcoded threshold, and
     // that is exactly the branch an integer F reached.
-    pValue = NaN;
+    pValue = Number.NaN;
   }
 
   if (Number.isNaN(pValue)) {
@@ -431,7 +431,7 @@ async function oneWayAnova(data: { groups?: number[][]; significance: number }):
     `SS_between = ${ssBetween.toFixed(4)}, df = ${dfBetween}, MS = ${msBetween.toFixed(4)}`,
     `SS_within  = ${ssWithin.toFixed(4)}, df = ${dfWithin}, MS = ${msWithin.toFixed(4)}`,
     `F = ${F.toFixed(6)}`,
-    `p-value = ${isNaN(pValue) ? 'computation error' : pValue.toFixed(6)}`,
+    `p-value = ${Number.isNaN(pValue) ? 'computation error' : pValue.toFixed(6)}`,
     `α = ${significance}`,
     ``,
     formatTestConclusion(

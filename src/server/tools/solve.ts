@@ -92,7 +92,7 @@ export async function solveEquationHandler(args: Record<string, unknown>) {
       }
       if (!raw || raw === 'undef') continue;
       const verification = await verifySolveSet(equation, variable, parseSolutions(raw));
-      if (primary === null) primary = { giacExpr, verification, note: undefined };
+      primary ??= { giacExpr, verification, note: undefined };
       if (verification.verified) {
         chosen = { giacExpr, verification, note: cand.note };
         break;

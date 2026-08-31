@@ -623,5 +623,52 @@ describe('hypothesis_testing', () => {
       expect(r.isError).toBe(true);
     });
   });
+
+  // The p-value fallbacks: when Giac cannot produce the CDF, the tool must
+  // refuse the verdict as an error rather than printing NaN or a fabricated
+  // p-value (an unavailable p-value once shipped as isError:false, which made
+  // --quiet exit 0 on a computation that never happened).
+  describe('engine-failure fallbacks', () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('chi-square refuses the verdict when the engine rejects', async () => {
+      const spy = vi.spyOn(giacEngine, 'evaluate').mockRejectedValue(new Error('engine down'));
+      const result = await hypothesisTestingHandler({
+        test: 'chi_square_independence',
+        data: { contingency_table: [[10, 20], [30, 40]], significance: 0.05 },
+      });
+      expect(spy).toHaveBeenCalled();
+      expect(result.isError).toBe(true);
+      expect(allText(result)).toContain('p-value could not be computed');
+    });
+
+    it('chi-square treats unparseable Giac output like a failure', async () => {
+      const spy = vi.spyOn(giacEngine, 'evaluate').mockResolvedValue('undef');
+      const result = await hypothesisTestingHandler({
+        test: 'chi_square_independence',
+        data: { contingency_table: [[10, 20], [30, 40]], significance: 0.05 },
+      });
+      expect(spy).toHaveBeenCalled();
+      expect(result.isError).toBe(true);
+      expect(allText(result)).toContain('p-value could not be computed');
+    });
+
+    it('anova refuses the verdict when the engine fails, whatever the F', async () => {
+      const spy = vi.spyOn(giacEngine, 'evaluate').mockRejectedValue(new Error('engine down'));
+      // Finite F = 63 (MS_between = 63, MS_within = 1). The old heuristic
+      // answered p = 0 — certainty — for any F above 10 without consulting
+      // the CAS; it was removed upstream, so every F now reports the refusal.
+      const result = await hypothesisTestingHandler({
+        test: 'one_way_anova',
+        data: { groups: [[1, 2, 3], [4, 5, 6], [10, 11, 12]], significance: 0.05 },
+      });
+      expect(spy).toHaveBeenCalled();
+      expect(result.isError).toBe(true);
+      expect(allText(result)).toContain('p-value could not be computed');
+      expect(allText(result)).not.toContain('Reject H₀');
+    });
+  });
 });
 

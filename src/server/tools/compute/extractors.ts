@@ -60,7 +60,7 @@ function independentVariable(equation: string, functionName: string): string {
  * Extract matrix string [[...],[...]] from problem.
  */
 function extractMatrixString(problem: string): string {
-  const match = problem.match(/(\[\s*\[[\s\S]*\]\s*\])/);
+  const match = /(\[\s*\[[\s\S]*\]\s*\])/.exec(problem);
   return match ? match[1] : '';
 }
 
@@ -168,7 +168,7 @@ export function extractDiff(problem: string): RouteResult {
   const parts = splitArgs(inner);
   const expression = parts[0] || '';
   const variable = parts[1] || guessVariable(expression);
-  const order = parts[2] ? parseInt(parts[2], 10) : undefined;
+  const order = parts[2] ? Number.parseInt(parts[2], 10) : undefined;
   return {
     handler: 'calculus',
     args: {
@@ -232,10 +232,10 @@ export function extractTaylor(problem: string): RouteResult {
     const [v, p] = variable.split('=');
     variable = v.trim();
     point = p.trim();
-    order = parts[2] ? parseInt(parts[2], 10) : undefined;
+    order = parts[2] ? Number.parseInt(parts[2], 10) : undefined;
   } else {
     point = parts[2] || '0';
-    order = parts[3] ? parseInt(parts[3], 10) : undefined;
+    order = parts[3] ? Number.parseInt(parts[3], 10) : undefined;
   }
 
   return {
@@ -374,24 +374,24 @@ export function extractNumberTheory(problem: string): RouteResult {
   if (trimmed.startsWith('ifactor')) {
     return {
       handler: 'number_theory',
-      args: { operation: 'prime_factorize', number: parseInt(inner, 10) },
+      args: { operation: 'prime_factorize', number: Number.parseInt(inner, 10) },
     };
   }
   if (trimmed.startsWith('isprime')) {
     return {
       handler: 'number_theory',
-      args: { operation: 'analyze', number: parseInt(inner, 10) },
+      args: { operation: 'analyze', number: Number.parseInt(inner, 10) },
     };
   }
   if (trimmed.startsWith('euler')) {
     return {
       handler: 'number_theory',
-      args: { operation: 'analyze', number: parseInt(inner, 10) },
+      args: { operation: 'analyze', number: Number.parseInt(inner, 10) },
     };
   }
   return {
     handler: 'number_theory',
-    args: { operation: 'prime_factorize', number: parseInt(inner, 10) },
+    args: { operation: 'prime_factorize', number: Number.parseInt(inner, 10) },
   };
 }
 
@@ -401,27 +401,27 @@ export function extractCombinatorics(problem: string): RouteResult {
   const trimmed = problem.trim();
 
   // C(n,k) or comb(n,k)
-  const combMatch = trimmed.match(/^[Cc](?:omb)?\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)/);
+  const combMatch = /^[Cc](?:omb)?\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)/.exec(trimmed);
   if (combMatch) {
     return {
       handler: 'combinatorics',
       args: {
         operation: 'combinations',
-        n: parseInt(combMatch[1], 10),
-        k: parseInt(combMatch[2], 10),
+        n: Number.parseInt(combMatch[1], 10),
+        k: Number.parseInt(combMatch[2], 10),
       },
     };
   }
 
   // P(n,k) or perm(n,k)
-  const permMatch = trimmed.match(/^[Pp](?:erm)?\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)/);
+  const permMatch = /^[Pp](?:erm)?\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)/.exec(trimmed);
   if (permMatch) {
     return {
       handler: 'combinatorics',
       args: {
         operation: 'permutations',
-        n: parseInt(permMatch[1], 10),
-        k: parseInt(permMatch[2], 10),
+        n: Number.parseInt(permMatch[1], 10),
+        k: Number.parseInt(permMatch[2], 10),
       },
     };
   }
@@ -429,7 +429,7 @@ export function extractCombinatorics(problem: string): RouteResult {
   // Keyword-based: stirling, bell, catalan, derangements, partitions
   const lc = trimmed.toLowerCase();
   const inner = extractFnArgs(problem);
-  const numArgs = splitArgs(inner).map((s) => parseInt(s, 10));
+  const numArgs = splitArgs(inner).map((s) => Number.parseInt(s, 10));
 
   if (lc.includes('stirling')) {
     const kind = lc.includes('first') ? 'stirling_first' : 'stirling_second';
@@ -861,7 +861,7 @@ export function extractSequenceIdentify(problem: string): RouteResult {
 
 export function extractNumberProperties(problem: string): RouteResult {
   const inner = extractFnArgs(problem);
-  return { handler: 'number_properties', args: { number: parseInt(inner, 10) } };
+  return { handler: 'number_properties', args: { number: Number.parseInt(inner, 10) } };
 }
 
 // --- Quick calc ---

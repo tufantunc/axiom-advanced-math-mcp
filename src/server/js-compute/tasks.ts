@@ -56,10 +56,10 @@ function comb(n: number, k: number): bigint {
 function stirlingFirstUnsigned(n: number, k: number): bigint {
   if (n === 0 && k === 0) return 1n;
   if (n === 0 || k === 0 || k > n) return 0n;
-  let prev = new Array<bigint>(k + 1).fill(0n);
+  let prev = Array.from({ length: k + 1 }, () => 0n);
   prev[0] = 1n;
   for (let i = 1; i <= n; i++) {
-    const cur = new Array<bigint>(k + 1).fill(0n);
+    const cur = Array.from({ length: k + 1 }, () => 0n);
     const upper = Math.min(i, k);
     for (let j = 1; j <= upper; j++) {
       cur[j] = BigInt(i - 1) * prev[j] + prev[j - 1];
@@ -117,7 +117,7 @@ function derangements(n: number): bigint {
 
 /** Integer partitions p(n), by the standard O(n²) dynamic program. */
 function partitionCount(n: number): bigint {
-  const p = new Array<bigint>(n + 1).fill(0n);
+  const p = Array.from({ length: n + 1 }, () => 0n);
   p[0] = 1n;
   for (let k = 1; k <= n; k++) {
     for (let i = k; i <= n; i++) p[i] = p[i] + p[i - k];

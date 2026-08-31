@@ -801,7 +801,7 @@ export async function translateOdeSystem(
       evaluate(`exact(${matrix})`),
       evaluate(`exact(${constants})`),
     ]);
-    const flat = (text: string) => text.trim().replace(/\s+/g, '');
+    const flat = (text: string) => text.trim().replaceAll(/\s+/g, '');
     holdsExact = Number(atoms.trim()) > 0;
     floatInMatrix = flat(exactMatrix) !== flat(matrix);
     floatInForcing = flat(exactForcing) !== flat(constants);
@@ -843,7 +843,7 @@ export async function translateOdeSystem(
         evaluate(`exact(${written})`),
         evaluate(written),
       ]);
-      const flat = (text: string) => text.trim().replace(/\s+/g, '');
+      const flat = (text: string) => text.trim().replaceAll(/\s+/g, '');
       floatInConditions = flat(asExact) !== flat(asWritten);
     } catch (failure) {
       // Same classification as the probe's. An outage that lands here is not the
@@ -877,7 +877,7 @@ export async function translateOdeSystem(
   if (holdsExact && floatInMatrix) {
     try {
       const asFloat = await evaluate(`evalf(${matrix})`);
-      if (!asFloat.includes('GIAC_ERROR')) matrix = asFloat.trim().replace(/\s+/g, '');
+      if (!asFloat.includes('GIAC_ERROR')) matrix = asFloat.trim().replaceAll(/\s+/g, '');
     } catch {
       // Keep the exact spelling; the answer is then checked as before.
     }

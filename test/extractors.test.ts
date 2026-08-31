@@ -19,6 +19,7 @@ import {
   extractNumberTheory,
   extractGeometry,
   extractNumericalMethods,
+  extractSequenceIdentify,
 } from '../src/server/tools/compute/extractors.js';
 
 describe('Extractors', () => {
@@ -256,6 +257,22 @@ describe('Extractors', () => {
       const result = extractNumericalMethods('newton(x^2-2, x, 1.5)');
       expect(result.args.method).toBe('newton_raphson');
       expect(result.args.expression).toBe('x^2-2');
+      expect(result.args.initial_guess).toBe(1.5);
+    });
+  });
+
+  describe('extractSequenceIdentify', () => {
+    it('parses a clean numeric list', () => {
+      const result = extractSequenceIdentify('sequence_identify(1, 4, 9, 16)');
+      expect(result.handler).toBe('sequence_identify');
+      expect(result.args.terms).toEqual([1, 4, 9, 16]);
+    });
+
+    it('refuses the whole list when any term is not numeric', () => {
+      // Strict by design upstream: silently dropping junk terms made a
+      // malformed sequence look like a shorter valid one.
+      const result = extractSequenceIdentify('sequence_identify(1, x, 4, 9, 16)');
+      expect(result.args.terms).toEqual([]);
     });
   });
 });

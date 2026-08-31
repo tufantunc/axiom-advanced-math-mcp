@@ -263,6 +263,10 @@ describe('Router', () => {
       const result = route('binomial(n=10, p=0.5, x=3, cdf)');
       expect(result.handler).toBe('probability');
       expect(result.args.distribution).toBe('binomial');
+      const params = result.args.params as Record<string, number>;
+      expect(params.n).toBe(10);
+      expect(params.p).toBe(0.5);
+      expect(result.args.x).toBe(3);
     });
 
     it('should route normal distribution', () => {

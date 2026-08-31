@@ -1,5 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import { QuickCalcService } from '../src/server/tools/quick-calc-service.js';
+import { quickCalcHandler } from '../src/server/tools/quick-calc.js';
+import { tryExactResult } from '../src/server/tools/exact-arithmetic.js';
+import { giacEngine } from '../src/server/giac/index.js';
 
 describe('QuickCalcService', () => {
   const service = new QuickCalcService();
@@ -344,3 +347,26 @@ describe('ln alias (natural log)', () => {
   });
 });
 
+// Degree handling spans two evaluators: the preprocessor turns '90°' into the
+// mathjs 'deg' unit, and the exact path rewrites it to '(90*pi/180)' for Giac.
+// Both rewrites were once completely unpinned — the suite stayed green with
+// either rule deleted — so each path is asserted end-to-end here.
+describe('degree expressions', () => {
+  beforeAll(async () => {
+    await giacEngine.initialize();
+  }, 60000);
+
+  it('the mathjs path evaluates sin(90°) to 1 through the handler', async () => {
+    const r = await quickCalcHandler({ expression: 'sin(90°)' });
+    expect(r.isError).toBe(false);
+    expect(r.content[0].text).toBe('Result: 1');
+  });
+
+  it('the Giac exact path converts degrees to radians exactly', async () => {
+    // sin(60°) is irrational, so the fraction path declines and the Giac
+    // rewrite '60°' -> '(60*pi/180)' runs before evaluation.
+    const exact = await tryExactResult('sin(60°)', Math.sin(Math.PI / 3));
+    expect(exact).not.toBeNull();
+    expect(exact?.exact).toBe('√3/2');
+  });
+});

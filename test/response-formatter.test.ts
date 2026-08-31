@@ -29,3 +29,29 @@ describe('formatToolResponse — verification rendering', () => {
     expect(text).not.toContain('Method:');
   });
 });
+
+describe('formatToolResponse — decimal rendering', () => {
+  it('renders the decimal approximation of an exact result', () => {
+    const text = allText(formatToolResponse({ result: '1/3', decimal: '0.3333333333' }));
+    expect(text).toContain('Result: 1/3');
+    expect(text).toContain('Decimal: 0.3333333333');
+    expect(text).toContain('The answer is 1/3 (≈ 0.3333333333)');
+  });
+
+  it('renders an integer decimal without trailing noise', () => {
+    const text = allText(formatToolResponse({ result: '5', decimal: '5.0' }));
+    expect(text).toContain('The answer is 5 (≈ 5)');
+  });
+
+  it('drops the approximation when the decimal is not finite', () => {
+    const text = allText(formatToolResponse({ result: '1/3', decimal: 'Infinity' }));
+    expect(text).toContain('The answer is 1/3');
+    expect(text).not.toContain('≈');
+  });
+
+  it('drops the approximation when the decimal is unparseable', () => {
+    const text = allText(formatToolResponse({ result: '1/3', decimal: 'abc' }));
+    expect(text).toContain('The answer is 1/3');
+    expect(text).not.toContain('≈');
+  });
+});

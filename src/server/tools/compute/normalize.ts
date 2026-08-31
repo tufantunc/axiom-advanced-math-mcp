@@ -129,10 +129,10 @@ function buildData(resultType: ResultType, fields: ParsedFields): Record<string,
       let solutions = [fields.result];
       const trimmed = fields.result.trim();
       const setMatch =
-        trimmed.match(/^\{(.+)\}$/) ||
-        trimmed.match(/^\[(.+)\]$/) ||
-        trimmed.match(/^list\[(.+)\]$/) ||
-        trimmed.match(/^list\((.+)\)$/);
+        /^\{(.+)\}$/.exec(trimmed) ||
+        /^\[(.+)\]$/.exec(trimmed) ||
+        /^list\[(.+)\]$/.exec(trimmed) ||
+        /^list\((.+)\)$/.exec(trimmed);
       if (setMatch) {
         solutions = splitTopLevel(setMatch[1], ',').map((s) => s.trim());
       }

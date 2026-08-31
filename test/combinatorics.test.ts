@@ -76,7 +76,13 @@ describe('combinatorics', () => {
     it('|s(4,2)| = 11', async () => {
       const result = await combinatoricsHandler({ operation: 'stirling_first', n: 4, k: 2 });
       expect(result.isError).toBe(false);
-      expect(result.content[0].text).toContain('11');
+      expect(result.content[0].text).toBe('Result: 11');
+    });
+
+    it('|s(6,2)| = 274', async () => {
+      const result = await combinatoricsHandler({ operation: 'stirling_first', n: 6, k: 2 });
+      expect(result.isError).toBe(false);
+      expect(result.content[0].text).toBe('Result: 274');
     });
   });
 
@@ -144,13 +150,19 @@ describe('combinatorics', () => {
     it('p(5) = 7', async () => {
       const result = await combinatoricsHandler({ operation: 'partition_count', n: 5 });
       expect(result.isError).toBe(false);
-      expect(result.content[0].text).toContain('7');
+      expect(result.content[0].text).toBe('Result: 7');
     });
 
     it('p(10) = 42', async () => {
       const result = await combinatoricsHandler({ operation: 'partition_count', n: 10 });
       expect(result.isError).toBe(false);
-      expect(result.content[0].text).toContain('42');
+      expect(result.content[0].text).toBe('Result: 42');
+    });
+
+    it('p(100) = 190569292', async () => {
+      const result = await combinatoricsHandler({ operation: 'partition_count', n: 100 });
+      expect(result.isError).toBe(false);
+      expect(result.content[0].text).toBe('Result: 190569292');
     });
   });
 

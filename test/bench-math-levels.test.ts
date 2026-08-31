@@ -50,7 +50,7 @@ describe('rowsPerConfig', () => {
     // for one level fetched fewer rows than asking for three and yielded 30
     // problems instead of 50. The function takes only the per-level limit now,
     // which makes that class of mistake unrepresentable.
-    expect(rowsPerConfig.length).toBe(1);
+    expect(rowsPerConfig).toHaveLength(1);
   });
 
   it('scales with the requested limit', () => {

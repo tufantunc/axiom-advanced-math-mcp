@@ -67,7 +67,7 @@ export function renderVerify(
   if (typeof parsed.verified !== 'boolean' || typeof parsed.evaluated !== 'boolean') {
     // The exit code is derived from these two fields, so an envelope missing
     // them must fail loudly rather than default to a verdict.
-    throw new Error(`verify returned no verdict: ${json.slice(0, 200)}`);
+    throw new TypeError(`verify returned no verdict: ${json.slice(0, 200)}`);
   }
   const { verified, evaluated } = parsed;
 

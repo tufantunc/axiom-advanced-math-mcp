@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["typescript"],
+  "plugins": ["typescript", "unicorn"],
   "rules": {
     "no-unused-vars": ["warn", {
       "args": "after-used",
@@ -10,7 +10,10 @@
     }],
     "typescript/explicit-function-return-type": "off",
     "typescript/no-explicit-any": "warn",
-    "typescript/no-non-null-assertion": "warn"
+    "typescript/no-non-null-assertion": "warn",
+    "unicorn/prefer-number-properties": "warn",
+    "unicorn/prefer-string-replace-all": "warn",
+    "unicorn/prefer-string-raw": "warn"
   },
   "ignorePatterns": ["dist/", "node_modules/", "src/server/giac/giac.wasm.js"]
 }

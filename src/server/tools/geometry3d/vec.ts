@@ -11,7 +11,7 @@ export function vfmt(v: number[]): string {
 
 /** Validate that `list` is exactly `n` finite numbers; throw with `label` otherwise. */
 export function need(list: number[] | undefined, n: number, label: string): number[] {
-  if (!list || list.length !== n || list.some((x) => !Number.isFinite(x))) {
+  if (list?.length !== n || list.some((x) => !Number.isFinite(x))) {
     throw new Error(`${label} must be a list of ${n} numbers`);
   }
   return list;
