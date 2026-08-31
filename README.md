@@ -81,7 +81,7 @@ Axiom exposes **3 MCP tools**. Almost everything flows through `compute`, a sing
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Arithmetic & units      | `2+3*sin(pi/4)`, `100 km/h to m/s`                                                                                                                             |
 | Equation solving        | `solve(x^2-4=0, x)`, `csolve(...)` (complex), `solve_system([x+y=5, x-y=1], [x,y])`                                                                            |
-| Calculus                | `diff`, `int`, `limit`, `taylor`, `desolve` (ODE)                                                                                                              |
+| Calculus                | `diff`, `int`, `limit`, `taylor`, `desolve` (ODEs of any order, and linear constant-coefficient systems)                                                                                                              |
 | Multivariable calculus  | `gradient`, `hessian`, `jacobian`, `divergence`, `curl`, `partial`, `iint`/`iiint` (multiple integrals), `critical_points`, `lagrange`, `tangent_plane`, `directional_derivative` |
 | Algebra                 | `factor`, `simplify`, `expand`, `partfrac`                                                                                                                     |
 | Linear algebra          | `det`, `inv`, `eigenvals`, `eigenvects`, `rref`, `rank`, `tran`, `ker`, `qr`, `lu`, `cholesky`, `svd`, `norm`, `cond`                                          |
@@ -279,6 +279,19 @@ statistic is no longer the statistic. A numerical method is refused when its
 expression does not depend on the variable it is solved or integrated over, or
 when the CAS answers symbolically rather than with a number — previously the
 leading term of that symbolic answer was reported as the result.
+
+A system of differential equations written as a list — `desolve([y'=z, z'=-y],
+x)` — is rewritten into the matrix form the CAS solves and returns a solution for
+every function. The components come back in the order the equations were written,
+and the JSON envelope names them in a `components` field, because
+`[[cos(x),-sin(x)]]` is not interpretable without it.
+
+Initial conditions must be given for every function, at the same point, or not at
+all — a partial set is refused rather than ignored. Also refused, each with its
+own reason: a system that is not linear in the unknown functions; coefficients
+that depend on the independent variable; a derivative of order above one (rewrite
+`y''=z` as `y'=w, w'=z`); more than nine equations; and a system the CAS cannot
+finish.
 
 The infinite-result rule covers arithmetic evaluation. A symbolic `+infinity`
 from the CAS routes — a limit, a divergent integral — is a normal answer and

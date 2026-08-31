@@ -1,4 +1,5 @@
 import { giacEngine } from '../giac/index.js';
+import { toLatex } from './giac-eval.js';
 
 export interface AdvancedSolveOptions {
   expression: string;
@@ -32,13 +33,15 @@ export class AdvancedSolveService {
         result,
       };
 
-      // LaTeX output
+      // LaTeX output, through the shared renderer. Open-coded here it was a
+      // fourth copy of a pipeline `toLatex`'s docblock claims was consolidated:
+      // it skipped the `undef`/echoed-`latex` rejection and the quote stripping,
+      // and — the reason it matters — it had neither of the size bounds, so a
+      // deep or oversized result handed straight to `latex(...)` traps the engine
+      // and takes the shared worker down with whatever else is in flight.
       if (format === 'latex' || format === 'json') {
-        try {
-          output.latex = await giacEngine.evaluate(`latex(${result})`);
-        } catch {
-          // LaTeX is best-effort
-        }
+        const latex = await toLatex(result);
+        if (latex !== undefined) output.latex = latex;
       }
 
       // Steps: show original expression and simplified result

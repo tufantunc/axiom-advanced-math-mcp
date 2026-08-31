@@ -73,6 +73,19 @@ function formatOutput(
           content: [
             { type: 'text' as const, text: `Result: ${envelope.display}` },
             { type: 'text' as const, text: `LaTeX: ${envelope.latex}` },
+            // This is the format that renders a solution VECTOR most
+            // prominently, and it was the only one saying nothing about which
+            // component is which — `--json` carries `components` and the text
+            // formats carry the note, but a LaTeX consumer got an
+            // uninterpretable vector.
+            ...(envelope.components
+              ? [
+                  {
+                    type: 'text' as const,
+                    text: `Components are in the order: ${envelope.components.join(', ')}`,
+                  },
+                ]
+              : []),
             ...(envelope.giac_command
               ? [{ type: 'text' as const, text: `Command: ${envelope.giac_command}` }]
               : []),

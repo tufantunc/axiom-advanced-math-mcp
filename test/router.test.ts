@@ -483,6 +483,53 @@ describe('solve_equation precedence: `=` at depth 0, not `=` anywhere', () => {
       }
     });
 
+    it.each([
+      // A list-form ODE system has the same shape as an algebraic system, and
+      // rule 1 claims bracketed lists — so `[y'=z, z'=-y]`, the form this
+      // project's own docs use, went to solve_system and was answered `(0, 0)`
+      // with a check mark. The ODE decline had been added to rule 2 only.
+      ["[y'=z, z'=-y]"],
+      ["[a'=b, b'=-a]"],
+      ["[y'=z, z'=-y, y(0)=1, z(0)=0]"],
+      ['[dy/dt=z, dz/dt=-y]'],
+    ])('routes the list-form ODE system %s to solve_ode', (problem) => {
+      expect(route(problem).args.operation).toBe('solve_ode');
+    });
+
+    it.each([
+      // ...without taking algebraic systems with it.
+      ['[x+y=3, x-y=1]'],
+      ['[2*a+b=5, a-b=1]'],
+      ["solve_system([y'=z, z'=-y])"],
+    ])('leaves %s with solve_system', (problem) => {
+      expect(route(problem).args.operation).not.toBe('solve_ode');
+    });
+
+    it.each([
+      // A quoted Giac string ends in `<identifier>'`, which is otherwise
+      // indistinguishable from a derivative. Position separates them: a prime
+      // with an EVEN number of quotes before it is not inside a string. The
+      // multi-word case matters because the exclusion was first written as "not
+      // preceded by a quote", which `'a b'` walks straight past.
+      ["to_decimal({a: zeros(20000,20000,'sparse')})", 'to_decimal'],
+      ["zeros(3,3,'sparse')", undefined],
+      ["purge('a b')", undefined],
+    ])('does not read the quoted string in %s as a derivative', (problem, expected) => {
+      expect(route(problem).args.operation).not.toBe('solve_ode');
+      if (expected) expect(route(problem).args.operation).toBe(expected);
+    });
+
+    it.each([
+      // A Leibniz quotient counts only where a derivative can stand. This rule
+      // sits above factor and simplify, so matched anywhere it outranked an
+      // explicitly named verb and returned a raw GIAC_ERROR as a successful
+      // answer.
+      ['simplify(dv/dt*m)', 'simplify'],
+      ['factor(da/db)', 'factor'],
+    ])('leaves %s with its named verb', (problem, expected) => {
+      expect(route(problem).args.operation).toBe(expected);
+    });
+
     it('second-order ODEs still reach solve_ode', () => {
       // looksLikeOde matches these via /y'/ because `y''` contains `y'`. That
       // subsumption is why the separate second-order pattern was dropped, so it

@@ -135,7 +135,38 @@ function isBetaDistributionCall(problem: string): boolean {
  * `y''` contains `y'`, so the first pattern already covers second-order forms.
  */
 function looksLikeOde(problem: string): boolean {
-  return /y'/.test(problem) || /dy\s*\/\s*dx/.test(problem);
+  // Any differentiated name, not just `y`, and the prime may sit anywhere —
+  // `y'' + y = 0` carries it well before the `=`, and requiring adjacency sent
+  // second-order ODEs to solve_equation.
+  // `[a'=b, b'=-a]` and `[dy/dt=z, dz/dt=-y]` were invisible to the old form and
+  // went to solve_system, which answered them `(0, 0)`.
+  // The identifier must be a whole word and must not itself be quoted: a Giac
+  // string argument such as
+  // `zeros(20000,20000,'sparse')` ends in `sparse'`, which is otherwise
+  // indistinguishable from a derivative and took that input off its own route.
+  // A Leibniz quotient counts only where a derivative can stand: at the start of
+  // a member, on the left of an `=`. Matched anywhere, it outranked an explicitly
+  // named verb — this rule sits above factor and simplify — so `simplify(dv/dt*m)`
+  // was sent to solve_ode and came back as a raw GIAC_ERROR presented as a
+  // successful answer.
+  if (/(^|[,[(])\s*d[A-Za-z_]\w*\s*\/\s*d[A-Za-z_]\w*\s*=/.test(problem)) return true;
+
+  // A prime counts only outside a quoted string. Giac takes string arguments —
+  // `zeros(20000,20000,'sparse')`, `purge('a b')` — whose closing quote follows an
+  // identifier and is otherwise indistinguishable from a derivative. Position,
+  // not shape, is what separates them: a prime with an EVEN number of quotes
+  // before it is not inside a string, and `[y'=z, z'=-y]` has one at position
+  // zero even though its later primes do not.
+  for (const match of problem.matchAll(/(^|[^\w])[A-Za-z_]\w*'/g)) {
+    // Up to the IDENTIFIER, not to the start of the match — the match begins one
+    // character earlier, and for a quoted string that character IS the opening
+    // quote, so counting from there missed it and `zeros(3,3,'sparse')` read as a
+    // derivative.
+    const identifierAt = (match.index ?? 0) + match[1].length;
+    const quotesBefore = (problem.slice(0, identifierAt).match(/'/g) ?? []).length;
+    if (quotesBefore % 2 === 0) return true;
+  }
+  return false;
 }
 
 /** Check if problem looks like multiple equations (system). */
@@ -193,7 +224,13 @@ const rules: RouterRule[] = [
   // 1. System of equations
   {
     name: 'solve_system',
-    test: (p) => isSystemOfEquations(p) || startsWith(p, 'solve_system'),
+    // The ODE decline belongs here, not only on rule 2. Rule 1 is what actually
+    // claims a bracketed list, and a list-form ODE system has exactly that shape,
+    // so `[y'=z, z'=-y]` — the form this project's own docs use — was answered
+    // `(0, 0)` with `Verified: ✓`, a wrong non-empty vector carrying a check
+    // mark. An explicit `solve_system(...)` still overrides, since that is the
+    // caller saying what they meant.
+    test: (p) => startsWith(p, 'solve_system') || (!looksLikeOde(p) && isSystemOfEquations(p)),
     extract: extractSolveSystem,
   },
 

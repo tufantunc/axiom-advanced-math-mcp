@@ -205,12 +205,23 @@ export function normalize(
   // is a `Note:`, and a correct, complete Lagrange answer was arriving with a
   // `warnings` array, which types.ts documents as a reliability signal.
   const warnings = fields.notes.filter((n) => n.trimStart().startsWith('Warning:'));
+  // Lifted the same way, because a vector answer is not interpretable without it
+  // and every non-text format discards notes.
+  const componentLine = fields.notes.find((n) =>
+    n.trimStart().startsWith('Components are in the order:')
+  );
+  const components = componentLine
+    ?.slice(componentLine.indexOf(':') + 1)
+    .split(',')
+    .map((name) => name.trim())
+    .filter((name) => name.length > 0);
 
   return {
     success: true,
     result_type: resultType,
     display: fields.result || response.content.map((c) => c.text).join('\n'),
     ...(warnings.length > 0 ? { warnings } : {}),
+    ...(components && components.length > 0 ? { components } : {}),
     ...(fields.latex ? { latex: fields.latex } : {}),
     data,
     method: handler,
