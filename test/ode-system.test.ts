@@ -263,7 +263,7 @@ describe('what is decided before the engine is asked', () => {
     // Every one of these is decidable from the caller's text, and every one used
     // to cost five engine round trips first — on a shared, single-threaded
     // worker, for a request that was never going to be answered.
-    ["[y'=z, z'=-y, y(0)=1, w(0)=2]", /names w, which the system does not solve for/],
+    ["[y'=z, z'=-y, y(0)=1, w(0)=2]", /names w in an initial condition/],
     ["[y'=z, z'=-y, y(0)=1]", /a value for every function, or none/],
     ["[y'=z, z'=-y, y(0)=1, z(1)=0]", /different points/],
     ["[y'=z, z'=-y, y(0)=1, y(0)=2, z(0)=0]", /two different initial conditions/],
@@ -285,10 +285,20 @@ describe('what is decided before the engine is asked', () => {
     // The engine's own text is not the caller's business: one names this
     // service's internal worker recycling, the other a probe expression the
     // caller never wrote.
-    [new Error('Giac worker exited (code 1)'), /^could not be analysed$/],
+    // The worker's lifecycle is not a verdict on the caller's mathematics: the
+    // class is reported so an outage is distinguishable from a real refusal,
+    // while the engine's own text still never reaches them.
+    [
+      new Error('Giac worker exited (code 1)'),
+      /^could not be analysed because the CAS was unavailable/,
+    ],
+    [new Error('Bad Argument Value'), /^could not be analysed$/],
     [
       'GIAC_ERROR: Bad Argument Value grad(z,[y,z]) at line 1 col 7',
-      /^has coefficients that could not be read$/,
+      // ...and the function NAMES are the caller's own data — the one signal
+      // identifying a name the CAS has reserved, which dropping the raw string
+      // had removed entirely.
+      /could not be read for y, z — one of those names may be reserved/,
     ],
   ])('refuses without quoting the engine (%s)', async (reply, expected) => {
     const out = await translateOdeSystem(system("[y'=z, z'=-y]"), 'x', {
@@ -296,6 +306,43 @@ describe('what is decided before the engine is asked', () => {
         reply instanceof Error ? Promise.reject(reply) : Promise.resolve(reply),
     });
     expect('error' in out && out.error).toMatch(expected);
+  });
+
+  it('refuses an over-long condition before it reaches the engine', async () => {
+    // Nothing else measured this channel: MAX_PROBE_CHARS bounds the probe and
+    // MAX_COMMAND_CHARS the finished command, both later. A flat 7,441-character
+    // condition traps the engine, and at that size it exhausts the JS stack
+    // rather than trapping in WASM — which left the worker UP and corrupted, so
+    // three unrelated callers got raw engine text before it crashed itself out.
+    let calls = 0;
+    const long = `1${'*2'.repeat(3700)}`;
+    const out = await translateOdeSystem(system(`[y'=z, z'=-y, y(0)=${long}, z(0)=0]`), 'x', {
+      evaluate: (): Promise<string> => {
+        calls += 1;
+        return Promise.resolve('[[[0,1],[-1,0]],[0,0],[0,0]]');
+      },
+    });
+    expect('error' in out && out.error).toMatch(/\d+ characters, above the \d+/);
+    expect(calls).toBe(0);
+  });
+
+  it('refuses a condition nested past what the CAS can parse', async () => {
+    // Depth is a separate axis from length: nested 600 deep this was 2,415
+    // characters — inside every length cap that existed — and killed the shared
+    // worker. Sending one copy per call raised that threshold; it did not remove
+    // it.
+    let calls = 0;
+    // Deep but SHORT — 601 characters, inside the length bound above, so this
+    // exercises the depth axis rather than falling through to it.
+    const deep = `${'('.repeat(150)}1${')*1'.repeat(150)}`;
+    const out = await translateOdeSystem(system(`[y'=z, z'=-y, y(0)=${deep}, z(0)=0]`), 'x', {
+      evaluate: (): Promise<string> => {
+        calls += 1;
+        return Promise.resolve('[[[0,1],[-1,0]],[0,0],[0,0]]');
+      },
+    });
+    expect('error' in out && out.error).toMatch(/nested \d+ deep, above the \d+ the CAS can parse/);
+    expect(calls).toBe(0);
   });
 
   it('sends the condition text once per call, not twice in one', async () => {

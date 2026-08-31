@@ -670,18 +670,20 @@ describe('spellings the router has to tell apart', () => {
     });
 
     it('refuses an oversized condition value before the engine expands it', async () => {
-      // An initial-condition VALUE is the only caller text that never enters the
-      // probe, so no gradient is taken of it and no guard here had seen it. A
-      // 540-deep product trapped the engine fatally, which recycles the worker,
-      // rejects whatever else was pending, and returned the raw
-      // "RuntimeError: memory access out of bounds" to the caller.
+      // An initial-condition VALUE never enters the probe, so no gradient is taken
+      // of it and no guard here had seen it. A 540-deep product trapped the engine
+      // fatally, which recycles the worker, rejects whatever else was pending, and
+      // returned the raw "RuntimeError: memory access out of bounds" to the
+      // caller. It is now refused for its LENGTH, before any engine call — the
+      // channel had nothing measuring it, since the probe and command bounds both
+      // run later.
       const problem = `desolve([y'=z, z'=-y, y(0)=${'x*'.repeat(540)}1, z(0)=0], x)`;
       const [attacker, victim] = await Promise.all([
         computeHandler({ problem }),
         computeHandler({ problem: 'integrate(sin(x)^2, x)' }),
       ]);
       expect(attacker.isError).toBe(true);
-      expect(text(attacker)).toMatch(/initial conditions/);
+      expect(text(attacker)).toMatch(/initial condition of \d+ characters, above the \d+/);
       expect(text(attacker)).not.toMatch(/RuntimeError/);
       expect(victim.isError).toBe(false);
     });

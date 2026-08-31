@@ -2,6 +2,7 @@ import { isPrintedZero, splitTopLevel } from './output-cleanup.js';
 import { stripEnclosingBrackets } from './compute/arg-parsing.js';
 import type { GiacEngineLike } from './compute/hygiene.js';
 import { unicodeToAscii } from './unicode-normalize.js';
+import { MAX_ENGINE_DEPTH, nestingDepth } from './giac-eval.js';
 
 /**
  * Translating a list-form ODE system into the form this CAS actually solves.
@@ -455,6 +456,31 @@ function validateSystemShape(
       return { error: `has a member "${condition.slice(0, 60)}" that is not of the form y(0)=1` };
     }
     parsedConditions.push(parsed);
+    // Length AND depth, both bounded here because the conditions reach an engine
+    // call with nothing else measuring them: MAX_PROBE_CHARS bounds the probe and
+    // MAX_COMMAND_CHARS the finished command, and both run later. A condition
+    // longer than the command bound could never have been accepted anyway, so
+    // refusing it up front costs nothing and closes the channel.
+    //
+    // Two shapes, because they trap differently. A FLAT expression traps from
+    // about 6,000 characters — `exact([y(0)=1*2*2*…])` — and at ~7,400 it
+    // exhausts the JS stack instead, which left the worker up and corrupted
+    // rather than recycled. A NESTED one traps at 2,415 characters, inside every
+    // length bound there is, which is why depth is measured separately.
+    if (condition.length > MAX_COMMAND_CHARS) {
+      return {
+        error:
+          `gives an initial condition of ${condition.length} characters, above the ` +
+          `${MAX_COMMAND_CHARS} the rewritten command allows`,
+      };
+    }
+    if (nestingDepth(condition) > MAX_ENGINE_DEPTH) {
+      return {
+        error:
+          `gives an initial condition nested ${nestingDepth(condition)} deep, above ` +
+          `the ${MAX_ENGINE_DEPTH} the CAS can parse`,
+      };
+    }
     const oversized = implausibleMagnitude(condition);
     if (oversized !== undefined) {
       return {
@@ -552,17 +578,27 @@ export async function translateOdeSystem(
           'faster than the input that produced them',
       };
     }
-  } catch {
+  } catch (failure) {
     // A trap or timeout in the probe is this operation's failure, not a raw
     // engine string for the caller to decipher.
-    // The engine's own text does not go to the caller. It said things like "Giac
-    // worker exited (code 1)" — this service's internal availability mechanism —
-    // and named a `grad(z,[y,z])` probe the caller never wrote. Neither is
-    // actionable by them; the refusal alone is.
+    // The engine's own text does not go to the caller — it named this service's
+    // worker recycling and a `grad(z,[y,z])` probe they never wrote. But the
+    // CLASS does: dropping the error entirely told a caller their system "could
+    // not be analysed", a statement about their mathematics, when the truth was
+    // that the CAS was unavailable. Those are different things and only one of
+    // them is their problem.
+    const message = failure instanceof Error ? failure.message : String(failure);
+    if (/timed out|unavailable|recycled|worker exited/i.test(message)) {
+      return { error: 'could not be analysed because the CAS was unavailable — retry' };
+    }
     return { error: 'could not be analysed' };
   }
   if (raw.includes('GIAC_ERROR')) {
-    return { error: 'has coefficients that could not be read' };
+    return {
+      error:
+        `has coefficients that could not be read for ${functions.join(', ')} — one of ` +
+        'those names may be reserved by the CAS; rename it',
+    };
   }
 
   const parts = splitTopLevel(stripEnclosingBrackets(raw), ',');
@@ -729,10 +765,15 @@ export async function translateOdeSystem(
     try {
       // Two calls, one copy of the text each. Asking both questions in one
       // command doubled the caller's own text: the input cap is 8,192 characters
-      // and Giac traps fatally at about 10,000, so a 7,528-character request —
-      // comfortably inside the cap — became a ~15,000-character command and
-      // killed the shared worker, where main answers the same input in 21ms.
-      // A single copy can never reach the trap, because the input cap is below it.
+      // and a long flat expression traps around 10,000, so a 7,528-character
+      // request — comfortably inside the cap — became a ~15,000-character command
+      // and killed the shared worker, where main answers it in 21ms.
+      //
+      // This RAISES the threshold; it does not remove it. The engine also traps on
+      // parse DEPTH, which no character count expresses: a condition nested 600
+      // deep is 2,415 characters and kills the worker in one copy. That is bounded
+      // in validateSystemShape, before either of these calls — saying otherwise
+      // here is what would stop the next reader from noticing.
       const written = `[${system.conditions.join(',')}]`;
       const [asExact, asWritten] = await Promise.all([
         evaluate(`exact(${written})`),
@@ -1054,7 +1095,7 @@ function readConditions(
     const [condition, fn, at, value] = parsed;
     if (!functions.includes(fn)) {
       return {
-        error: `initial condition "${condition}" names ${fn}, which the system does not solve for`,
+        error: `names ${fn} in an initial condition ("${condition}"), which it does not solve for`,
       };
     }
     const existing = values.get(fn);
