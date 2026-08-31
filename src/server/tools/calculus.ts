@@ -4,7 +4,8 @@ import { evalWithLatex } from './giac-eval.js';
 import { detectFailure } from './compute/silent-failure.js';
 import { giacEngine } from '../giac/index.js';
 import { verifyIntegrate, verifyOdeSystem } from './self-verify.js';
-import { parseOdeSystem, translateOdeSystem } from './ode-system.js';
+import { parseOdeSystem } from './ode-system-shape.js';
+import { translateOdeSystem } from './ode-system.js';
 
 function buildSimpleCommand(operation: string, args: Record<string, unknown>): string {
   switch (operation) {
