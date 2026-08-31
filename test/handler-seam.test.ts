@@ -1082,6 +1082,12 @@ describe('spellings the router has to tell apart', () => {
       ["desolve([y'=z, z'=-y+1/cos(x)], x)"],
       ["desolve([y'=z, z'=-y+1/(exp(x)+1)], x)"],
       ["desolve([y'=z, z'=-1/2*y+1/sqrt(x)], x)"],
+      // The two the DENOMINATOR rule cannot see — `has(denom(f(x)),x)` is 0 for
+      // these and 1 for the six others, so these are the whole reason a shape
+      // list exists. Without them the input reaches the engine and loses the
+      // accurate message.
+      ["desolve([y'=z, z'=-y+tanh(x)], x)"],
+      ["desolve([y'=z, z'=-y+cotan(x)], x)"],
     ])('refuses %s without trapping the engine', async (problem) => {
       const [attacker, victim] = await Promise.all([
         computeHandler({ problem }),
@@ -1226,14 +1232,22 @@ describe('spellings the router has to tell apart', () => {
       // ...while a residual that is only rounding must not be an accusation.
       // Giac answers `b^k` in the `exp(k*ln(b))` spelling, which `normal` does
       // not fold, so these leave a nonzero residual that evaluates to ~1e-15.
-      ["desolve([y'=sqrt(2)*z, z'=-sqrt(3)*y], x)"],
-      ["desolve([y'=z, z'=-y+sqrt(2)*x], x)"],
-      ["desolve([y'=z, z'=-y+2^(1/3)], x)"],
-      ["desolve([y'=z, z'=-y+2^x], x)"],
-      ["desolve([y'=z, z'=-sqrt(2)*y], x)"],
-    ])('still solves %s', async (problem) => {
+      // The emitted matrix, not just the absence of an error. These answers carry
+      // NO verdict — the residual is nonzero rounding — so `isError` was their
+      // only oracle, and two of them passed while the module solved a transposed
+      // system, which is a different set of equations entirely.
+      [
+        "desolve([y'=sqrt(2)*z, z'=-sqrt(3)*y], x)",
+        /desolve\(Y'=\[\[0,sqrt\(2\)\],\[-sqrt\(3\),0\]\]/,
+      ],
+      ["desolve([y'=z, z'=-y+sqrt(2)*x], x)", /\[\[0,1\],\[-1,0\]\]\*Y\+\[0,sqrt\(2\)\*x\]/],
+      ["desolve([y'=z, z'=-y+2^(1/3)], x)", /\[\[0,1\],\[-1,0\]\]\*Y\+\[0,2\^\(1\/3\)\]/],
+      ["desolve([y'=z, z'=-y+2^x], x)", /\[\[0,1\],\[-1,0\]\]\*Y\+\[0,2\^x\]/],
+      ["desolve([y'=z, z'=-sqrt(2)*y], x)", /desolve\(Y'=\[\[0,1\],\[-sqrt\(2\),0\]\]/],
+    ])('still solves %s', async (problem, expected) => {
       const r = await computeHandler({ problem });
       expect(r.isError).toBe(false);
+      expect(text(r)).toMatch(expected);
     });
 
     it.each([

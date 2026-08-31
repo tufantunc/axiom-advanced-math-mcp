@@ -304,6 +304,22 @@ describe('translateOdeSystem numeric domain', () => {
     expect(seen.some((e) => e.startsWith('evalf('))).toBe(false);
   });
 
+  it('refuses when the engine cannot examine the CONDITIONS for a decimal', async () => {
+    // The sibling of the test below, and split out deliberately so one failure
+    // cannot clear the other's flags — but only the matrix/forcing half was
+    // pinned. Silently clearing this one turns off MAX_CONDITION_FLOAT_DEGREE.
+    const out = await translateOdeSystem(system("[y'=z, z'=-y, y(0)=1, z(0)=0]"), 'x', {
+      evaluate: (expr: string): Promise<string> => {
+        if (expr.startsWith('[exact(')) return Promise.reject(new Error('trap'));
+        if (expr.startsWith('[max(')) return Promise.resolve('[0,0]');
+        if (expr.startsWith('size(lvar(')) return Promise.resolve('0');
+        if (expr.startsWith('exact(')) return Promise.resolve(expr.slice(6, -1));
+        return Promise.resolve('[[[0,1],[-1,0]],[0,0],[0,0]]');
+      },
+    });
+    expect('error' in out && out.error).toMatch(/initial conditions that could not be examined/);
+  });
+
   it('refuses when the engine cannot say whether a decimal is involved', async () => {
     // Not a shrug. These flags gate the accuracy bounds and the normalisation, so
     // clearing them lets the request continue with both guards silently off — and

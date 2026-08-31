@@ -830,14 +830,18 @@ export async function translateOdeSystem(
     // not generalise, which is the honest description of it; the measurement is
     // that `[y'=z, z'=-y+tan(x)]` — 21 characters, exact — traps the engine and
     // takes a concurrent caller's unrelated call with it, where main answers.
+    // Three names, not nine. Giac gives `cot`, `sec`, `csc`, `coth`, `sech` and
+    // `csch` a denominator that mentions the variable, so the rule above already
+    // refuses them and those six alternatives were unreachable — measured with
+    // `has(denom(f(x)),x)`, which is 1 for each of them and 0 for these three.
+    // A shape list should hold only the shapes nothing else catches.
+    //
     // The variable has to be IN it. Matching the function name alone refused
     // `tan(1)*x`, whose `tan(1)` is a constant, and asking `size(lvar(denom(c)))`
     // rather than whether the denominator involves the variable refused
     // `1/(a+1)` and `x/(a+b)` — all three solve, and the message told the caller
     // they had a pole in x that is not there.
-    const poleFunction = new RegExp(
-      `\\b(tan|cotan|cot|sec|csc|tanh|coth|sech|csch)\\s*\\([^)]*\\b${variable}\\b`
-    );
+    const poleFunction = new RegExp(`\\b(tan|cotan|tanh)\\s*\\([^)]*\\b${variable}\\b`);
     if (denominatorSymbols > 0 || constantEntries.some((c) => poleFunction.test(c))) {
       return {
         error:

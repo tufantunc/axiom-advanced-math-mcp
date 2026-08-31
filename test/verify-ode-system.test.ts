@@ -92,6 +92,29 @@ describe('verifyOdeSystem', () => {
     await expect(verifyOdeSystem(M, '', 'x', huge, counting)).resolves.toBeUndefined();
     expect(calls).toBe(0);
 
+    // The DEPTH half, which had no test: a depth-140 answer is 1,127 characters,
+    // well inside the 4,000, and killed the worker outright. Length alone left
+    // that shape reachable with the suite fully green.
+    const deep = `[[${'sqrt(1+'.repeat(140)}x${')'.repeat(140)},0]]`;
+    expect(deep.length).toBeLessThan(4_000);
+    await expect(verifyOdeSystem(M, '', 'x', deep, counting)).resolves.toBeUndefined();
+    expect(calls).toBe(0);
+
+    // ...and the length cap at its value, not three orders away from it: the
+    // constant was free to move anywhere in roughly [450, 6000], a band that
+    // contains the 1,127-character depth trap above.
+    const atLimit = `[[${'x+'.repeat(1996)}1x,0]]`;
+    expect(atLimit).toHaveLength(4_000);
+    await expect(verifyOdeSystem(M, '', 'x', atLimit, counting)).resolves.toMatchObject({
+      verified: true,
+    });
+    expect(calls).toBe(1);
+    calls = 0;
+    const overLimit = `[[${'x+'.repeat(1997)}1,0]]`;
+    expect(overLimit.length).toBeGreaterThan(4_000);
+    await expect(verifyOdeSystem(M, '', 'x', overLimit, counting)).resolves.toBeUndefined();
+    expect(calls).toBe(0);
+
     // Just under it, the same shape IS checked and does reach a verdict.
     const small = `[[${'x+'.repeat(100)}1,0]]`;
     await expect(verifyOdeSystem(M, '', 'x', small, counting)).resolves.toMatchObject({
