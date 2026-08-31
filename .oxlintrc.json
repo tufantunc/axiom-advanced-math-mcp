@@ -35,7 +35,8 @@
               "**/giac-eval.js",
               "**/self-verify.js",
               "**/calculus.js",
-              "**/compute/index.js"
+              "**/compute/index.js",
+              "./index.js"
             ]
           }
         ]

@@ -21,7 +21,7 @@ import { unicodeToAscii } from './unicode-normalize.js';
  *     `src/server/giac`. That is the real invariant, and only a walk of the import
  *     closure can state it — the same test does that walk, per guarded file.
  *   - An oxlint no-restricted-imports rule in .oxlintrc.json, which is a DENYLIST
- *     of five spellings and is therefore not the guarantee. It exists to fail fast,
+ *     of specifier texts and is therefore not the guarantee. It exists to fail fast,
  *     in the editor, on the imports someone is most likely to reach for. Of the 60
  *     modules under src/server/tools, 30 reach the CAS transitively and the rule
  *     names 4 of them, so 26 are unblocked. The closure walk is what catches those.
