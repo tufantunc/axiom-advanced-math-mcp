@@ -38,7 +38,7 @@ export async function exactValueHandler(args: Record<string, unknown>) {
       }
 
       case 'simplify_fraction': {
-        const fracMatch = value.match(/^(-?\d+)\s*\/\s*(-?\d+)$/);
+        const fracMatch = /^(-?\d+)\s*\/\s*(-?\d+)$/.exec(value);
         if (!fracMatch)
           return formatErrorResponse(`"${value}" is not a valid fraction (expected "a/b")`);
         let num = Number.parseInt(fracMatch[1]);

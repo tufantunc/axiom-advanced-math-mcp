@@ -120,7 +120,7 @@ async function pairedT(
   const { sample1, sample2, significance } = data;
   if (!sample1 || sample1.length < 2)
     return ['Error: paired_t requires sample1 with at least 2 values'];
-  if (!sample2 || sample2.length !== sample1.length)
+  if (sample2?.length !== sample1.length)
     return ['Error: paired_t requires sample1 and sample2 of equal length'];
 
   const diffs = sample1.map((v, i) => v - sample2[i]);

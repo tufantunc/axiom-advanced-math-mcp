@@ -89,8 +89,7 @@ export function evaluateFunction(
   const segments: PlotSegment[] = [];
   let current: PlotPoint[] = [];
 
-  for (let i = 0; i < allPoints.length; i++) {
-    const pt = allPoints[i];
+  for (const pt of allPoints) {
     if (pt === null) {
       if (current.length > 1) segments.push({ points: current });
       current = [];

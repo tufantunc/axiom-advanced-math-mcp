@@ -289,7 +289,7 @@ function parseVariableList(giacOutput: string): string[] {
   }
   // Parse [x, y, z] or list(x, y, z)
   const inner =
-    giacOutput.match(/^\[(.+)\]$/)?.[1] || giacOutput.match(/^list\((.+)\)$/)?.[1] || '';
+    /^\[(.+)\]$/.exec(giacOutput)?.[1] || /^list\((.+)\)$/.exec(giacOutput)?.[1] || '';
   return (
     inner
       .split(',')
@@ -316,9 +316,8 @@ function parseClaim(claim: string): ParsedClaim {
   // Solution check: "x=2 satisfies x^2-4=0" or "x=2 is a solution of x^2-4=0"
   // Checked BEFORE the point-evaluation pattern so claims containing "at" with
   // solution phrasing are not hijacked by the lazy at-pattern.
-  const solutionMatch = claim.match(
-    /(\w+)\s*=\s*([^,\s]+)\s+(?:satisfies|is\s+(?:a\s+)?solution\s+(?:of|to))\s+(.+)/i
-  );
+  const solutionMatch =
+    /(\w+)\s*=\s*([^,\s]+)\s+(?:satisfies|is\s+(?:a\s+)?solution\s+(?:of|to))\s+(.+)/i.exec(claim);
   if (solutionMatch) {
     return {
       type: 'solution',
@@ -329,7 +328,7 @@ function parseClaim(claim: string): ParsedClaim {
   }
 
   // Point-evaluation claim: "EXPR at x=a = b" → identity subst(EXPR, x=a) = b
-  const atMatch = claim.match(/^(.+?)\s+at\s+([A-Za-z]\w*)\s*=\s*([^=\s,]+)\s*=\s*(.+)$/i);
+  const atMatch = /^(.+?)\s+at\s+([A-Za-z]\w*)\s*=\s*([^=\s,]+)\s*=\s*(.+)$/i.exec(claim);
   if (atMatch) {
     return {
       type: 'identity',
@@ -386,7 +385,7 @@ function findMainEquals(expr: string): number {
 export async function verifyHandler(
   args: Record<string, unknown>
 ): Promise<{ content: { type: 'text'; text: string }[]; isError: boolean }> {
-  const claim = rewriteCombinatorics(unicodeToAscii(String(args.claim ?? '')));
+  const claim = rewriteCombinatorics(unicodeToAscii(typeof args.claim === 'string' ? args.claim : ''));
   const method = (args.method as string) || 'both';
   const format = args.format === 'json' ? 'json' : 'text';
 

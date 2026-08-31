@@ -35,7 +35,7 @@ export interface QuickCalcResult {
 }
 
 export class QuickCalcService {
-  private math: MathJsInstance;
+  private readonly math: MathJsInstance;
 
   constructor() {
     this.math = create(all, {});

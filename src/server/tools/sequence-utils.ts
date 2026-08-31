@@ -82,7 +82,7 @@ export function checkArithmetic(terms: number[]): SequenceResult | null {
 }
 
 export function checkGeometric(terms: number[]): SequenceResult | null {
-  if (terms.some((t) => t === 0)) return null;
+  if (terms.includes(0)) return null;
   const ratios: number[] = [];
   for (let i = 1; i < terms.length; i++) ratios.push(terms[i] / terms[i - 1]);
   const eps = 1e-9;

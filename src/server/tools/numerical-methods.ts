@@ -262,7 +262,7 @@ export async function numericalMethodsHandler(args: Record<string, unknown>) {
     }
 
     const lastLine = lines[lines.length - 1];
-    const resultMatch = lastLine.match(/(?:Root|Result)[:\s]*(.+)/);
+    const resultMatch = /(?:Root|Result)[:\s]*(.+)/.exec(lastLine);
     const mainResult = resultMatch ? resultMatch[1].trim() : lastLine;
 
     return formatToolResponse({

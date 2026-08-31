@@ -167,7 +167,7 @@ describe('http-app POST /mcp (stateless)', () => {
     const a = await post(app, { jsonrpc: '2.0', id: 10, method: 'tools/list', params: {} });
     const b = await post(app, { jsonrpc: '2.0', id: 11, method: 'tools/list', params: {} });
     expect(a.json.result.tools.length).toBeGreaterThan(0);
-    expect(b.json.result.tools.length).toBe(a.json.result.tools.length);
+    expect(b.json.result.tools).toHaveLength(a.json.result.tools.length);
   });
 
   it('answers with a complete JSON body, not a stream', async () => {

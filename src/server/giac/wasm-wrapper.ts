@@ -120,7 +120,7 @@ export class WasmGiacEngine implements GiacEngine {
     } else if (typeof giacModule.caseval === 'function') {
       _caseval = giacModule.caseval.bind(giacModule);
     } else {
-      throw new Error(
+      throw new TypeError(
         'caseval function not found in Giac WASM module.\n' +
           'Build flags: -s EXPORTED_FUNCTIONS=[\'_caseval\'] -s EXPORTED_RUNTIME_METHODS=["cwrap"]'
       );

@@ -76,7 +76,7 @@ function guessVariable(expr: string): string {
  * Extract matrix string [[...],[...]] from problem.
  */
 function extractMatrixString(problem: string): string {
-  const match = problem.match(/(\[\s*\[[\s\S]*\]\s*\])/);
+  const match = /(\[\s*\[[\s\S]*\]\s*\])/.exec(problem);
   return match ? match[1] : '';
 }
 
@@ -372,7 +372,7 @@ export function extractCombinatorics(problem: string): RouteResult {
   const trimmed = problem.trim();
 
   // C(n,k) or comb(n,k)
-  const combMatch = trimmed.match(/^[Cc](?:omb)?\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)/);
+  const combMatch = /^[Cc](?:omb)?\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)/.exec(trimmed);
   if (combMatch) {
     return {
       handler: 'combinatorics',
@@ -385,7 +385,7 @@ export function extractCombinatorics(problem: string): RouteResult {
   }
 
   // P(n,k) or perm(n,k)
-  const permMatch = trimmed.match(/^[Pp](?:erm)?\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)/);
+  const permMatch = /^[Pp](?:erm)?\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)/.exec(trimmed);
   if (permMatch) {
     return {
       handler: 'combinatorics',
@@ -471,7 +471,7 @@ export function extractProbability(problem: string): RouteResult {
   // Try to extract params as key=value pairs or positional
   const params: Record<string, number> = {};
   for (const part of parts) {
-    const kvMatch = part.match(/(\w+)\s*=\s*([\d.eE+-]+)/);
+    const kvMatch = /(\w+)\s*=\s*([\d.eE+-]+)/.exec(part);
     if (kvMatch) {
       params[kvMatch[1]] = Number.parseFloat(kvMatch[2]);
     }
