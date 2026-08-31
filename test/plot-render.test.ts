@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { plotToSvg } from '../src/server/tools/plot/render.js';
+import { evaluateFunction } from '../src/server/tools/plot/evaluator.js';
 
 describe('plotToSvg', () => {
   it('returns SVG text and the metadata describing it', () => {
@@ -36,5 +37,22 @@ describe('plotToSvg', () => {
     expect(() => plotToSvg({ expression: 'sin(x)', xMin: 5, xMax: 5 })).toThrow(
       /x_min must be less than x_max/
     );
+  });
+
+  it('escapes XML-special characters in the title', () => {
+    // The title is caller-controlled and rendered into markup — unescaped it
+    // would inject raw SVG/HTML into whatever consumes the plot.
+    const r = plotToSvg({ expression: 'x', xMin: -10, xMax: 10, title: 'a&b<c>"d"' });
+    expect(r.svg).toContain('&amp;b&lt;c&gt;&quot;d&quot;');
+    expect(r.svg).not.toContain('a&b');
+  });
+
+  it('splits the polyline at a pole instead of connecting it', () => {
+    // 5 samples over [-1, 1] hit x = 0 exactly, where 1/x overflows: the
+    // evaluator must emit the two finite runs as separate segments.
+    const r = evaluateFunction('1/x', 'x', -1, 1, 5);
+    expect(r.segments).toHaveLength(2);
+    expect(r.segments[0].points.map((p) => p.x)).toEqual([-1, -0.5]);
+    expect(r.segments[1].points.map((p) => p.x)).toEqual([0.5, 1]);
   });
 });
