@@ -31,6 +31,18 @@ describe('fourier_transform', () => {
       expect(result.content[0].text).toMatch(/4\.0+/);
     });
 
+    it('pins the magnitude line of an impulse spectrum', async () => {
+      // An impulse [1, 0, 0, 0] has a flat unit spectrum: |X| = 1 everywhere,
+      // including bin 0. This is the line the Math.hypot conversion touches.
+      const result = await fourierTransformHandler({
+        mode: 'fft',
+        data: [1, 0, 0, 0],
+        output_magnitude: true,
+      });
+      expect(result.isError).toBe(false);
+      expect(result.content[0].text).toMatch(/\[0\].*\|X\| = 1\.000000/);
+    });
+
     it('should include sample rate info when provided', async () => {
       const result = await fourierTransformHandler({
         mode: 'fft',
