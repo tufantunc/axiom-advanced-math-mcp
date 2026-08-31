@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { giacEngine } from '../src/server/giac/index.js';
 import { computeHandler } from '../src/server/tools/compute/index.js';
+import { detectFailure } from '../src/server/tools/compute/silent-failure.js';
 import { exactValueHandler } from '../src/server/tools/exact-value.js';
 
 beforeAll(async () => {
@@ -1263,6 +1264,40 @@ describe('spellings the router has to tell apart', () => {
     ])('still solves %s, which has no pole in x', async (problem) => {
       const r = await computeHandler({ problem });
       expect(r.isError).toBe(false);
+    });
+
+    it.each([
+      // The three checks the shared detector owns are delegated to it rather than
+      // re-derived here. The copy had already drifted: `detectFailure`
+      // token-matches `NaN`, `Inf` and `-Inf`, and the local version did not, so a
+      // non-finite component would have gone out as a solution.
+      ['Result: [[-Inf,0]]'],
+      ['Result: [[Inf,1]]'],
+      ['Result: [[NaN,0]]'],
+      ['Result: []'],
+      ['Result: [[undef]]'],
+      ['Result: GIAC_ERROR: bad'],
+    ])('the shared detector calls %s a failure', (displayText) => {
+      expect(detectFailure(displayText)).not.toBeNull();
+    });
+
+    it.each([
+      // ...and `infinity` stays a LOCAL check, because it is not a failure in
+      // general: these three correctly diverge, and the shared detector is right
+      // to pass them. Only a component of a solution vector being infinite is a
+      // defect, which is why the ODE path keeps its own arm.
+      ['integrate(1/x^2, x, 0, 1)'],
+      ['sum(1/n, n, 1, infinity)'],
+      ['limit(1/x, x, 0)'],
+    ])('still answers %s, whose infinity is the answer', async (problem) => {
+      const r = await computeHandler({ problem });
+      expect(r.isError).toBe(false);
+      expect(text(r)).toMatch(/infinity|\\infty/);
+    });
+
+    it('refuses an ODE whose component is infinite, which is not a solution', async () => {
+      const r = await computeHandler({ problem: "desolve([y'=z+exp(x)/x, z'=-y], x)" });
+      expect(r.isError).toBe(true);
     });
 
     it('leaves an all-exact system exact', async () => {
