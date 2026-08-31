@@ -74,7 +74,8 @@ describe('fourier_transform', () => {
         output_magnitude: false,
       });
       // Zod validation would reject this, but handler should not crash either way
-      expect(result).toBeDefined();
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('at least 2 numeric samples');
     });
   });
 });

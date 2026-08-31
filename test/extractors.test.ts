@@ -225,7 +225,10 @@ describe('Extractors', () => {
     it('should detect to_exact operation', () => {
       const result = extractExactValue('to_exact(0.333333)');
       expect(result.args.operation).toBe('to_exact');
-      expect(result.args.expression).toBe('0.333333');
+      // `value`, not `expression`: this is the field exactValueHandler reads.
+      // Pinning the extractor's old output in isolation is what let the two
+      // sides disagree — the handler crashed on undefined while this passed.
+      expect(result.args.value).toBe('0.333333');
     });
 
     it('should detect to_decimal operation', () => {
@@ -259,10 +262,17 @@ describe('Extractors', () => {
   });
 
   describe('extractSequenceIdentify', () => {
-    it('parses numeric terms and drops non-numeric junk', () => {
-      const result = extractSequenceIdentify('sequence_identify(1, x, 4, 9, 16)');
+    it('parses a clean numeric list', () => {
+      const result = extractSequenceIdentify('sequence_identify(1, 4, 9, 16)');
       expect(result.handler).toBe('sequence_identify');
       expect(result.args.terms).toEqual([1, 4, 9, 16]);
+    });
+
+    it('refuses the whole list when any term is not numeric', () => {
+      // Strict by design upstream: silently dropping junk terms made a
+      // malformed sequence look like a shorter valid one.
+      const result = extractSequenceIdentify('sequence_identify(1, x, 4, 9, 16)');
+      expect(result.args.terms).toEqual([]);
     });
   });
 });

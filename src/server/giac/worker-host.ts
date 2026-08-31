@@ -43,7 +43,11 @@ const MAX_REDISPATCHES = 2;
  * thread spawned with `--import tsx` (verified empirically).
  *
  * Note: a recycle resets Giac global state (e.g. `sto` assignments) — accepted,
- * documented in the design spec; recycling happens only on timeout/crash.
+ * documented in the design spec. Three things trigger one: a per-call timeout,
+ * a worker crash, and a fatal WASM trap, which the worker turns into a
+ * deliberate exit (see giac/fatal-trap.ts). The third is ordinary user input
+ * rather than an exceptional event, so state written earlier in the same tool
+ * call can be gone by the next evaluation.
  */
 export function createWorkerHost(opts: WorkerHostOptions = {}) {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;

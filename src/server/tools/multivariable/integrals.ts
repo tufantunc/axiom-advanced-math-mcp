@@ -1,7 +1,7 @@
 // src/server/tools/multivariable/integrals.ts
 import { evalWithLatex } from '../giac-eval.js';
 import { formatErrorResponse } from '../response-formatter.js';
-import { validateExpression } from '../symbolic/validator.js';
+import { validateExpression } from '../expression-validator.js';
 
 interface Bound {
   variable: string;

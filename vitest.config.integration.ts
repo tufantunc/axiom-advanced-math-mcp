@@ -1,17 +1,12 @@
 import { defineConfig } from 'vitest/config';
+import { INTEGRATION_TESTS } from './vitest.suites.ts';
 
 export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    include: [
-      'test/integration.test.ts',
-      'test/golden/tool.golden.test.ts',
-      'test/http-contract.test.ts',
-      'test/http-portability.test.ts',
-      'test/cli-contract.test.ts',
-    ],
+    include: INTEGRATION_TESTS,
     testTimeout: 60000,
     hookTimeout: 60000,
-  }
+  },
 });

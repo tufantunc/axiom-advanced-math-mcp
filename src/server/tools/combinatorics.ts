@@ -1,89 +1,62 @@
-import { giacEngine } from '../giac/index.js';
 import { formatToolResponse, formatErrorResponse } from './response-formatter.js';
+import { runJsCompute, type TaskName, type TaskArgs } from '../js-compute/index.js';
 
-// --- Pure-JS helpers ---
+/**
+ * Combinatorics over arbitrary-precision integers.
+ *
+ * The arithmetic lives in `js-compute/tasks.ts` and runs in a forked child with
+ * a wall-clock timeout and a heap cap. It used to run here, on the main thread,
+ * where neither axis could be bounded: a synchronous BigInt loop cannot be
+ * interrupted and exhausting the heap aborts the server. Four review rounds
+ * tried per-operation input ceilings — `factorial` alone, then the Stirling
+ * table's cell count, then n²·k, then k — and every one of them was on the wrong
+ * axis for at least one operation, rejecting cheap inputs while still admitting
+ * one that killed the process. One bound outside the process replaces all of
+ * them, and `stirling_first(20000,48)` — which aborted the server under one
+ * ceiling and was refused by the next — now simply answers.
+ *
+ * What stays here is what the worker cannot decide: which operation was asked
+ * for, and whether its arguments are the right SHAPE (an integer count, a group
+ * list that sums to n). Cost is not this file's concern any more.
+ */
+const OPERATION_TASK: Record<string, TaskName> = {
+  combinations: 'combinations',
+  permutations: 'permutations',
+  multinomial: 'multinomial',
+  stirling_first: 'stirling_first',
+  stirling_second: 'stirling_second',
+  bell_number: 'bell_number',
+  catalan_number: 'catalan_number',
+  derangements: 'derangements',
+  partition_count: 'partition_count',
+};
 
-function factorial(n: number): bigint {
-  if (n < 0) throw new Error('factorial of negative number');
-  let r = 1n;
-  for (let i = 2; i <= n; i++) r *= BigInt(i);
-  return r;
+/** Operations that additionally need `k`. */
+const NEEDS_K = new Set(['combinations', 'permutations', 'stirling_first', 'stirling_second']);
+
+function error(msg: string) {
+  return formatErrorResponse(msg);
 }
 
-function comb(n: number, k: number): bigint {
-  if (k < 0 || k > n) return 0n;
-  if (k === 0 || k === n) return 1n;
-  k = Math.min(k, n - k);
-  let r = 1n;
-  for (let i = 0; i < k; i++) {
-    r = (r * BigInt(n - i)) / BigInt(i + 1);
+/**
+ * Argument shape, not argument size.
+ *
+ * NaN is rejected here because every downstream comparison is false for it — the
+ * extractor forwards an unparsable argument as NaN so it can be reported, and
+ * without this `combinations(a,b)` answered C(NaN,NaN) = 1.
+ */
+function checkShape(operation: string, n: number, k: number | undefined): string | null {
+  if (!Number.isInteger(n) || n < 0) {
+    return `n must be a non-negative integer, got ${String(n)}`;
   }
-  return r;
-}
-
-/** Stirling numbers of the second kind S(n, k): ways to partition n items into k non-empty subsets */
-function stirling2(n: number, k: number): bigint {
-  if (k === 0) return n === 0 ? 1n : 0n;
-  if (k > n) return 0n;
-  // Explicit formula: S(n,k) = (1/k!) * sum_{j=0}^{k} (-1)^(k-j) * C(k,j) * j^n
-  let sum = 0n;
-  for (let j = 0; j <= k; j++) {
-    const sign = (k - j) % 2 === 0 ? 1n : -1n;
-    sum += sign * comb(k, j) * BigInt(j) ** BigInt(n);
-  }
-  return sum / factorial(k);
-}
-
-/** Stirling numbers of the first kind |s(n,k)|: unsigned, counts permutations of n with k cycles */
-function stirling1Unsigned(n: number, k: number): bigint {
-  if (n === 0 && k === 0) return 1n;
-  if (n === 0 || k === 0) return 0n;
-  if (k > n) return 0n;
-  // Recurrence: |s(n,k)| = (n-1)*|s(n-1,k)| + |s(n-1,k-1)|
-  // Build table bottom-up
-  const table: bigint[][] = Array.from({ length: n + 1 }, () => Array.from({ length: k + 1 }, () => 0n));
-  table[0][0] = 1n;
-  for (let i = 1; i <= n; i++) {
-    for (let j = 1; j <= k; j++) {
-      table[i][j] = BigInt(i - 1) * table[i - 1][j] + (j > 0 ? table[i - 1][j - 1] : 0n);
+  if (NEEDS_K.has(operation)) {
+    if (k === undefined) return `k is required for ${operation}`;
+    if (!Number.isInteger(k) || k < 0) {
+      return `k must be a non-negative integer, got ${String(k)}`;
     }
+    if (k > n) return `k (${k}) cannot exceed n (${n})`;
   }
-  return table[n][k];
-}
-
-/** Bell number B(n): total number of partitions of a set of n elements */
-function bellNumber(n: number): bigint {
-  // Bell triangle
-  const row: bigint[] = [1n];
-  for (let i = 1; i <= n; i++) {
-    const next: bigint[] = [row[row.length - 1]];
-    for (let j = 0; j < row.length; j++) {
-      next.push(next[j] + row[j]);
-    }
-    row.length = 0;
-    row.push(...next);
-  }
-  return row[0];
-}
-
-/** Catalan number C(n) = C(2n,n) / (n+1) */
-function catalanNumber(n: number): bigint {
-  return comb(2 * n, n) / BigInt(n + 1);
-}
-
-/** Derangements D(n): permutations with no fixed points */
-function derangements(n: number): bigint {
-  if (n === 0) return 1n;
-  if (n === 1) return 0n;
-  // D(n) = (n-1)*(D(n-1) + D(n-2))
-  let prev2 = 1n; // D(0)
-  let prev1 = 0n; // D(1)
-  for (let i = 2; i <= n; i++) {
-    const curr = BigInt(i - 1) * (prev1 + prev2);
-    prev2 = prev1;
-    prev1 = curr;
-  }
-  return prev1;
+  return null;
 }
 
 export async function combinatoricsHandler(args: Record<string, unknown>) {
@@ -92,114 +65,102 @@ export async function combinatoricsHandler(args: Record<string, unknown>) {
   const k = args.k as number | undefined;
   const groups = args.groups as number[] | undefined;
 
-  try {
-    let result: bigint;
-    let description: string;
-    let formula: string;
+  const task = OPERATION_TASK[operation];
+  if (!task) return error(`Unknown operation: ${operation}`);
 
-    switch (operation) {
-      case 'combinations': {
-        if (k === undefined) return error('k is required for combinations');
-        if (k > n) return error(`k (${k}) cannot exceed n (${n})`);
-        // Use Giac for large inputs for extra confidence; JS for verification
-        const raw = await giacEngine.evaluate(`comb(${n},${k})`);
-        const giacVal = BigInt(raw.trim().replaceAll(/[^0-9-]/g, ''));
-        result = giacVal;
-        description = `Combinations C(${n}, ${k}): choosing ${k} items from ${n} (order doesn't matter)`;
-        formula = `C(${n},${k}) = ${n}! / (${k}! · ${n - k}!)`;
-        break;
-      }
+  const shapeError = checkShape(operation, n, k);
+  if (shapeError) return error(shapeError);
 
-      case 'permutations': {
-        if (k === undefined) return error('k is required for permutations');
-        if (k > n) return error(`k (${k}) cannot exceed n (${n})`);
-        const raw = await giacEngine.evaluate(`perm(${n},${k})`);
-        result = BigInt(raw.trim().replaceAll(/[^0-9-]/g, ''));
-        description = `Permutations P(${n}, ${k}): arranging ${k} items from ${n} (order matters)`;
-        formula = `P(${n},${k}) = ${n}! / ${n - k}!`;
-        break;
-      }
-
-      case 'multinomial': {
-        const grps = groups ?? (k !== undefined ? [k, n - k] : undefined);
-        if (!grps) return error('groups array is required for multinomial');
-        const sum = grps.reduce((a, b) => a + b, 0);
-        if (sum !== n) return error(`sum of groups (${sum}) must equal n (${n})`);
-        const num = factorial(n);
-        const den = grps.reduce((acc, g) => acc * factorial(g), 1n);
-        result = num / den;
-        description = `Multinomial coefficient: ways to divide ${n} items into groups of [${grps.join(', ')}]`;
-        formula = `${n}! / (${grps.join('! · ')}!)`;
-        break;
-      }
-
-      case 'stirling_first': {
-        if (k === undefined) return error('k is required for stirling_first');
-        result = stirling1Unsigned(n, k);
-        description = `Stirling number of the first kind |s(${n},${k})|: permutations of ${n} elements with exactly ${k} cycles`;
-        formula = `|s(n,k)| via recurrence: |s(n,k)| = (n-1)·|s(n-1,k)| + |s(n-1,k-1)|`;
-        break;
-      }
-
-      case 'stirling_second': {
-        if (k === undefined) return error('k is required for stirling_second');
-        result = stirling2(n, k);
-        description = `Stirling number of the second kind S(${n},${k}): ways to partition ${n} elements into ${k} non-empty subsets`;
-        formula = `S(n,k) = (1/k!) · Σ_{j=0}^{k} (-1)^(k-j) · C(k,j) · j^n`;
-        break;
-      }
-
-      case 'bell_number': {
-        result = bellNumber(n);
-        description = `Bell number B(${n}): total number of partitions of a set of ${n} elements`;
-        formula = `B(n) = Σ_{k=0}^{n} S(n,k)  (sum of Stirling numbers of second kind)`;
-        break;
-      }
-
-      case 'catalan_number': {
-        result = catalanNumber(n);
-        description = `Catalan number C(${n}): counts balanced parentheses, BST shapes, triangulations, etc.`;
-        formula = `C(n) = C(2n,n) / (n+1) = (2n)! / ((n+1)! · n!)`;
-        break;
-      }
-
-      case 'derangements': {
-        result = derangements(n);
-        description = `Derangements D(${n}): permutations of ${n} elements with no fixed points`;
-        formula = `D(n) = (n-1)·(D(n-1) + D(n-2)),  D(0)=1, D(1)=0`;
-        break;
-      }
-
-      case 'partition_count': {
-        // Pure JS DP for integer partitions p(n): unordered sums of positive integers
-        const p = Array.from({ length: n + 1 }, () => 0n);
-        p[0] = 1n;
-        for (let k = 1; k <= n; k++) {
-          for (let i = k; i <= n; i++) {
-            p[i] = p[i] + p[i - k];
-          }
-        }
-        result = p[n];
-        description = `Partition count p(${n}): number of ways to write ${n} as an unordered sum of positive integers`;
-        formula = `DP: p[i] += p[i-k] for each k=1..n`;
-        break;
-      }
-
-      default:
-        return error(`Unknown operation: ${operation}`);
+  // Shapes the combinatorics tasks accept. The task itself is chosen at
+  // runtime from `operation`, so the call below casts: a literal-keyed generic
+  // cannot check a dynamic key. `checkShape` is what validates the pairing.
+  let taskArgs: { n: number; k?: number; groups?: number[] } = { n, k };
+  if (operation === 'multinomial') {
+    const grps = groups ?? (k !== undefined ? [k, n - k] : undefined);
+    if (!grps) return error('groups array is required for multinomial');
+    if (!grps.every((g) => Number.isInteger(g) && g >= 0)) {
+      return error(`groups must be non-negative integers, got [${grps.join(', ')}]`);
     }
+    const sum = grps.reduce((a, b) => a + b, 0);
+    if (sum !== n) return error(`sum of groups (${sum}) must equal n (${n})`);
+    taskArgs = { n, groups: grps };
+  }
 
-    const rawResult = result.toString();
-
-    return formatToolResponse({
-      result: rawResult,
-      notes: [description, `Formula: ${formula}`, `(exact integer, ${rawResult.length} digits)`],
-    });
+  let rawResult: string;
+  try {
+    rawResult = await runJsCompute(task, taskArgs as TaskArgs[TaskName]);
   } catch (err) {
-    return formatErrorResponse(err instanceof Error ? err.message : String(err));
+    // A timeout or the heap cap lands here. The message names the budget rather
+    // than the input, because there is no single input dimension to name — that
+    // is the whole reason the bound moved out of this file.
+    return error(err instanceof Error ? err.message : String(err));
+  }
+
+  return formatToolResponse({
+    result: rawResult,
+    notes: [
+      describe(operation, n, k, groups),
+      `Formula: ${formulaFor(operation, n, k, groups)}`,
+      `(exact integer, ${rawResult.length} digits)`,
+    ],
+  });
+}
+
+function describe(
+  operation: string,
+  n: number,
+  k: number | undefined,
+  groups: number[] | undefined
+): string {
+  switch (operation) {
+    case 'combinations':
+      return `Combinations C(${n}, ${String(k)}): choosing ${String(k)} items from ${n} (order doesn't matter)`;
+    case 'permutations':
+      return `Permutations P(${n}, ${String(k)}): arranging ${String(k)} items from ${n} (order matters)`;
+    case 'multinomial':
+      return `Multinomial coefficient: ways to divide ${n} items into groups of [${(groups ?? []).join(', ')}]`;
+    case 'stirling_first':
+      return `Stirling number of the first kind |s(${n},${String(k)})|: permutations of ${n} elements with exactly ${String(k)} cycles`;
+    case 'stirling_second':
+      return `Stirling number of the second kind S(${n},${String(k)}): ways to partition ${n} elements into ${String(k)} non-empty subsets`;
+    case 'bell_number':
+      return `Bell number B(${n}): total number of partitions of a set of ${n} elements`;
+    case 'catalan_number':
+      return `Catalan number C(${n}): counts balanced parentheses, BST shapes, triangulations, etc.`;
+    case 'derangements':
+      return `Derangements D(${n}): permutations of ${n} elements with no fixed points`;
+    default:
+      return `Partition count p(${n}): number of ways to write ${n} as an unordered sum of positive integers`;
   }
 }
 
-function error(msg: string) {
-  return formatErrorResponse(msg);
+function formulaFor(
+  operation: string,
+  n: number,
+  k: number | undefined,
+  groups: number[] | undefined
+): string {
+  switch (operation) {
+    case 'combinations':
+      return `C(${n},${String(k)}) = ${n}! / (${String(k)}! · ${n - (k ?? 0)}!)`;
+    case 'permutations':
+      return `P(${n},${String(k)}) = ${n}! / ${n - (k ?? 0)}!`;
+    case 'multinomial':
+      return `${n}! / (${(groups ?? []).join('! · ')}!)`;
+    case 'stirling_first':
+      return `|s(n,k)| via recurrence: |s(n,k)| = (n-1)·|s(n-1,k)| + |s(n-1,k-1)|`;
+    case 'stirling_second':
+      return `S(n,k) = (1/k!) · Σ_{j=0}^{k} (-1)^(k-j) · C(k,j) · j^n`;
+    case 'bell_number':
+      return `B(n) = Σ_{k=0}^{n} S(n,k)  (sum of Stirling numbers of second kind)`;
+    case 'catalan_number':
+      return `C(n) = C(2n,n) / (n+1) = (2n)! / ((n+1)! · n!)`;
+    case 'derangements':
+      return `D(n) = (n-1)·(D(n-1) + D(n-2)),  D(0)=1, D(1)=0`;
+    default:
+      return `DP: p[i] += p[i-k] for each k=1..n`;
+  }
 }
+
+/** The operations this handler dispatches. Read by the coverage test. */
+export const COMBINATORICS_OPERATIONS = Object.keys(OPERATION_TASK);

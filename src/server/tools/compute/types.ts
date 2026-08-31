@@ -25,6 +25,14 @@ export interface ComputeEnvelope {
   giac_command?: string;
   /** Hygiene-layer notices (e.g., "empty result", "Giac error"). */
   warnings?: string[];
+  /**
+   * For a vector answer, which function each component is.
+   *
+   * `desolve([y'=z, z'=-y], x)` returns `[[cos(x),-sin(x)]]`, which is
+   * uninterpretable without knowing that component 0 is y. The text format
+   * carried that as prose, so `--json`, `--quiet` and `--latex` dropped it.
+   */
+  components?: string[];
 }
 
 export interface RouteResult {

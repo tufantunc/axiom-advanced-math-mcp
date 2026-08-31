@@ -1,4 +1,5 @@
 import { WasmGiacEngine } from './wasm-wrapper.js';
+import { isFatalWasmTrap } from './fatal-trap.js';
 
 /**
  * Giac worker (run as a forked child process). Hosts the WASM engine off the
@@ -31,6 +32,17 @@ process.on('message', async (msg: { id: number; expr: string }) => {
     const result = await engine.evaluate(msg.expr);
     send({ type: 'result', id: msg.id, result });
   } catch (e) {
-    send({ type: 'result', id: msg.id, error: e instanceof Error ? e.message : String(e) });
+    const message = e instanceof Error ? e.message : String(e);
+    send({ type: 'result', id: msg.id, error: message });
+
+    // A WASM trap is not recoverable: the instance stays trapped and every
+    // later `_caseval` throws the same thing, so one bad expression silently
+    // kills the CAS for the life of the process while isReady() keeps
+    // reporting true. Exit instead — the host recycles on 'exit' and the next
+    // call gets a clean engine. Per-call errors (a Giac syntax error) are
+    // ordinary and must NOT take the worker down.
+    if (isFatalWasmTrap(message)) {
+      process.exit(1);
+    }
   }
 });

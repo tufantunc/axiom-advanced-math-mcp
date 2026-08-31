@@ -1,6 +1,7 @@
 import { giacEngine } from '../giac/index.js';
-import { formatToolResponse, formatErrorResponse } from './response-formatter.js';
-import { erf } from './stats-utils.js';
+import { splitTopLevel } from './output-cleanup.js';
+import { formatToolResponse, formatErrorResponse, inBandFailure } from './response-formatter.js';
+import { erf, lgamma, lchoose, sumLogTerms } from './stats-utils.js';
 
 function combinations(n: number, k: number): number {
   if (k < 0 || k > n) return 0;
@@ -12,6 +13,20 @@ function combinations(n: number, k: number): number {
   }
   return result;
 }
+
+/**
+ * Bounds the discrete count parameters (n, k, N, K).
+ *
+ * These are plain-double loops on the main thread, where the Giac worker timeout
+ * cannot reach them. The cdf sums used to be quadratic — a fresh `combinations`
+ * or `factorial` per term — and no product of the parameter names could bound
+ * all three: poisson has no `n` at all, and hypergeometric's cost is driven by
+ * `K`. They are recurrences now, O(k) with one multiply per step, so the sums
+ * need no ceiling: the worst measured case went from 11.3s to 0ms.
+ *
+ * This ceiling remains only to keep a count from being absurd on its face.
+ */
+const MAX_COUNT = 100_000;
 
 function factorial(n: number): number {
   let result = 1;
@@ -32,18 +47,25 @@ async function handleGiacDistOps(
   headerLines: string[]
 ): Promise<CalcResult | null> {
   const { x, p } = params;
+
+  // A probability is a number. Giac keeps these exact unless asked otherwise,
+  // so the density of χ²(3) at 2 came back as `√2/exp(1)/(1/2*√pi*2*√2)` and
+  // Student-t(5) at 2 as `2/(3/4*√pi)/√(5*pi)*125/729` — both correct, neither
+  // an answer a caller can use.
+  const decimal = (expr: string): string => `evalf(${expr},12)`;
+
   if (op === 'quantile') {
     if (p === undefined) return { lines: [...headerLines, 'Error: quantile requires param p'] };
-    const val = await giacEngine.evaluate(giacIcdf.replace('${p}', String(p)));
+    const val = await giacEngine.evaluate(decimal(giacIcdf.replace('${p}', String(p))));
     return { lines: [...headerLines, `P(X ≤ x) = ${p} → x = ${val.trim()}`] };
   }
   if (x === undefined) return { lines: [...headerLines, 'Error: pmf/cdf requires param x'] };
   if (op === 'pmf') {
-    const val = await giacEngine.evaluate(giacPdf.replace('${x}', String(x)));
+    const val = await giacEngine.evaluate(decimal(giacPdf.replace('${x}', String(x))));
     return { lines: [...headerLines, `f(${x}) = ${val.trim()}`] };
   }
   if (op === 'cdf') {
-    const val = await giacEngine.evaluate(giacCdf.replace('${x}', String(x)));
+    const val = await giacEngine.evaluate(decimal(giacCdf.replace('${x}', String(x))));
     return { lines: [...headerLines, `P(X ≤ ${x}) = ${val.trim()}`] };
   }
   return null;
@@ -84,18 +106,24 @@ function binomial(op: string, params: Record<string, number>): CalcResult {
     const prob = combinations(n, k) * Math.pow(p, k) * Math.pow(q, n - k);
     lines.push(`P(X = ${k}) = C(${n},${k}) × ${p}^${k} × ${q}^${n - k}`);
     lines.push(`P(X = ${k}) = ${prob}`);
-    lines.push(`E[X] = ${ev}, Var(X) = ${variance}`);
+    lines.push(`E[X] = ${ev}`);
+    lines.push(`Var(X) = ${variance}`);
     return { lines };
   }
 
   if (op === 'cdf') {
-    let cumProb = 0;
-    for (let i = 0; i <= k; i++) {
-      cumProb += combinations(n, i) * Math.pow(p, i) * Math.pow(q, n - i);
-    }
+    // Summed in log space. Recomputing `combinations(n, i)` per term was O(n·k)
+    // — 9.8s of blocked event loop at n = k = 100000 — and a running-term
+    // recurrence cannot start when its first term underflows: `0.5^100000` is 0,
+    // so every later term was 0 and the answer came out 0 for a probability of 1.
+    const cumProb =
+      k >= n
+        ? 1
+        : sumLogTerms(k, (i) => lchoose(n, i) + i * Math.log(p) + (n - i) * Math.log1p(-p));
     lines.push(`P(X ≤ ${k}) = Σ P(X=i) for i=0..${k}`);
     lines.push(`P(X ≤ ${k}) = ${cumProb}`);
-    lines.push(`E[X] = ${ev}, Var(X) = ${variance}`);
+    lines.push(`E[X] = ${ev}`);
+    lines.push(`Var(X) = ${variance}`);
     return { lines };
   }
 
@@ -188,10 +216,10 @@ function poisson(op: string, params: Record<string, number>): CalcResult {
   }
 
   if (op === 'cdf') {
-    let cumProb = 0;
-    for (let i = 0; i <= k; i++) {
-      cumProb += (Math.exp(-lambda) * Math.pow(lambda, i)) / factorial(i);
-    }
+    // Summed in log space. The factorial-per-term form was O(k²) — 4.5s at
+    // k = 100000 — and had no `n` for a product-based ceiling to read, so the
+    // guard meant to bound it never fired.
+    const cumProb = sumLogTerms(k, (i) => -lambda + i * Math.log(lambda) - lgamma(i + 1));
     lines.push(`P(X ≤ ${k}) = ${cumProb}`);
     return { lines };
   }
@@ -282,10 +310,13 @@ function hypergeometric(op: string, params: Record<string, number>): CalcResult 
   }
 
   if (op === 'cdf') {
-    let cumProb = 0;
-    for (let i = 0; i <= k; i++) {
-      cumProb += (combinations(K, i) * combinations(N - K, n - i)) / combinations(N, n);
-    }
+    // Summed in log space. Three `combinations` calls per term made this the
+    // dearest of the three cdfs — 11.3s — and its cost is driven by K, which no
+    // product of n and k expressed.
+    const cumProb =
+      k >= Math.min(n, K)
+        ? 1
+        : sumLogTerms(k, (i) => lchoose(K, i) + lchoose(N - K, n - i) - lchoose(N, n));
     lines.push(`P(X ≤ ${k}) = ${cumProb}`);
     lines.push(`E[X] = ${ev}`);
     return { lines };
@@ -313,7 +344,11 @@ async function chiSquare(op: string, params: Record<string, number>): Promise<Ca
   const distResult = await handleGiacDistOps(
     op,
     params,
-    `chisquare(\${x},${df})`,
+    // Giac's density takes the degrees of freedom first, as the cdf and icdf
+    // lines below already do. Reversed, `chi_square(df=3, x=2)` evaluated
+    // `chisquare(2,3)` = 0.1116 — the density of χ²(2) at 3 — and reported it
+    // as the density of χ²(3) at 2, which is 0.2076.
+    `chisquare(${df},\${x})`,
     `chisquare_cdf(${df},\${x})`,
     `chisquare_icdf(${df},\${p})`,
     lines
@@ -433,7 +468,8 @@ function exponentialDist(op: string, params: Record<string, number>): CalcResult
   if (x === undefined) return { lines: ['Error: pmf/cdf requires param x'] };
   if (op === 'pmf') {
     const pdf = lambda * Math.exp(-lambda * x);
-    lines.push(`f(${x}) = λ×e^(-λx) = ${pdf}`);
+    lines.push(`f(x) = λ×e^(-λx)`);
+    lines.push(`f(${x}) = ${pdf}`);
     return { lines };
   }
   if (op === 'cdf') {
@@ -444,10 +480,88 @@ function exponentialDist(op: string, params: Record<string, number>): CalcResult
   return { lines };
 }
 
+/**
+ * The density/mass branch is implemented under the name `pmf`, and nothing
+ * branches on `pdf` — so a query carrying `pdf`, or no operation at all, fell
+ * past every branch and returned only the header line: `normal(mu=0, sigma=1,
+ * x=1)` answered "Normal(μ=0, σ=1)" instead of the density at 1, isError:false.
+ *
+ * The extractor now emits `pmf` directly. `pdf` is kept as an alias because it
+ * is the standard name for the continuous case and a caller invoking this
+ * handler directly may well use it.
+ */
+function densityOrGiven(op: string | undefined): string {
+  return op === undefined || op === 'pdf' ? 'pmf' : op;
+}
+
+/**
+ * The line carrying the answer to the operation that was actually asked for.
+ *
+ * The headline used to be `lines[lines.length - 1]` — whatever a branch happened
+ * to push last. Once the pdf->pmf alias made the density branches reachable that
+ * became the trailing note rather than the value: `normal(mu=0, sigma=1, x=1)`
+ * answered "1" (the z-score) for a density of 0.2419707, and
+ * `binomial(n=10, p=0.5, k=3)` answered "5, Var(X) = 2.5" for a mass of
+ * 0.1171875. A plausible wrong number is worse than the header-only non-answer
+ * it replaced.
+ *
+ * Each branch pushes its formula first and its value second, so scan backwards
+ * and take the last line matching the operation's own shape.
+ */
+const ANSWER_LINE: Record<string, RegExp> = {
+  pmf: /^(f\(|P\(X = )/,
+  cdf: /^P\(X \u2264 /,
+  expected_value: /^E\[X\]/,
+  variance: /^Var\(X\)/,
+  quantile: /\u2192 x = /,
+};
+
+/**
+ * The value on a `label = value` line.
+ *
+ * The old strip cut at the FIRST `=` or `:`, which for `P(X = 3) = 0.1171875`
+ * sits inside the label — so the headline read "3) = 0.1171875". Split on
+ * top-level separators only and take the last part.
+ */
+function valueOf(line: string): string {
+  // The erf fallback (used when Giac is unavailable) writes `P(X ≤ 1) ≈ 0.84`,
+  // which has no top-level `=` — so both branches fell through and the whole
+  // labelled line became the answer.
+  const parts = splitTopLevel(line.replace('≈', '='), '=');
+  if (parts.length > 1) return parts[parts.length - 1].trim();
+  return line.replace(/^[^:]*:\s*/, '').trim();
+}
+
+function answerLine(op: string, lines: string[]): string | null {
+  const shape = ANSWER_LINE[op];
+  if (!shape) return lines[lines.length - 1];
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (shape.test(lines[i])) return lines[i];
+  }
+  // No line of the right shape means the branch was never written — several
+  // distributions implement pmf/cdf and fall through to `return { lines }` for
+  // anything else. Falling back to the last line handed back the
+  // `Distribution: ...` header as the answer, which is the header-as-answer bug
+  // this function exists to remove.
+  return null;
+}
+
 export async function probabilityCalcHandler(args: Record<string, unknown>) {
   const dist = args.distribution as string;
-  const op = args.operation as string;
+  const op = densityOrGiven(args.operation as string | undefined);
   const params = args.params as Record<string, number>;
+
+  // Each distribution reads these with a default (`params.sigma ?? 1`), so a
+  // value that is not a number would silently become the default rather than a
+  // reported problem.
+  for (const [key, value] of Object.entries(params ?? {})) {
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      return formatErrorResponse(`${key} must be a finite number, got ${String(value)}`);
+    }
+    if (['n', 'k', 'N', 'K'].includes(key) && Math.abs(value) > MAX_COUNT) {
+      return formatErrorResponse(`${key} is limited to ${MAX_COUNT}, got ${value}`);
+    }
+  }
 
   try {
     let result: CalcResult;
@@ -487,7 +601,36 @@ export async function probabilityCalcHandler(args: Record<string, unknown>) {
         result = { lines: [`Error: Unknown distribution: ${dist}`] };
     }
 
-    const mainResult = result.lines[result.lines.length - 1].replace(/^[^=:]*[=:]\s*/, '');
+    // These functions signal a validation failure by returning an `Error: ...`
+    // line, which formatToolResponse ships with isError:false — so
+    // `beta(a=2, b=3, x=0.5)` answered "The answer is beta requires params
+    // alpha and beta" as a SUCCESS, which an LLM caller reads as a result.
+    //
+    // Test the LAST line, not a one-line array: handleGiacDistOps prepends the
+    // `Distribution: ...` header to its errors, so chi_square, student_t,
+    // f_distribution and beta never produced a single-line failure and kept
+    // reporting `chi_square(df=3)` as "The answer is pmf/cdf requires param x".
+    //
+    // These functions should return a discriminated outcome rather than prose
+    // plus a convention; until they do, each entry point enforces it. The same
+    // convention is honoured in numerical-methods.ts.
+    const failure = inBandFailure(result.lines);
+    if (failure) return formatErrorResponse(failure);
+
+    const answer = answerLine(op, result.lines);
+    if (answer === null) {
+      return formatErrorResponse(`${dist} does not implement ${op}`);
+    }
+    const mainResult = valueOf(answer);
+
+    // A numeric branch that overflowed or divided by zero used to report its
+    // NaN as the answer with isError:false — `poisson(lambda=2, k=1e9)` said
+    // "The answer is NaN", and `normal(mu=0, sigma=0, x=1)` said "Infinity".
+    if (/^-?(NaN|Infinity)$|^undefined\b/.test(mainResult)) {
+      return formatErrorResponse(
+        `${dist} ${op} is not defined for these parameters (computed ${mainResult})`
+      );
+    }
     return formatToolResponse({
       result: mainResult,
       notes: result.lines,

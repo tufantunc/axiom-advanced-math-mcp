@@ -41,8 +41,8 @@ async function readStdin(): Promise<string> {
  * Also enforces the same input-length cap the MCP surface's zod schemas apply
  * (`MAX_EXPRESSION_LENGTH`). The CLI calls the tool handlers directly rather
  * than through the MCP SDK's schema validation, so that cap has to be
- * enforced here — the mathjs evaluation path runs synchronously on the event
- * loop with no timeout, and input length is its only bound.
+ * enforced here — evaluation is bounded out of process, but the preprocessing
+ * and routing an expression goes through first run on the event loop.
  */
 async function resolveInput(positional: string | undefined, label: string): Promise<string> {
   let value: string;
@@ -131,7 +131,7 @@ async function runVerify(cmd: VerifyCommand): Promise<number> {
 async function runPlot(cmd: PlotCommand): Promise<number> {
   const expression = await resolveInput(cmd.expression, 'expression');
 
-  const result = plotToSvg({
+  const result = await plotToSvg({
     expression,
     ...(cmd.variable !== undefined ? { variable: cmd.variable } : {}),
     ...(cmd.xMin !== undefined ? { xMin: cmd.xMin } : {}),
@@ -177,8 +177,9 @@ async function runPlot(cmd: PlotCommand): Promise<number> {
  * Runs one subcommand and returns the process exit code.
  *
  * Giac is initialised here rather than at import time so `--help` and
- * `--version` do not pay for a worker fork they never use. `plot` is mathjs
- * only, so it skips the engine entirely.
+ * `--version` do not pay for a worker fork they never use. `plot` skips the CAS
+ * engine entirely — it still forks the js-compute child, which is where its
+ * sampling runs.
  */
 export async function runCommand(
   cmd: ComputeCommand | VerifyCommand | PlotCommand

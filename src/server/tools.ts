@@ -1,5 +1,5 @@
 import { withGiacSession } from './giac/session-lock.js';
-import { evaluationCache } from './tools/symbolic/cache.js';
+import { evaluationCache } from './giac/cache.js';
 import { computeHandler } from './tools/compute/index.js';
 import { verifyHandler } from './tools/verify/index.js';
 
@@ -24,7 +24,7 @@ import { verifyHandler } from './tools/verify/index.js';
  * the session being discarded — the reset alone isn't enough, because the
  * cache is a second, structurally separate state-leak channel. It is keyed on
  * the Giac expression string alone (see `isCacheable` in
- * tools/symbolic/cache.ts), so an entry computed while `sto(7,qq)` was in
+ * giac/cache.ts), so an entry computed while `sto(7,qq)` was in
  * effect would otherwise be served to a later caller running against a
  * pristine engine — the same silent wrong answer the reset exists to
  * prevent, arriving through the cache instead of the worker.

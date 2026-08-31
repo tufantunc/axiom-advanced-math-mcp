@@ -263,8 +263,9 @@ describe('Router', () => {
       const result = route('binomial(n=10, p=0.5, x=3, cdf)');
       expect(result.handler).toBe('probability');
       expect(result.args.distribution).toBe('binomial');
-      expect(result.args.params.n).toBe(10);
-      expect(result.args.params.p).toBe(0.5);
+      const params = result.args.params as Record<string, number>;
+      expect(params.n).toBe(10);
+      expect(params.p).toBe(0.5);
       expect(result.args.x).toBe(3);
     });
 
@@ -366,6 +367,186 @@ describe('Router', () => {
     it('should prefer system solver over single solve for multiple equations', () => {
       const result = route('x+y=5; x-y=1');
       expect(result.handler).toBe('solve_system');
+    });
+  });
+});
+
+describe('solve_equation precedence: `=` at depth 0, not `=` anywhere', () => {
+  // The solve rule sits second, so it hand-listed every LATER rule's
+  // verbs to avoid stealing their input. That list went stale: any call whose
+  // argument was NAMED (`gradient(f = x*y, ...)`) contains an `=`, matched the
+  // solve rule, and was routed to solve_equation — a confident answer from the
+  // wrong handler. Testing for a top-level `=` distinguishes an equation from a
+  // call with keyword arguments structurally, so the lists are gone.
+
+  describe('a named argument does not make a call an equation', () => {
+    const cases: [string, string][] = [
+      ['gradient(f = x*y, [x,y])', 'multivariable'],
+      ['critical_points(f = x^2+y^2, [x,y])', 'multivariable'],
+      ['tangent_plane(z = x^2+y^2, [x,y], [1,1])', 'multivariable'],
+      ['fourier(f = sin(t), t)', 'fourier'],
+      ['linear_regression(y = a*x+b, [[1,2],[2,3]])', 'linear_regression'],
+      ['sequence(a_n = 2*n+1)', 'sequence_identify'],
+      ['normal(mu=0, sigma=1, x=1)', 'probability'],
+      ['t_test(mu0=5, data=[1,2,3])', 'hypothesis_testing'],
+      ['taylor(exp(x), x=0, 5)', 'calculus'],
+      // 'binomial' is a distribution name here, so probability owns it — that is
+      // pre-existing and unchanged; pinned so the named-argument fix is not
+      // mistaken for having moved it.
+      ['binomial(n=10, k=3)', 'probability'],
+    ];
+    it.each(cases)('%s -> %s', (problem, handler) => {
+      expect(route(problem).handler).toBe(handler);
+    });
+
+    it('extracts the same arguments with and without the named argument', () => {
+      // Routing alone is not the payoff: the label has to come off the
+      // expression too, or the handler passes `f = x*y` to Giac whole and
+      // answers `[0,0]=[y,x]` instead of `[y,x]` — a confident wrong answer
+      // from the right handler.
+      const named: [string, string][] = [
+        ['gradient(f = x*y, [x,y])', 'gradient(x*y, [x,y])'],
+        ['critical_points(f = x^2+y^2, [x,y])', 'critical_points(x^2+y^2, [x,y])'],
+        ['tangent_plane(z = x^2+y^2, [x,y], [1,1])', 'tangent_plane(x^2+y^2, [x,y], [1,1])'],
+      ];
+      for (const [withLabel, plain] of named) {
+        expect(route(withLabel), withLabel).toEqual(route(plain));
+      }
+    });
+
+    it('strips the label only from a bare identifier, not from an equation', () => {
+      // `x^2 = 4` must not become `4`; the strip requires an identifier.
+      expect(route('solve(x^2 = 4, x)').args.equation).toBe('x^2 = 4');
+    });
+
+    it('a named argument nested deeper than one level also stays with its handler', () => {
+      expect(route('critical_points(f = max(x*y, 1), [x,y])').handler).toBe('multivariable');
+    });
+  });
+
+  describe('a top-level = is still an equation to solve', () => {
+    const cases: [string, string][] = [
+      ['x^2-4=0', 'solve_equation'],
+      ['solve(x^2=4,x)', 'solve_equation'],
+      ['csolve(x^2+1=0,x)', 'solve_equation'],
+      ['sum(k,k,1,n) = 55', 'solve_equation'],
+      ['x = 5 choose 2', 'solve_equation'],
+      ['x^2 >= 4', 'solve_equation'],
+    ];
+    it.each(cases)('%s -> %s', (problem, handler) => {
+      expect(route(problem).handler).toBe(handler);
+    });
+
+    it('keeps the whole equation rather than dropping the right-hand side', () => {
+      // Previously `diff(...) = 5` matched the verb exclusion list and went to
+      // calculus, which extracted only the derivative and silently discarded
+      // `= 5` — answering "what is the derivative" for a question that asked
+      // "where does the derivative equal 5".
+      const r = route('diff(x^3, x) = 5');
+      expect(r.handler).toBe('solve_equation');
+      expect(r.args.equation).toBe('diff(x^3, x) = 5');
+    });
+  });
+
+  describe('depth analysis only applies to balanced input', () => {
+    // splitTopLevel tracks bracket depth, so on unbalanced input depth is
+    // meaningless. Those route as equations on purpose: solve_equation's
+    // handler runs validateExpression and reports the unclosed bracket. Letting
+    // them fall through to the raw-Giac fallback produced `Result: f` for the
+    // typo `f(x=1` — a silent wrong answer, which is worse than a parse error.
+    const unbalanced = ['f(x=1', '[a=1', '((x=1)', 'a)=b'];
+    it.each(unbalanced)('%s routes to the handler that validates brackets', (problem) => {
+      expect(route(problem).handler).toBe('solve_equation');
+    });
+
+    it('comparison operators count as a top-level equation', () => {
+      // `>=`/`<=`/`!=` contain '=' at depth 0; they routed to solve_equation
+      // before this change and still do.
+      for (const p of ['x>=4', 'x<=4', 'x!=4', 'x==4']) {
+        expect(route(p).handler, p).toBe('solve_equation');
+      }
+    });
+  });
+
+  describe('precedence that must survive', () => {
+    it('systems still beat single-equation solve', () => {
+      expect(route('[x+y=3, x-y=1]').handler).toBe('solve_system');
+      expect(route('x+y=5; x-y=1').handler).toBe('solve_system');
+    });
+
+    it('ODEs still beat single-equation solve', () => {
+      // solve_ode sits below this rule, so its exclusion stays explicit.
+      // Assert the operation, not just the handler: differentiate, integrate,
+      // limit, taylor and solve_ode all extract to handler 'calculus', so the
+      // handler alone cannot tell "routed to solve_ode" from "routed anywhere
+      // else in calculus".
+      for (const p of ["y' = x^2 + y", 'dy/dx = x']) {
+        const r = route(p);
+        expect(r.handler, p).toBe('calculus');
+        expect(r.args.operation, p).toBe('solve_ode');
+      }
+    });
+
+    it.each([
+      // A list-form ODE system has the same shape as an algebraic system, and
+      // rule 1 claims bracketed lists — so `[y'=z, z'=-y]`, the form this
+      // project's own docs use, went to solve_system and was answered `(0, 0)`
+      // with a check mark. The ODE decline had been added to rule 2 only.
+      ["[y'=z, z'=-y]"],
+      ["[a'=b, b'=-a]"],
+      ["[y'=z, z'=-y, y(0)=1, z(0)=0]"],
+      ['[dy/dt=z, dz/dt=-y]'],
+    ])('routes the list-form ODE system %s to solve_ode', (problem) => {
+      expect(route(problem).args.operation).toBe('solve_ode');
+    });
+
+    it.each([
+      // ...without taking algebraic systems with it.
+      ['[x+y=3, x-y=1]'],
+      ['[2*a+b=5, a-b=1]'],
+      ["solve_system([y'=z, z'=-y])"],
+    ])('leaves %s with solve_system', (problem) => {
+      expect(route(problem).args.operation).not.toBe('solve_ode');
+    });
+
+    it.each([
+      // A quoted Giac string ends in `<identifier>'`, which is otherwise
+      // indistinguishable from a derivative. Position separates them: a prime
+      // with an EVEN number of quotes before it is not inside a string. The
+      // multi-word case matters because the exclusion was first written as "not
+      // preceded by a quote", which `'a b'` walks straight past.
+      ["to_decimal({a: zeros(20000,20000,'sparse')})", 'to_decimal'],
+      ["zeros(3,3,'sparse')", undefined],
+      ["purge('a b')", undefined],
+    ])('does not read the quoted string in %s as a derivative', (problem, expected) => {
+      expect(route(problem).args.operation).not.toBe('solve_ode');
+      if (expected) expect(route(problem).args.operation).toBe(expected);
+    });
+
+    it.each([
+      // A Leibniz quotient counts only where a derivative can stand. This rule
+      // sits above factor and simplify, so matched anywhere it outranked an
+      // explicitly named verb and returned a raw GIAC_ERROR as a successful
+      // answer.
+      ['simplify(dv/dt*m)', 'simplify'],
+      ['factor(da/db)', 'factor'],
+    ])('leaves %s with its named verb', (problem, expected) => {
+      expect(route(problem).args.operation).toBe(expected);
+    });
+
+    it('second-order ODEs still reach solve_ode', () => {
+      // looksLikeOde matches these via /y'/ because `y''` contains `y'`. That
+      // subsumption is why the separate second-order pattern was dropped, so it
+      // needs pinning: narrowing looksLikeOde to first-order would otherwise
+      // send these to solve_equation with every test still green.
+      for (const p of ["y'' + y = 0", "y'' - 3*y' + 2*y = 0"]) {
+        expect(route(p).args.operation, p).toBe('solve_ode');
+      }
+    });
+
+    it('the numeric domain hint still overrides to numerical_methods', () => {
+      expect(route('solve(x^2=4,x)', 'numeric').handler).toBe('numerical_methods');
+      expect(route('x^2-4=0', 'numeric').handler).toBe('numerical_methods');
     });
   });
 });

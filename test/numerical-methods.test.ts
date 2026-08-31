@@ -77,7 +77,9 @@ describe('numerical_methods', () => {
         tolerance: 1e-8,
         max_iterations: 50,
       });
-      expect(result.isError).toBe(false);
+      // Was `isError: false` with the failure text as the answer — the caller
+      // read "Bisection requires a sign change in [x0, x1]" as the root.
+      expect(result.isError).toBe(true);
       expect(allText(result)).toContain('same sign');
     });
   });
@@ -139,4 +141,83 @@ describe('numerical_methods', () => {
       expect(allText(result)).toContain('0.25');
     });
   });
+
+  describe('a symbolic Giac reply is not a value', () => {
+    it('refuses an expression that does not depend on the variable of integration', async () => {
+      // `evalf(subst(1-cos(y),x=2))` comes back as the symbolic "1.0-cos(y)".
+      // parseFloat reads its leading term, so this answered "Result = 1" — a
+      // confident wrong answer from the same laundering that produced p = 0.0000
+      // in the hypothesis tests. giacNumber requires the whole reply to be one
+      // numeric literal.
+      const r = await numericalMethodsHandler({
+        method: 'numerical_integration',
+        expression: '1-cos(y)',
+        variable: 'x',
+        lower_bound: 0,
+        upper_bound: 1,
+      });
+      expect(r.isError).toBe(true);
+      // The specific regression: it answered "Result = 1".
+      expect(allText(r)).not.toMatch(/Result = 1\b/);
+      expect(allText(r)).toMatch(/1\.0-cos\(y\)/);
+    });
+
+    it('still integrates an expression that does depend on it', async () => {
+      const r = await numericalMethodsHandler({
+        method: 'numerical_integration',
+        expression: 'x^2',
+        variable: 'x',
+        lower_bound: 0,
+        upper_bound: 1,
+      });
+      expect(r.isError).toBe(false);
+      expect(allText(r)).toMatch(/0\.333/);
+    });
+  });
+
+  describe('romberg refuses a non-numeric CAS reply', () => {
+    it('does not ship unevaluated Giac as the integral', async () => {
+      // This left the null case on the SUCCESS path: 132KB of unevaluated Giac
+      // arrived as `final_result` on exit 0, while numerical_integration errored
+      // on the same input class twelve lines away.
+      const r = await numericalMethodsHandler({
+        method: 'romberg_integration',
+        expression: 'zzz(x)',
+        variable: 'x',
+        lower_bound: 0,
+        upper_bound: 1,
+      });
+      expect(r.isError).toBe(true);
+      expect(allText(r)).toMatch(/could not evaluate/);
+      expect(allText(r).length).toBeLessThan(600);
+    });
+
+    it('still integrates a well-defined expression', async () => {
+      const r = await numericalMethodsHandler({
+        method: 'romberg_integration',
+        expression: 'x^2',
+        variable: 'x',
+        lower_bound: 0,
+        upper_bound: 1,
+      });
+      expect(r.isError).toBe(false);
+      expect(allText(r)).toMatch(/0\.333/);
+    });
+
+    it('reports an overflowing integral rather than calling it unevaluable', async () => {
+      // giacNumber treats a literal beyond double range as a VALUE. Rejecting it
+      // said "Cannot evaluate exp(x) at x=800" while quoting the value Giac
+      // returned for exactly that.
+      const r = await numericalMethodsHandler({
+        method: 'numerical_integration',
+        expression: 'exp(x)',
+        variable: 'x',
+        lower_bound: 0,
+        upper_bound: 800,
+      });
+      expect(r.isError).toBe(false);
+      expect(allText(r)).toMatch(/Infinity/);
+    });
+  });
 });
+

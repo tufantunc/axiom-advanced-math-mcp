@@ -1,5 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { splitTopLevel, stripQuotes, stripOrderTerm, listToSet } from '../src/server/tools/output-cleanup.js';
+import {
+  splitTopLevel,
+  stripQuotes,
+  stripOrderTerm,
+  listToSet,
+  stripDisplayMode,
+  parseComplexTerm,
+  parseComplexList,
+  giacNumber,
+} from '../src/server/tools/output-cleanup.js';
 
 describe('splitTopLevel', () => {
   it('splits at top-level separator only', () => {
@@ -71,3 +80,161 @@ describe('listToSet', () => {
     expect(listToSet('x^2+1')).toBe('x^2+1');
   });
 });
+
+describe('stripDisplayMode', () => {
+  // Tested on literals, not through a CAS call: the bundled Giac returns
+  // \frac for simple fractions, so a live-path test cannot supply this
+  // function's input and would assert an empty set.
+  it('rewrites \\dfrac to \\frac', () => {
+    expect(stripDisplayMode('\\dfrac{2}{17}')).toBe('\\frac{2}{17}');
+  });
+
+  it('removes \\displaystyle and \\textstyle along with trailing space', () => {
+    expect(stripDisplayMode('\\displaystyle x^2')).toBe('x^2');
+    expect(stripDisplayMode('\\textstyle   y')).toBe('y');
+  });
+
+  it('handles several wrappers in one string', () => {
+    expect(stripDisplayMode('\\displaystyle \\dfrac{1}{2}+\\dfrac{1}{3}')).toBe(
+      '\\frac{1}{2}+\\frac{1}{3}'
+    );
+  });
+
+  it('leaves already-normalized LaTeX untouched', () => {
+    expect(stripDisplayMode('\\frac{2}{17}')).toBe('\\frac{2}{17}');
+  });
+
+  it('does not touch \\dfracsomething (word-boundary anchored)', () => {
+    expect(stripDisplayMode('\\dfracx')).toBe('\\dfracx');
+  });
+});
+
+describe('parseComplexTerm', () => {
+  // Literal-level, because this is where the bug hid: the parser was private to
+  // fourier-transform.ts and reachable only through a live Giac call, so its
+  // edge cases were whatever that one call happened to emit. Giac writes a unit
+  // coefficient as a bare `i`, and every asserted fixture happened to use the
+  // explicit `2.0*i` form instead.
+  const values: [string, number, number][] = [
+    ['10.0', 10, 0],
+    ['-2.0', -2, 0],
+    ['0', 0, 0],
+    ['-2.0+2.0*i', -2, 2],
+    ['-2.0-2.0*i', -2, -2],
+    ['2.0*i', 0, 2],
+    ['-2.0*i', 0, -2],
+    ['i', 0, 1],
+    ['-i', 0, -1],
+    ['+i', 0, 1],
+    ['2.0-i', 2, -1],
+    ['3+i', 3, 1],
+    ['-3-i', -3, -1],
+    ['1e-3+2e4*i', 1e-3, 2e4],
+    ['.5-.5*i', 0.5, -0.5],
+  ];
+  it.each(values)('%s -> %f %+fi', (term, re, im) => {
+    expect(parseComplexTerm(term)).toEqual({ re, im });
+  });
+
+  it('parses the exponent form Giac emits for a near-zero real part', () => {
+    const r = parseComplexTerm('6.12323399574e-17-i');
+    expect(r.im).toBe(-1);
+    expect(r.re).toBeCloseTo(0, 15);
+  });
+
+  it('throws rather than inventing a number', () => {
+    // giacEngine.evaluate RESOLVES with "GIAC_ERROR: ..." instead of rejecting,
+    // and that string contains an `i` (in "Invalid"). Defaulting to zero turned
+    // a CAS error into a confident fabricated bin.
+    for (const bad of [
+      'GIAC_ERROR: Error: Invalid dimension',
+      'undef',
+      'inf',
+      '1/2+i',
+      'sqrt(2)*i',
+      '',
+    ]) {
+      expect(() => parseComplexTerm(bad), bad).toThrow();
+    }
+  });
+});
+
+describe('parseComplexList', () => {
+  it('returns one entry per element, not one per pair', () => {
+    // Reading the list with parseFloat and pairing the results as (re, im)
+    // halved the bin count and truncated each `a+b*i` at the `+`.
+    expect(parseComplexList('[10.0,-2.0+2.0*i,-2.0,-2.0-2.0*i]')).toEqual([
+      { re: 10, im: 0 },
+      { re: -2, im: 2 },
+      { re: -2, im: 0 },
+      { re: -2, im: -2 },
+    ]);
+  });
+
+  it('handles an empty list', () => {
+    expect(parseComplexList('[]')).toEqual([]);
+  });
+
+  it('rejects anything that is not a Giac list', () => {
+    expect(() => parseComplexList('GIAC_ERROR: Error: Invalid dimension')).toThrow();
+  });
+});
+
+describe('giacNumber — the Giac reply boundary', () => {
+  // This is the parse the whole non-finite fix rests on, and it had no test:
+  // reverting it to the original `parseFloat` left the entire suite green,
+  // because the upstream finiteness guards intercepted every case that would
+  // have reached it. Only a direct test can tell the strict parse from parseFloat
+  // while those guards stand.
+  it.each([
+    ['0.393153', 0.393153],
+    ['0.5', 0.5],
+    ['1.0', 1],
+    ['0', 0],
+    ['0.0', 0],
+    ['  0.941941738242  ', 0.941941738242],
+    ['3.18309886893e-07', 3.18309886893e-7],
+    ['1e-5', 1e-5],
+    ['-0.25', -0.25],
+    ['+0.25', 0.25],
+  ])('reads %s as a number', (raw, expected) => {
+    expect(giacNumber(raw)).toBe(expected);
+  });
+
+  it.each([
+    // Giac's symbolic replies. parseFloat returns the leading term of each of
+    // these — 1, 1, 1 and 1 — which is exactly how a NaN statistic became a
+    // p-value of 0 and an expression in the wrong variable became f(x) = 1.
+    ['1-UTPC(1,NaN)'],
+    ['1-UTPT(2,NaN)'],
+    ['1.0-cos(y)'],
+    ['1-UTPC(1,2)'],
+    ['Beta(1,3,2*NaN/(2*NaN+6),1)'],
+    ['GIAC_ERROR: student_cdf(4.043,-0.7925) Error: Bad Argument Value'],
+    [''],
+    ['   '],
+    ['NaN'],
+    ['Infinity'],
+    ['1/3'],
+  ])('refuses %s rather than reading its leading term', (raw) => {
+    expect(giacNumber(raw)).toBeNull();
+  });
+
+  it.each([
+    // Giac's float range is wider than a double's, and it renders those as
+    // ordinary literals. Rejecting them reported "Cannot evaluate exp(x) at
+    // x=800" while quoting the value the CAS had just returned.
+    ['0.272637457211e348', Infinity],
+    ['-0.272637457211e348', -Infinity],
+  ])('reads %s as a value, not a parse failure', (raw, expected) => {
+    expect(giacNumber(raw)).toBe(expected);
+  });
+
+  it('is strictly narrower than parseFloat on exactly the cases that matter', () => {
+    for (const symbolic of ['1-UTPC(1,NaN)', '1.0-cos(y)', '1-UTPT(2,NaN)']) {
+      expect(Number.isNaN(parseFloat(symbolic))).toBe(false); // parseFloat accepts
+      expect(giacNumber(symbolic)).toBeNull(); // giacNumber does not
+    }
+  });
+});
+

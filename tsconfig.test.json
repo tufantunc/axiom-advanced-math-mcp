@@ -1,0 +1,29 @@
+{
+  // Check-only project for the code the main build does not compile: the test
+  // suite and the root-level vitest config modules.
+  //
+  // tsconfig.json is the *build* (rootDir src/, emits dist/), so it includes
+  // only src/**/*. That left test/ and vitest.*.ts typechecked by nothing at
+  // all — which is how an import of a no-longer-exported symbol survived, and
+  // how a genuinely wrong `as const` on a vitest option went unnoticed.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // Nothing is emitted, so the build's rootDir (src/) does not apply here.
+    "rootDir": ".",
+    // Own build-info file: this project would otherwise write over the build
+    // project's ./.tsbuildinfo and drop its incrementality.
+    "tsBuildInfoFile": "./.test.tsbuildinfo",
+    // suite-membership.test.ts imports '../vitest.suites.ts' by extension so
+    // the same specifier works under Node's native loader.
+    "allowImportingTsExtensions": true,
+    // vitest.config.ts sets globals: true, so beforeAll/describe/it are ambient
+    // at runtime; without this they are unresolved names at check time.
+    "types": ["vitest/globals"]
+  },
+  // MUST restate exclude: the base config excludes "test", extends inherits it,
+  // and exclude filters what include matched — so inheriting it silently cancels
+  // the include below and the project checks nothing.
+  "exclude": ["node_modules", "dist"],
+  "include": ["test/**/*", "vitest.suites.ts", "vitest.config.ts", "vitest.config.integration.ts"]
+}

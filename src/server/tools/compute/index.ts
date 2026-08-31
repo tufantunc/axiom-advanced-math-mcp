@@ -73,6 +73,19 @@ function formatOutput(
           content: [
             { type: 'text' as const, text: `Result: ${envelope.display}` },
             { type: 'text' as const, text: `LaTeX: ${envelope.latex}` },
+            // This is the format that renders a solution VECTOR most
+            // prominently, and it was the only one saying nothing about which
+            // component is which — `--json` carries `components` and the text
+            // formats carry the note, but a LaTeX consumer got an
+            // uninterpretable vector.
+            ...(envelope.components
+              ? [
+                  {
+                    type: 'text' as const,
+                    text: `Components are in the order: ${envelope.components.join(', ')}`,
+                  },
+                ]
+              : []),
             ...(envelope.giac_command
               ? [{ type: 'text' as const, text: `Command: ${envelope.giac_command}` }]
               : []),
@@ -84,7 +97,14 @@ function formatOutput(
     case 'text':
     default:
       if (envelope.warnings && envelope.warnings.length > 0) {
-        const warnLines = envelope.warnings.map((w) => ({
+        // Only warnings the body does not already carry. The hygiene layer's
+        // warnings are not in the response text and must be surfaced here; a
+        // warning lifted out of the text by normalize already is, and prepending
+        // it printed the same 190-character caveat twice.
+        const bodyText = rawResponse.content.map((c) => c.text).join('\n');
+        const unseen = envelope.warnings.filter((w) => !bodyText.includes(w));
+        if (unseen.length === 0) return rawResponse;
+        const warnLines = unseen.map((w) => ({
           type: 'text' as const,
           text: `[Warning: ${w}]`,
         }));

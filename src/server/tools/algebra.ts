@@ -1,5 +1,5 @@
 import { formatErrorResponse } from './response-formatter.js';
-import { validateExpression } from './symbolic/validator.js';
+import { validateExpression } from './expression-validator.js';
 import { evalWithLatex } from './giac-eval.js';
 import { verifyFactor } from './self-verify.js';
 

@@ -6,6 +6,18 @@ export interface SequenceIdentifyResult {
 }
 
 export async function identifySequenceCore(terms: number[]): Promise<SequenceIdentifyResult> {
+  // Guard the arity before any detector runs. `[].every(...)` is vacuously
+  // true in JavaScript, so an empty list satisfied the constant-sequence check
+  // below and reported "Constant sequence" with `a(n) = undefined` — a
+  // confident answer derived from no data. One term is no better: a single
+  // value is not a pattern.
+  if (!Array.isArray(terms) || terms.length < 2) {
+    return {
+      lines: [`Need at least 2 terms to identify a sequence, got ${terms?.length ?? 0}.`],
+      isError: true,
+    };
+  }
+
   const lines: string[] = [`Sequence: ${terms.join(', ')}`];
 
   if (terms.every((t) => t === terms[0])) {

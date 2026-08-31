@@ -38,7 +38,7 @@ The "compute" tool accepts a problem string using CAS-style function calls:
 
 Optional parameters:
   domain: "complex" for complex solutions, "numeric" to force numerical methods
-  precision: decimal places (1-50)
+  precision: significant digits for a numeric result (1-50)
   format: "text" (default), "latex", or "json" (structured envelope)
 
 The "verify" tool checks mathematical claims:

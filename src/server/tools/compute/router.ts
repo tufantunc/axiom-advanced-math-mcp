@@ -1,4 +1,6 @@
 import type { RouterRule, RouteResult } from './types.js';
+import { stripEnclosingBrackets } from './arg-parsing.js';
+import { splitTopLevel } from '../output-cleanup.js';
 import {
   extractSolveSystem,
   extractSolveEquation,
@@ -42,11 +44,22 @@ function startsWith(problem: string, ...names: string[]): boolean {
   });
 }
 
-/** Check if problem contains keyword (whole-word, case-insensitive). */
+/**
+ * Does the problem contain this keyword as a whole verb, case-insensitive?
+ *
+ * A trailing underscore still counts as a boundary, because a handler's own
+ * operation name is usually its short verb plus a suffix: `\bbell\b` found no
+ * boundary inside `bell_number`, so `bell_number(5)` matched no rule at all,
+ * fell through to the raw CAS, and came back as its own answer. Same for
+ * `stirling_first`, `two_sample_t_test` and `romberg_integration`.
+ *
+ * A LEADING underscore or alphanumeric still blocks the match, so `bell` does
+ * not match `barbell`.
+ */
 function hasKeyword(problem: string, ...keywords: string[]): boolean {
   const lc = problem.toLowerCase();
   return keywords.some((kw) => {
-    const re = new RegExp(`\\b${kw.toLowerCase()}\\b`);
+    const re = new RegExp(`(?<![a-z0-9_])${kw.toLowerCase()}(?![a-z0-9])`);
     return re.test(lc);
   });
 }
@@ -54,6 +67,106 @@ function hasKeyword(problem: string, ...keywords: string[]): boolean {
 /** Detect matrix-like argument: [[...]] */
 function hasMatrixArg(problem: string): boolean {
   return /\[\s*\[/.test(problem);
+}
+
+/**
+ * True when the problem has an `=` at bracket depth 0 — i.e. it is an equation,
+ * not a call carrying keyword arguments.
+ *
+ * This is the distinction that matters for routing. `gradient(f = x*y, [x,y])`
+ * and `normal(mu=0, sigma=1)` contain `=` but are calls whose own handler should
+ * take them; `x^2-4=0` and `sum(k,k,1,n) = 55` are equations to solve. Testing
+ * for a bare `=` cannot tell those apart, which is why the solve rule used to
+ * carry two hand-maintained lists of every other handler's verbs.
+ *
+ * Unbalanced brackets are treated as an equation. Depth is meaningless on input
+ * like `f(x=1`, and routing it here sends it to a handler that runs
+ * `validateExpression`, which reports the unclosed bracket. Letting it fall
+ * through to the raw-Giac fallback instead produced `Result: f` — a silent wrong
+ * answer to a typo.
+ */
+function hasTopLevelEquals(problem: string): boolean {
+  if (!isBracketBalanced(problem)) return problem.includes('=');
+  return splitTopLevel(stripEnclosingBrackets(problem), '=').length > 1;
+}
+
+/**
+ * Whether every bracket opens and closes in order, and closes with its own
+ * kind.
+ *
+ * Depth alone is not enough: `f(x=1]` opens one bracket and closes one, so a
+ * depth counter calls it balanced, the `=` reads as nested, and the typo
+ * reaches the raw-Giac fallback as `Result: undef` with no error.
+ */
+function isBracketBalanced(problem: string): boolean {
+  const closerFor: Record<string, string> = { '(': ')', '[': ']', '{': '}' };
+  const expected: string[] = [];
+  for (const ch of problem) {
+    if (closerFor[ch]) expected.push(closerFor[ch]);
+    else if (ch === ')' || ch === ']' || ch === '}') {
+      if (expected.pop() !== ch) return false;
+    }
+  }
+  return expected.length === 0;
+}
+
+/**
+ * `beta(...)` as the probability distribution rather than Giac's Beta function.
+ *
+ * README advertises `beta` as a distribution, but the router knew only
+ * `beta_dist`, so `beta(alpha=2, b=3, x=0.5)` fell through to the CAS and came
+ * back as the string "beta".
+ *
+ * Giac spells its Beta function with a capital B — `Beta(2,3)` is 1/12, while
+ * lowercase `beta(2,3)` is not a Giac function at all and was returned
+ * unevaluated as its own answer. So case is the discriminator, and claiming
+ * every lowercase call means a positional one gets the handler's own "requires
+ * params alpha and beta" instead of an echo.
+ */
+function isBetaDistributionCall(problem: string): boolean {
+  return /^\s*beta\s*\(/.test(problem);
+}
+
+/**
+ * Derivative notation that marks the problem as an ODE, owned by
+ * `calculus:solve_ode`. Defined once because two rules need it: solve_ode to
+ * claim these, and the solve rule above it to decline them.
+ *
+ * `y''` contains `y'`, so the first pattern already covers second-order forms.
+ */
+function looksLikeOde(problem: string): boolean {
+  // Any differentiated name, not just `y`, and the prime may sit anywhere —
+  // `y'' + y = 0` carries it well before the `=`, and requiring adjacency sent
+  // second-order ODEs to solve_equation.
+  // `[a'=b, b'=-a]` and `[dy/dt=z, dz/dt=-y]` were invisible to the old form and
+  // went to solve_system, which answered them `(0, 0)`.
+  // The identifier must be a whole word and must not itself be quoted: a Giac
+  // string argument such as
+  // `zeros(20000,20000,'sparse')` ends in `sparse'`, which is otherwise
+  // indistinguishable from a derivative and took that input off its own route.
+  // A Leibniz quotient counts only where a derivative can stand: at the start of
+  // a member, on the left of an `=`. Matched anywhere, it outranked an explicitly
+  // named verb — this rule sits above factor and simplify — so `simplify(dv/dt*m)`
+  // was sent to solve_ode and came back as a raw GIAC_ERROR presented as a
+  // successful answer.
+  if (/(^|[,[(])\s*d[A-Za-z_]\w*\s*\/\s*d[A-Za-z_]\w*\s*=/.test(problem)) return true;
+
+  // A prime counts only outside a quoted string. Giac takes string arguments —
+  // `zeros(20000,20000,'sparse')`, `purge('a b')` — whose closing quote follows an
+  // identifier and is otherwise indistinguishable from a derivative. Position,
+  // not shape, is what separates them: a prime with an EVEN number of quotes
+  // before it is not inside a string, and `[y'=z, z'=-y]` has one at position
+  // zero even though its later primes do not.
+  for (const match of problem.matchAll(/(^|[^\w])[A-Za-z_]\w*'/g)) {
+    // Up to the IDENTIFIER, not to the start of the match — the match begins one
+    // character earlier, and for a quoted string that character IS the opening
+    // quote, so counting from there missed it and `zeros(3,3,'sparse')` read as a
+    // derivative.
+    const identifierAt = (match.index ?? 0) + match[1].length;
+    const quotesBefore = (problem.slice(0, identifierAt).match(/'/g) ?? []).length;
+    if (quotesBefore % 2 === 0) return true;
+  }
+  return false;
 }
 
 /** Check if problem looks like multiple equations (system). */
@@ -111,7 +224,13 @@ const rules: RouterRule[] = [
   // 1. System of equations
   {
     name: 'solve_system',
-    test: (p) => isSystemOfEquations(p) || startsWith(p, 'solve_system'),
+    // The ODE decline belongs here, not only on rule 2. Rule 1 is what actually
+    // claims a bracketed list, and a list-form ODE system has exactly that shape,
+    // so `[y'=z, z'=-y]` — the form this project's own docs use — was answered
+    // `(0, 0)` with `Verified: ✓`, a wrong non-empty vector carrying a check
+    // mark. An explicit `solve_system(...)` still overrides, since that is the
+    // caller saying what they meant.
+    test: (p) => startsWith(p, 'solve_system') || (!looksLikeOde(p) && isSystemOfEquations(p)),
     extract: extractSolveSystem,
   },
 
@@ -122,74 +241,11 @@ const rules: RouterRule[] = [
       // Domain hint "numeric" overrides to numerical_methods
       if (d === 'numeric') return false;
       if (startsWith(p, 'solve', 'csolve')) return true;
-      // Single equation with = that isn't a system and doesn't match other patterns
-      if (/=/.test(p) && !isSystemOfEquations(p)) {
-        // Exclude ODE patterns: y', y'', dy/dx
-        if (/y'/.test(p) || /dy\s*\/\s*dx/.test(p) || /y''\s*[+=]/.test(p)) return false;
-        // Exclude patterns that belong to other handlers
-        if (
-          startsWith(
-            p,
-            'diff',
-            'int',
-            'integrate',
-            'limit',
-            'taylor',
-            'desolve',
-            'factor',
-            'simplify',
-            'expand',
-            'partfrac',
-            'det',
-            'inv',
-            'eigenvals',
-            'rref',
-            'binomial',
-            'normal',
-            'poisson',
-            'geometric',
-            'hypergeometric',
-            'chi_square',
-            'student_t',
-            'f_distribution',
-            'beta_dist',
-            'exponential',
-            't_test',
-            'anova',
-            'newton',
-            'bisection',
-            'secant',
-            'romberg',
-            'to_exact',
-            'to_decimal',
-            'simplify_fraction'
-          )
-        )
-          return false;
-        // Exclude keyword-based patterns with = inside function args (e.g., "normal(mu=0, ...)")
-        if (
-          /^\w+\s*\(.*=/.test(p) &&
-          hasKeyword(
-            p,
-            'binomial',
-            'normal',
-            'poisson',
-            'geometric',
-            'hypergeometric',
-            'chi_square',
-            'student_t',
-            'f_distribution',
-            'beta',
-            'exponential',
-            't_test',
-            'anova',
-            'chi_square_test',
-            'one_sample_t',
-            'two_sample_t',
-            'paired_t'
-          )
-        )
-          return false;
+      // An equation to solve. Systems need no check here: rule 1 tests
+      // isSystemOfEquations and route() is first-match, so it has already
+      // claimed them. ODEs do, because solve_ode sits below this rule.
+      if (hasTopLevelEquals(p)) {
+        if (looksLikeOde(p)) return false;
         return true;
       }
       return false;
@@ -207,7 +263,8 @@ const rules: RouterRule[] = [
   // Multiple integrals — MUST precede single integrate (nested int starts with "int(").
   {
     name: 'multivariable:multiple_integral',
-    test: (p) => startsWith(p, 'iint', 'iiint') || /int\s*\(\s*int\s*\(/i.test(p),
+    test: (p) =>
+      startsWith(p, 'iint', 'iiint', 'multiple_integral') || /int\s*\(\s*int\s*\(/i.test(p),
     extract: extractMultivariable,
   },
 
@@ -235,11 +292,7 @@ const rules: RouterRule[] = [
   // 7. ODE
   {
     name: 'calculus:solve_ode',
-    test: (p) =>
-      startsWith(p, 'desolve', 'dsolve', 'odesolve') ||
-      /y'/.test(p) ||
-      /dy\s*\/\s*dx/.test(p) ||
-      /y''\s*[+=]/.test(p),
+    test: (p) => startsWith(p, 'desolve', 'dsolve', 'odesolve', 'solve_ode') || looksLikeOde(p),
     extract: extractOde,
   },
 
@@ -354,13 +407,42 @@ const rules: RouterRule[] = [
         'catalan',
         'derangements',
         'partitions',
-        'multinomial'
+        'multinomial',
+        // `partitions` does not cover `partition_count` — that is a
+        // plural/singular mismatch, not a word boundary, so hasKeyword's
+        // trailing-underscore rule cannot reach it.
+        'partition_count'
       );
     },
     extract: extractCombinatorics,
   },
 
   // 19. Probability distributions
+  {
+    // Ordered ahead of `probability` deliberately: `chi_square` names both a
+    // distribution and a test of independence, and hasKeyword's trailing-
+    // underscore rule makes the short name match every `chi_square_*` spelling.
+    // Ordering settles it once. The alternative — a hand-maintained list of
+    // chi-square tests to exclude from the distribution rule — silently
+    // misrouted the next one added: `chi_square_gof(...)` went to the density
+    // handler and asked for degrees of freedom.
+    name: 'hypothesis_testing',
+    test: (p) =>
+      hasKeyword(
+        p,
+        't_test',
+        'anova',
+        'chi_square_test',
+        'one_sample_t',
+        'two_sample_t',
+        'paired_t',
+        'one_way_anova',
+        'chi_square_independence'
+      ),
+    extract: extractHypothesisTesting,
+  },
+
+  // 20. Hypothesis testing
   {
     name: 'probability',
     test: (p) =>
@@ -389,24 +471,9 @@ const rules: RouterRule[] = [
         'f_distribution',
         'beta_dist',
         'exponential'
-      ),
+      ) ||
+      isBetaDistributionCall(p),
     extract: extractProbability,
-  },
-
-  // 20. Hypothesis testing
-  {
-    name: 'hypothesis_testing',
-    test: (p) =>
-      hasKeyword(
-        p,
-        't_test',
-        'anova',
-        'chi_square_test',
-        'one_sample_t',
-        'two_sample_t',
-        'paired_t'
-      ),
-    extract: extractHypothesisTesting,
   },
 
   // 21. Fourier
@@ -456,7 +523,9 @@ const rules: RouterRule[] = [
         'circumference',
         'intersection',
         'angle',
-        'point_line_distance'
+        'point_line_distance',
+        'angle_between_lines',
+        'line_intersection'
       ) || hasKeyword(p, 'area_triangle', 'area_polygon', 'area_circle', 'perimeter_polygon'),
     extract: extractGeometry,
   },
@@ -467,7 +536,7 @@ const rules: RouterRule[] = [
     test: (p, d) =>
       d === 'numeric' ||
       startsWith(p, 'newton', 'bisection', 'secant', 'romberg', 'simpson') ||
-      hasKeyword(p, 'newton_raphson', 'numerical_integration'),
+      hasKeyword(p, 'newton_raphson', 'numerical_integration', 'romberg', 'simpson'),
     extract: extractNumericalMethods,
   },
 

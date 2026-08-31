@@ -22,7 +22,7 @@ export function validateExpression(expression: string): ValidationError | null {
     }
   }
   if (depth > 0) {
-    return { message: `${depth} unclosed parenthesis${depth > 1 ? 'es' : ''}` };
+    return { message: `${depth} unclosed ${depth > 1 ? 'parentheses' : 'parenthesis'}` };
   }
 
   // Check balanced brackets

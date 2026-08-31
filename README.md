@@ -81,7 +81,7 @@ Axiom exposes **3 MCP tools**. Almost everything flows through `compute`, a sing
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Arithmetic & units      | `2+3*sin(pi/4)`, `100 km/h to m/s`                                                                                                                             |
 | Equation solving        | `solve(x^2-4=0, x)`, `csolve(...)` (complex), `solve_system([x+y=5, x-y=1], [x,y])`                                                                            |
-| Calculus                | `diff`, `int`, `limit`, `taylor`, `desolve` (ODE)                                                                                                              |
+| Calculus                | `diff`, `int`, `limit`, `taylor`, `desolve` (ODEs of any order, and linear constant-coefficient systems)                                                                                                              |
 | Multivariable calculus  | `gradient`, `hessian`, `jacobian`, `divergence`, `curl`, `partial`, `iint`/`iiint` (multiple integrals), `critical_points`, `lagrange`, `tangent_plane`, `directional_derivative` |
 | Algebra                 | `factor`, `simplify`, `expand`, `partfrac`                                                                                                                     |
 | Linear algebra          | `det`, `inv`, `eigenvals`, `eigenvects`, `rref`, `rank`, `tran`, `ker`, `qr`, `lu`, `cholesky`, `svd`, `norm`, `cond`                                          |
@@ -255,8 +255,47 @@ scales horizontally with no shared state.
 | `MCP_PORT`               | `3000`      | HTTP server port                                    |
 | `MCP_HOST`               | `127.0.0.1` | HTTP server host                                    |
 | `MCP_ALLOWED_HOSTS`      | loopback only (`localhost`, `127.0.0.1`, `[::1]`) | Comma-separated `Host` header allowlist for `POST /mcp` (DNS-rebinding protection). An explicit value replaces the default rather than extending it. |
-| `AXIOM_EVAL_TIMEOUT_MS`  | `10000`     | Per-evaluation CAS timeout, in milliseconds         |
+| `AXIOM_EVAL_TIMEOUT_MS`  | `10000`     | Per-evaluation timeout, in milliseconds. Bounds one CAS call **and** one js-compute call (arbitrary-precision integer work, arithmetic, plot sampling), so lowering it tightens both. |
+| `AXIOM_INTEGRATION_BUDGET_MS` | `max(3 × AXIOM_EVAL_TIMEOUT_MS, 30000)` | Wall-clock budget for one multi-call numerical routine (integration, root finding). Bounds the SUM of CAS calls, where `AXIOM_EVAL_TIMEOUT_MS` bounds one. |
+| `AXIOM_JS_COMPUTE_HEAP_MB` | `512` | Heap ceiling for the child process that runs arbitrary-precision integer work and mathjs evaluation. Exceeding it fails the computation that caused it — calls queued behind it are re-sent to the replacement worker — and leaves the server up. |
 | `AXIOM_COMPUTE_HYGIENE`  | unset       | Set to `1` to enable compute output post-processing |
+
+One bound is not configurable: a result over **100,000 characters** is refused
+rather than returned, so an expression like `1:2000000` reports its element count
+instead of shipping 24 million characters into the caller's context.
+
+Some inputs are refused rather than answered, because any answer would be
+meaningless. Arithmetic that evaluates to `NaN` (such as `0/0`) is an error; an
+infinite result is returned with a warning, because a true infinity and a value
+that overflowed the range of a double are indistinguishable once computed. A
+t-test needs variation in whatever it actually tests — `paired_t` compares the
+differences, so it is those that must vary, while Welch's `two_sample_t` needs
+only one of the two samples to vary. A contingency table needs non-negative
+counts, no all-zero row or column, rows of equal length, and more than one row
+and column. A one-way ANOVA needs some within-group variation and more
+observations than groups. And any of these is refused when the values are large
+enough that the statistic itself overflows to infinity, because an overflowed
+statistic is no longer the statistic. A numerical method is refused when its
+expression does not depend on the variable it is solved or integrated over, or
+when the CAS answers symbolically rather than with a number — previously the
+leading term of that symbolic answer was reported as the result.
+
+A system of differential equations written as a list — `desolve([y'=z, z'=-y],
+x)` — is rewritten into the matrix form the CAS solves and returns a solution for
+every function. The components come back in the order the equations were written,
+and the JSON envelope names them in a `components` field, because
+`[[cos(x),-sin(x)]]` is not interpretable without it.
+
+Initial conditions must be given for every function, at the same point, or not at
+all — a partial set is refused rather than ignored. Also refused, each with its
+own reason: a system that is not linear in the unknown functions; coefficients
+that depend on the independent variable; a derivative of order above one (rewrite
+`y''=z` as `y'=w, w'=z`); more than nine equations; and a system the CAS cannot
+finish.
+
+The infinite-result rule covers arithmetic evaluation. A symbolic `+infinity`
+from the CAS routes — a limit, a divergent integral — is a normal answer and
+carries no warning.
 
 ### MCP Inspector
 

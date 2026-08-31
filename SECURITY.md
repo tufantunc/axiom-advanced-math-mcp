@@ -29,11 +29,13 @@ Two independent evaluators sit behind the tools:
 | Evaluator | Used by | Runs in | Bounded by |
 | --- | --- | --- | --- |
 | Giac/Xcas (WASM) | `compute`, `verify` | a forked child process | `AXIOM_EVAL_TIMEOUT_MS`, default 10 s |
-| mathjs | `compute` (arithmetic), `plot` | the main event loop | input length only — **no timeout** |
+| mathjs | `compute` (arithmetic), `plot` | a forked child process | `AXIOM_EVAL_TIMEOUT_MS`, `AXIOM_JS_COMPUTE_HEAP_MB`, and a 100,000-character response cap |
 
-The mathjs path has no timeout. A sufficiently expensive expression there
-blocks every concurrent request, not just its own. Input length is the only
-bound, which is why it exists.
+Both evaluators run out of process, so neither can block the event loop and
+neither can abort the server by exhausting the heap. They share one child each:
+the compute worker is serial, so an expensive expression still delays whatever
+is queued behind it — it no longer fails those calls, but it does make them
+wait.
 
 ## Threat model
 
@@ -119,9 +121,18 @@ Three mechanisms close it, and they work together:
 
 ### mathjs lockdown
 
-Both mathjs instances have `import` and `createUnit` disabled, per mathjs's own
-guidance for untrusted input. `evaluate`, `parse`, `simplify` and `derivative`
-remain enabled because this project's own code calls them.
+The worker's mathjs instance has `import` and `createUnit` disabled, per
+mathjs's own guidance for untrusted input. `evaluate`, `parse`, `simplify` and
+`derivative` remain enabled because this project's own code calls them.
+
+`config` is reachable from the parser and mutates the instance, which is shared
+by every tool for the life of the worker: one expression could change what every
+later caller was told, and the symptom was a silently wrong answer rather than an
+error. It is not disabled — shadowing it breaks mathjs internally, since
+`Matrix.toString()` reads it — but the config is snapshotted at build and
+restored before each task, so no mutation survives the request that made it.
+Restoring needs no list of mutators, which is the point: a route added later is
+covered without being named.
 
 Keeping mathjs current matters independently: two advisories fixed in 15.2.0
 were arbitrary JavaScript execution *through the expression parser*, which is
@@ -140,7 +151,11 @@ Named plainly, because they are the things most likely to bite you:
   submitting expensive expressions back to back.
 - **One CAS worker, serialized.** Tool calls queue behind each other. A call
   that runs to the 10 s timeout delays everything queued behind it.
-- **The mathjs path has no timeout.** Bounded by input length alone.
+- **One compute worker, serial.** Arithmetic, plotting and arbitrary-precision
+  work share a single child. A call that runs to the timeout delays whatever is
+  queued behind it; queued calls are re-sent to the replacement worker rather
+  than failed, and a call that waits too long is refused as busy rather than
+  reported as an oversized computation.
 - **`AXIOM_EVAL_TIMEOUT_MS` is a footgun when raised.** It sets how long one
   caller can hold the shared worker.
 - **Giac is GPL-3.0 and compiled from upstream sources.** See
@@ -153,6 +168,20 @@ Named plainly, because they are the things most likely to bite you:
   is that something else if you do not already have one.
 - Set `MCP_ALLOWED_HOSTS` explicitly when reaching the server by hostname or
   LAN address; the loopback default will reject those.
-- Leave `AXIOM_EVAL_TIMEOUT_MS` at its default unless you have measured a need.
+- Leave `AXIOM_EVAL_TIMEOUT_MS` at its default unless you have measured a need. It
+  also bounds the child process that runs arbitrary-precision integer work and
+  mathjs evaluation, so raising it widens both.
+- **`AXIOM_JS_COMPUTE_HEAP_MB` is the memory half of that bound.** Arbitrary-precision
+  arithmetic and mathjs expressions are unbounded in memory as a function of their
+  input, and neither can be interrupted once running, so both execute in a child
+  process with this heap ceiling. Exceeding it kills the computation that caused
+  it — not the calls queued behind it, which are re-sent — and the server stays up. Raising it moves the failure closer to
+  the host's own memory limit, where it is no longer contained.
+- **`AXIOM_INTEGRATION_BUDGET_MS` bounds a whole routine, not one call.** Numerical
+  integration and root finding make up to a few hundred CAS calls each, and the
+  caller chooses the expression and therefore the cost of every one of them.
+  `AXIOM_EVAL_TIMEOUT_MS` cannot bound that sum. Raising this budget, or setting
+  it below the per-call timeout, both make a single request able to hold the CAS
+  worker — and therefore every other client — for longer.
 - Run `npm audit` after updating dependencies. The tree is clean as of the
   latest release.
