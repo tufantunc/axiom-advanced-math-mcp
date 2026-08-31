@@ -103,7 +103,22 @@ export async function toLatex(result: string): Promise<string | undefined> {
   }
 }
 
-export async function evalWithLatex(options: EvalOptions) {
+/**
+ * The formatted response, plus the two structured values behind it.
+ *
+ * A caller that must ACT on the verdict — refuse a disproved answer, say —
+ * needs the value, not the rendering. Returning only the formatted content made
+ * `calculus.ts` scrape its own output for a `Verified: ✗` glyph, which coupled a
+ * correctness guard to a display character.
+ */
+export interface EvaluatedResponse {
+  content: { type: 'text'; text: string }[];
+  isError: boolean;
+  verification?: VerificationResult;
+  result: string;
+}
+
+export async function evalWithLatex(options: EvalOptions): Promise<EvaluatedResponse> {
   const { operation, errorMessage, resultTransform, verify, methodNote, notes } = options;
   // Normalize unicode math glyphs in the input before anything else (cacheKey,
   // evaluation, latex) so e.g. factor(x²-4) is not parsed as factor(xmicro-4).
@@ -132,7 +147,12 @@ export async function evalWithLatex(options: EvalOptions) {
   } else {
     let raw = await giacEngine.evaluate(giacExpr);
     if (!raw || raw === 'undef') {
-      return formatErrorResponse(errorMessage ?? `Could not compute ${operation}`);
+      // Carries `result` too, so the error path satisfies the same contract the
+      // success path does and a consumer never has to check which it got.
+      return {
+        ...formatErrorResponse(errorMessage ?? `Could not compute ${operation}`),
+        result: '',
+      };
     }
 
     // Strip the series big-O remainder BEFORE computing latex — the cleaned
@@ -151,12 +171,22 @@ export async function evalWithLatex(options: EvalOptions) {
     if (cacheable) evaluationCache.set(cacheKey, { result, latex, verification });
   }
 
-  return formatToolResponse({
-    result,
-    latex,
-    giacCommand: giacExpr,
-    verification,
-    methodNote,
-    ...(notes ? { notes } : {}),
-  });
+  // The structured values ride along beside the formatted content. Without them
+  // a caller that needs to ACT on the verdict has to scrape the rendered text —
+  // `calculus.ts` was testing for the `Verified: ✗` glyph to decide whether to
+  // refuse a disproved answer, which couples a correctness guard to a display
+  // character: rename the label or reorder the formatter and the guard silently
+  // stops firing, shipping the wrong answer it exists to block, with no test
+  // failing because the scrape still returns false.
+  return Object.assign(
+    formatToolResponse({
+      result,
+      latex,
+      giacCommand: giacExpr,
+      verification,
+      methodNote,
+      ...(notes ? { notes } : {}),
+    }),
+    { verification, result }
+  );
 }

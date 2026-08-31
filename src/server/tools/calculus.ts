@@ -60,7 +60,6 @@ interface BuiltCommand {
     constants: string;
     variable: string;
     condition?: string;
-    exact: boolean;
   };
 }
 
@@ -97,7 +96,6 @@ async function buildGiacExpression(
           matrix: translated.matrix,
           constants: translated.constants,
           variable: (args.variable as string) ?? 'x',
-          exact: translated.exact,
           ...(translated.condition ? { condition: translated.condition } : {}),
         },
       };
@@ -165,8 +163,7 @@ export async function calculusHandler(args: Record<string, unknown>) {
               system.variable,
               result,
               (expr: string) => giacEngine.evaluate(expr),
-              system.condition,
-              system.exact
+              system.condition
             )
         : undefined;
     // Through `notes`, not appended to the formatted content: formatToolResponse
@@ -193,6 +190,12 @@ export async function calculusHandler(args: Record<string, unknown>) {
       const result = resultLine?.[1]?.trim() ?? '';
       const unfinished =
         result === '[]' ||
+        // `ilaplace(` has never been observed without `poly1[` beside it — over
+        // 120 random matrices and every shape tried here, the two arrive
+        // together — so no input discriminates this arm and no test can pin it.
+        // Kept rather than removed because it costs nothing and names a distinct
+        // leftover; recorded here so the next reader does not go looking for the
+        // test that is missing.
         /poly1\[|ilaplace\(/.test(result) ||
         /(^|[^A-Za-z_0-9])undef([^A-Za-z_0-9]|$)/.test(result) ||
         // `[y'=z+exp(x)/x, z'=-y]` answered `[[infinity,infinity]]` with
@@ -206,7 +209,11 @@ export async function calculusHandler(args: Record<string, unknown>) {
       // say ✓ or nothing; it can now prove failure for an exact system, and a
       // disproved answer must not ship — `[y'=z, z'=-y+sqrt(x)]` was going out as
       // the homogeneous solution with success:true.
-      const disproved = /Verified: ✗/.test(response.content.map((c) => c.text).join('\n'));
+      //
+      // Read from the value, not from the rendered glyph. Testing for `Verified: ✗`
+      // coupled this guard to a display character: renaming the label or
+      // reordering the formatter would have stopped it firing silently.
+      const disproved = response.verification?.verified === false;
       if (unfinished || disproved) {
         // The initial-condition hint only when there were any: a 10-equation
         // cycle with none was being told to check conditions it never supplied.

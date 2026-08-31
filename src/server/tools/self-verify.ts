@@ -159,8 +159,7 @@ export async function verifyOdeSystem(
   variable: string,
   result: string,
   evaluate: (expr: string) => Promise<string>,
-  condition?: string,
-  exact = false
+  condition?: string
 ): Promise<VerificationResult | undefined> {
   const method = 'substitution';
   const raw = result.trim();
@@ -202,15 +201,39 @@ export async function verifyOdeSystem(
     // matrix a single numeric domain before it is solved.
     const residual = (await evaluate(`normal(diff(${solution},${variable})-(${rhs}))`)).trim();
     if (!allZero(residual)) {
+      // `normal` is not a zero test. Giac answers a `b^k` coefficient in the
+      // `exp(k*ln(b))` spelling and does not cancel the difference, so an exact,
+      // CORRECT answer leaves a residual like `exp(ln(2)/3)-2^(1/3)` that
+      // normalises to itself and evaluates to -7.1e-15. Accusing the CAS on that
+      // basis turned `sqrt(2)`, `2^(1/3)`, `2^x` and a `sqrt(2)` matrix
+      // coefficient into hard errors. So the disproof is settled numerically
+      // before it is made: only a residual that stays large under evaluation is
+      // evidence of anything.
+      const settled = await evaluate(`evalf(subst(${residual},${variable}=13/10))`);
+      const magnitude = Math.max(
+        ...splitTopLevel(stripEnclosingBrackets(settled.trim()), ',').map((c) =>
+          Math.abs(Number(c.trim()))
+        )
+      );
+      if (!Number.isFinite(magnitude) || magnitude < 1e-6) return undefined;
+      // Numeric magnitude decides it, not whether the system was exact. Gating
+      // the disproof on exactness let one decimal switch it off: `0.5*sqrt(x)` is
+      // a float coefficient on an exactly-representable term, and its residual
+      // `-0.5*sqrt(x)` is a DROPPED TERM, not rounding. The two are orders apart
+      // — a rounding artifact measures ~1e-15 here and a dropped term O(1) — so
+      // the threshold separates them without needing to know which kind of
+      // system it is.
       // "No sound numeric version" is true only where a FLOAT is involved. With
       // an exact system there is no rounding to hide behind: `normal` returning
       // anything but zero is proof the answer does not solve the system, and
       // discarding that as "undecided" shipped `[y'=z, z'=-y+sqrt(x)]` as the
       // HOMOGENEOUS solution — the forcing term simply gone, residual `[0,-√x]`,
       // success:true and no warning. main answered it wrongly too but said so.
-      return exact
-        ? { verified: false, method, detail: `does not satisfy Y’ = A·Y + b; residual ${residual}` }
-        : undefined;
+      return {
+        verified: false,
+        method,
+        detail: `does not satisfy Y’ = A·Y + b; residual ${residual}`,
+      };
     }
     // An IVP asks a strictly stronger question, and the mark has to mean the
     // whole of it. Satisfying `Y' = A*Y + b` while missing the conditions is a

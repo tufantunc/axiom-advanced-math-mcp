@@ -10,6 +10,13 @@ describe('unicodeToAscii', () => {
     ['√x', 'sqrt(x)'],
     ['√2*√2', 'sqrt(2)*sqrt(2)'],
     ['√2+√3', 'sqrt(2)+sqrt(3)'],
+    // The ORDER of the replacements, which is load-bearing and was unenforced:
+    // `π` has to become `pi` before the `√` rules look at the argument, or `√π`
+    // falls through to the bare replacement and becomes the free symbol
+    // `sqrtpi` — so `simplify(√π*√π)` answered `sqrtpi^2` instead of pi.
+    ['√π', 'sqrt(pi)'],
+    ['√π*√π', 'sqrt(pi)*sqrt(pi)'],
+    ['√(π)', 'sqrt(pi)'],
     ['x²+√5', 'x^2+sqrt(5)'],
     // Nothing to take an argument from: left as the word, so the engine
     // reports it rather than this inventing an operand.

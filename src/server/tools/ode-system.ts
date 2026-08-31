@@ -267,8 +267,6 @@ export type SystemTranslation =
       constants: string;
       /** `Y(0)=[1,0]` when the caller gave conditions, absent otherwise. */
       condition?: string;
-      /** True when no float is involved, so an exact residual is decisive. */
-      exact: boolean;
     }
   | { error: string };
 
@@ -394,9 +392,12 @@ export async function translateOdeSystem(
   // mark is honest about the rewritten system, which is the wrong system. Checked
   // on the raw text, before the rewrite below, since that rewrite is what turns
   // `diff(y(x),x)` into the vanishing `diff(y,x)` spelling.
-  const derivativeOnRight = new RegExp(
-    `(\\b(${functions.join('|')})\\s*'|\\bdiff\\s*\\(|\\bd(${functions.join('|')})\\s*/\\s*d)`
-  );
+  // Name-agnostic, and every spelling of the call. Anchoring the prime to the
+  // system's own unknowns missed `w'` on a name it does not solve for, and
+  // listing only `diff` missed `derive` and `deriver`, Giac's own aliases for it.
+  // Both reproduced the defect this guard exists to stop, verbatim.
+  const derivativeOnRight =
+    /\b[A-Za-z_]\w*\s*'|\b(diff|derive|deriver)\s*\(|\bd[A-Za-z_]\w*\s*\/\s*d[A-Za-z_]/;
   const withDerivative = system.equations.find((e) => derivativeOnRight.test(e.rhs));
   if (withDerivative !== undefined) {
     return {
@@ -781,7 +782,7 @@ export async function translateOdeSystem(
     // measured — trapped the engine fatally and killed the worker.
     const degrees =
       `[max(${constantEntries.map((c) => `${numerator(c)}+${denominator(c)}`).join(',')}),` +
-      `max(${constantEntries.map((c) => `size(lvar(denom(${c})))`).join(',')})]`;
+      `max(${constantEntries.map((c) => `has(denom(${c}),${variable})`).join(',')})]`;
     let reply: string;
     try {
       reply = (await evaluate(degrees)).trim();
@@ -829,7 +830,14 @@ export async function translateOdeSystem(
     // not generalise, which is the honest description of it; the measurement is
     // that `[y'=z, z'=-y+tan(x)]` — 21 characters, exact — traps the engine and
     // takes a concurrent caller's unrelated call with it, where main answers.
-    const poleFunction = /\b(tan|cot|sec|csc|tanh|coth|sech|csch)\s*\(/;
+    // The variable has to be IN it. Matching the function name alone refused
+    // `tan(1)*x`, whose `tan(1)` is a constant, and asking `size(lvar(denom(c)))`
+    // rather than whether the denominator involves the variable refused
+    // `1/(a+1)` and `x/(a+b)` — all three solve, and the message told the caller
+    // they had a pole in x that is not there.
+    const poleFunction = new RegExp(
+      `\\b(tan|cotan|cot|sec|csc|tanh|coth|sech|csch)\\s*\\([^)]*\\b${variable}\\b`
+    );
     if (denominatorSymbols > 0 || constantEntries.some((c) => poleFunction.test(c))) {
       return {
         error:
@@ -868,8 +876,7 @@ export async function translateOdeSystem(
       functions,
       0,
       matrix,
-      homogeneous ? '' : constants,
-      !holdsFloat
+      homogeneous ? '' : constants
     );
   }
   // Conditions have to become one vector condition: Giac takes `Y(0)=[1,0]`, not
@@ -882,7 +889,6 @@ export async function translateOdeSystem(
     vectorCondition.text.length,
     matrix,
     homogeneous ? '' : constants,
-    !holdsFloat && !floatInConditions,
     vectorCondition.text
   );
 }
@@ -910,11 +916,10 @@ function withinLimit(
   conditionChars: number,
   matrix: string,
   constants: string,
-  exact: boolean,
   condition?: string
 ): SystemTranslation {
   if (command.length <= MAX_COMMAND_CHARS) {
-    return { command, functions, matrix, constants, exact, ...(condition ? { condition } : {}) };
+    return { command, functions, matrix, constants, ...(condition ? { condition } : {}) };
   }
   // Name the part that is actually large. Blaming the conditions unconditionally
   // told a caller who wrote none — `[y'=z+10^900, z'=-y]`, whose 938 characters
@@ -957,19 +962,37 @@ function implausibleMagnitude(text: string): string | undefined {
   // it crashed the shared worker in the conditions scan, where main answers
   // harmlessly. An exponent that is not a small literal is not ordinary-number
   // input either, so anything this cannot read is refused rather than passed.
-  for (const power of text.matchAll(/\^\s*\(?\s*([^),\s]+)/g)) {
-    const exponent = power[1];
-    if (/^\d+$/.test(exponent) && Number(exponent) > 1_000) {
-      return `an exponent of ${exponent}`;
+  // The exponent TOKEN, not the rest of the term. `[^),\\s]+` ran past the end of
+  // the exponent, so `x^2+x^3` captured "2+x^3", saw a `^` in it and refused an
+  // ordinary polynomial — and the verdict flipped on a space, since `x^2 + x^3`
+  // captured just "2". The bare form is a digit run; the parenthesised form is
+  // the balanced group, which is what a nested exponent hides inside.
+  for (const power of text.matchAll(/\^\s*(\()?/g)) {
+    const at = (power.index ?? 0) + power[0].length;
+    let exponent: string;
+    if (power[1] === undefined) {
+      exponent = /^\d*/.exec(text.slice(at))?.[0] ?? '';
+    } else {
+      let depth = 1;
+      let i = at;
+      for (; i < text.length && depth > 0; i += 1) {
+        if (text[i] === '(') depth += 1;
+        else if (text[i] === ')') depth -= 1;
+      }
+      exponent = text.slice(at, i - 1);
+    }
+    if (/^\d+$/.test(exponent.trim()) && Number(exponent.trim()) > 1_000) {
+      return `an exponent of ${exponent.trim()}`;
     }
     // A NESTED exponent, which reading a digit run cannot bound: `10^(10^5)` was
     // captured as "10" and "5" and passed, and it is the same 10^100000 this
-    // exists to stop — it crashed the shared worker in the conditions scan, where
-    // main answers harmlessly. Only `^` inside the exponent is refused, not every
-    // exponent this cannot read: `2^(1/3)` and `x^(1/2)` are ordinary exact
-    // constants and refusing them was a regression of its own.
-    if (exponent.includes('^')) {
-      return `a nested exponent (${exponent.slice(0, 20)})`;
+    // exists to stop. `+` and `-` count too — `10^(50000+50000)` is the example
+    // an earlier version of this comment wrongly claimed was already caught.
+    if (/[\^+-]/.test(exponent) && !/^\s*-?\d+\s*$/.test(exponent)) {
+      const digits = exponent.match(/\d+/g) ?? [];
+      if (exponent.includes('^') || digits.some((d) => Number(d) > 1_000)) {
+        return `an exponent this cannot bound (${exponent.slice(0, 20)})`;
+      }
     }
   }
   return undefined;

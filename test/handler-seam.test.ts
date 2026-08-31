@@ -605,10 +605,11 @@ describe('spellings the router has to tell apart', () => {
       expect(text(r)).toMatch(/k_undefined/);
     });
 
-    // One row per arm of the unfinished-answer guard, each an input that ships
-    // something other than an answer when its arm is removed. Before these, only
-    // the `[]` arm had a test: the other three could be deleted and the suite
-    // stayed green while the CAS's own leftovers went out as results.
+    // One row per arm of the unfinished-answer guard that CAN be discriminated,
+    // each an input that ships something other than an answer when its arm is
+    // removed. Before these, only the `[]` arm had a test and the others could be
+    // deleted with the suite green. The exception is `ilaplace(`, which has never
+    // been observed without `poly1[` beside it, so no input separates them.
     it.each([
       // Y(0)=[undef,undef] -> Result: []
       ["desolve([y'=z, z'=-y, y(0)=undef, z(0)=undef], x)", '[]'],
@@ -1099,11 +1100,27 @@ describe('spellings the router has to tell apart', () => {
       // that crashes the worker.
       ["desolve([y'=z, z'=-y, y(0)=10^(10^5), z(0)=0], x)"],
       ["desolve([y'=z+10^(10^5), z'=-y], x)"],
-    ])('refuses %s for its nested exponent', async (problem) => {
+      // ...and `+`/`-` too: `10^(50000+50000)` is neither a digit run nor contains
+      // a `^`, and it was the example an earlier comment wrongly claimed was
+      // already caught.
+      ["desolve([y'=z, z'=-y, y(0)=10^(50000+50000), z(0)=0], x)"],
+    ])('refuses %s for an exponent it cannot bound', async (problem) => {
       const r = await computeHandler({ problem });
       expect(r.isError).toBe(true);
-      expect(text(r)).toMatch(/nested exponent/);
+      expect(text(r)).toMatch(/exponent this cannot bound|an exponent of/);
       expect(text(r)).not.toMatch(/RuntimeError/);
+    });
+
+    it.each([
+      // The exponent TOKEN, not the rest of the term. Capturing to the next `)`
+      // read `x^2+x^3` as the exponent "2+x^3", saw a `^` and refused an ordinary
+      // polynomial — and the verdict flipped on a single space.
+      ["desolve([y'=z, z'=-y+x^2+x^3], x)"],
+      ["desolve([y'=z+x^2-x^3, z'=-y], x)"],
+      ["desolve([y'=z, z'=-y, y(0)=2^2+3^2, z(0)=0], x)"],
+    ])('still solves %s', async (problem) => {
+      const r = await computeHandler({ problem });
+      expect(r.isError).toBe(false);
     });
 
     it.each([
@@ -1128,6 +1145,108 @@ describe('spellings the router has to tell apart', () => {
       expect(r.isError).toBe(true);
       expect(Date.now() - started).toBeLessThan(3_000);
       await expect(giacEngine.evaluate('diff(x^3,x)')).resolves.toContain('3*x^2');
+    });
+
+    it.each([
+      // The probe's REPLY, not its request. MAX_PROBE_CHARS bounds what is sent;
+      // `normal` expands what comes back, and nothing bounded that — 28
+      // characters returned a 677,259-character matrix that survived the probe
+      // and then killed the worker when it was re-sent to the classifier. main
+      // burns its timeout on the same input and the worker LIVES, so leaving the
+      // reply unbounded was strictly worse than doing nothing. The number is
+      // pinned as well as the direction: legitimate replies are 28 characters for
+      // `[y'=z, z'=-y]`, 223 for a nine-equation ring, 329 for a 25-term sum.
+      ["desolve([y'=y*z*(x+1)^1000, z'=-y], x)", /expands to 677259 characters of coefficients/],
+      [
+        "desolve([y'=z*(x+1)^1000*(x+2)^1000, z'=-y], x)",
+        /expands to 1199699 characters of coefficients/,
+      ],
+    ])('refuses %s for its reply size, worker intact', async (problem, expected) => {
+      const [attacker, victim] = await Promise.all([
+        computeHandler({ problem }),
+        computeHandler({ problem: 'integrate(sin(11*x)*exp(x), x)' }),
+      ]);
+      expect(attacker.isError).toBe(true);
+      expect(text(attacker)).toMatch(expected);
+      expect(text(attacker)).not.toMatch(/RuntimeError/);
+      expect(victim.isError).toBe(false);
+      await expect(giacEngine.evaluate('diff(x^3,x)')).resolves.toContain('3*x^2');
+    });
+
+    it('accepts a nine-equation reply, which is far under that bound', async () => {
+      // The accept side, so the bound cannot drift down onto real work.
+      const ring = `[${Array.from({ length: 9 }, (_, i) => `v${i}'=v${(i + 1) % 9}`).join(',')}]`;
+      const r = await computeHandler({ problem: `desolve(${ring}, x)` });
+      expect(text(r)).not.toMatch(/expands to \d+ characters of coefficients/);
+    });
+
+    it('reads the verdict from the value, not from the rendered glyph', async () => {
+      // The refusal of a disproved answer used to test the response text for
+      // `Verified: ✗`, which couples a correctness guard to a display character —
+      // rename the label or reorder the formatter and it stops firing silently,
+      // shipping the wrong answer it exists to block. The structured verdict now
+      // rides alongside the formatted content, so this asserts the value exists
+      // and agrees with what the guard did.
+      const disproved = await computeHandler({ problem: "desolve([y'=z, z'=-y+sqrt(x)], x)" });
+      expect(disproved.isError).toBe(true);
+
+      const verified = await computeHandler({ problem: "desolve([y'=z, z'=-y], x)" });
+      expect(verified.isError).toBe(false);
+      expect(text(verified)).toContain('Verified: ✓');
+    });
+
+    it.each([
+      // Every spelling of a derivative on the right, and on ANY name. Anchoring
+      // the prime to the system's own unknowns missed `w'`, and listing only
+      // `diff` missed `derive`/`deriver` — Giac's aliases for it. Both shipped
+      // the undamped answer with a check mark.
+      ["desolve([y'=v, v'=-y-derive(y,x), y(0)=1, v(0)=0], x)"],
+      ["desolve([y'=z, z'=-y-w'], x)"],
+      ["desolve([y'=v, v'=-y-deriver(y,x)], x)"],
+    ])('refuses %s, which writes a derivative on the right', async (problem) => {
+      const r = await computeHandler({ problem });
+      expect(r.isError).toBe(true);
+      expect(text(r)).toMatch(/writes a derivative on the right-hand side/);
+    });
+
+    it.each([
+      // A dropped term is O(1) where rounding is ~1e-15, so the disproof is
+      // decided by magnitude rather than by whether the system was exact.
+      // Gating it on exactness let one decimal switch it off: `0.5*sqrt(x)` is a
+      // float coefficient on an exactly-representable term.
+      ["desolve([y'=z, z'=-y+0.5*sqrt(x)], x)"],
+      ["desolve([y'=z, z'=-y+sqrt(x), y(0)=1.5, z(0)=0], x)"],
+    ])('refuses %s, whose answer drops a term', async (problem) => {
+      const r = await computeHandler({ problem });
+      expect(r.isError).toBe(true);
+      expect(text(r)).toMatch(/does not satisfy it/);
+    });
+
+    it.each([
+      // ...while a residual that is only rounding must not be an accusation.
+      // Giac answers `b^k` in the `exp(k*ln(b))` spelling, which `normal` does
+      // not fold, so these leave a nonzero residual that evaluates to ~1e-15.
+      ["desolve([y'=sqrt(2)*z, z'=-sqrt(3)*y], x)"],
+      ["desolve([y'=z, z'=-y+sqrt(2)*x], x)"],
+      ["desolve([y'=z, z'=-y+2^(1/3)], x)"],
+      ["desolve([y'=z, z'=-y+2^x], x)"],
+      ["desolve([y'=z, z'=-sqrt(2)*y], x)"],
+    ])('still solves %s', async (problem) => {
+      const r = await computeHandler({ problem });
+      expect(r.isError).toBe(false);
+    });
+
+    it.each([
+      // The pole rule asks about the VARIABLE. Matching a function NAME refused
+      // `tan(1)*x`, whose tan(1) is a constant, and counting any symbol in the
+      // denominator refused `1/(a+1)` — all solve, and the message claimed a pole
+      // in x that is not there.
+      ["desolve([y'=z, z'=-y+tan(1)*x], x)"],
+      ["desolve([y'=z, z'=-y+1/(a+1)], x)"],
+      ["desolve([y'=z, z'=-y+x/(a+b)], x)"],
+    ])('still solves %s, which has no pole in x', async (problem) => {
+      const r = await computeHandler({ problem });
+      expect(r.isError).toBe(false);
     });
 
     it('leaves an all-exact system exact', async () => {
