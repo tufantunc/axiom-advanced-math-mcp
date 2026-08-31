@@ -1,6 +1,5 @@
 import { stripEnclosingBrackets } from './compute/arg-parsing.js';
-import { nestingDepth } from './giac-eval.js';
-import { splitTopLevel } from './output-cleanup.js';
+import { nestingDepth, splitTopLevel } from './output-cleanup.js';
 import { unicodeToAscii } from './unicode-normalize.js';
 
 /**
@@ -13,11 +12,10 @@ import { unicodeToAscii } from './unicode-normalize.js';
  * equation right-hand sides went unguarded for a whole review round.
  *
  * The invariant is that nothing here EVALUATES anything, and it is checkable
- * rather than asserted: there is no `async` function and no `await` in this file.
- * It does import `nestingDepth` from the module that owns the LaTeX round-trip,
- * which is a pure text measurement and not a call — worth naming, because a
- * sweeping "imports no engine" would be the kind of claim that has misled a
- * reader of this code before.
+ * rather than asserted: there is no `async` function and no `await` in this file,
+ * and every module it imports is itself engine-free, so no path through the
+ * module graph reaches the CAS. An oxlint no-restricted-imports rule on this path
+ * holds the second half; the first is in ode-system-shape-boundary.test.ts.
  */
 
 /**
@@ -39,8 +37,8 @@ const MAX_SYSTEM_EQUATIONS = 9;
 /**
  * Ceiling on a single initial condition, as written by the caller.
  *
- * Its own number rather than MAX_COMMAND_CHARS, which is measured for the
- * finished command and only happens to sit nearby: the two bound different text
+ * Its own number rather than MAX_COMMAND_CHARS in ode-system.ts, which is
+ * measured for the finished command: the two bound different text
  * against different limits, and borrowing one for the other hides the
  * measurement.
  *
@@ -77,7 +75,7 @@ const MAX_CONDITION_DEPTH = 100;
  *
  * Defined once because two places need it and they must not disagree. The form
  * is checked BEFORE the member is ever handed to the engine — it used to be
- * checked only while assembling the vector condition, 300 lines downstream, so
+ * checked only while assembling the vector condition, over in ode-system.ts, so
  * `[y'=z, z'=-y, ifactor(2^257-1)]` was EXECUTED on the shared worker for the
  * full 10s budget and then rejected as "not of the form y(0)=1". Whatever this
  * does not match is not evaluated at all.
@@ -218,7 +216,6 @@ export function validateSystemShape(
   | {
       functions: string[];
       rhss: string[];
-      zeroAll: string;
       /** Present exactly when the caller gave conditions; absent is "none". */
       conditions?: { point: string; values: string[] };
     }
@@ -256,8 +253,8 @@ export function validateSystemShape(
         'solved for — rename it (for an SIR model, `ii` or `y2`)',
     };
   }
-  // Before the PROBE sees any of it, which is the first engine call this makes
-  // and 139 lines ahead of the conditions scan. A right-hand side is caller text
+  // Before the PROBE sees any of it — the first engine call the translation makes,
+  // and one this file cannot reach. A right-hand side is caller text
   // too, and only its LENGTH was bounded: `10^100000` is nine characters, sailed
   // through MAX_PROBE_CHARS, and trapped the engine inside the probe — taking a
   // concurrent caller's unrelated call down with it, where main answered the same
@@ -316,7 +313,6 @@ export function validateSystemShape(
     };
   }
 
-  const zeroAll = `[${functions.map((f) => `${f}=0`).join(',')}]`;
   // `z(x)` and `z` are the same unknown. Left applied, `grad(z(x),[y,z])` is
   // [0,0] — the function is opaque to grad — so the matrix came back all zeros
   // and the system was "solved" as Y'=0, answering the constant [[c_0,c_1]].
@@ -381,8 +377,8 @@ export function validateSystemShape(
   // and saying otherwise is how the last four of these were missed.
   const parsedConditions: RegExpExecArray[] = [];
   for (const condition of system.conditions) {
-    // Matched once, and the match is what the reading below consumes. Checking
-    // the form here and then again there left a second refusal eleven lines away
+    // Matched once, and the match is what readConditions consumes. Checking the
+    // form here and then again there left a second refusal in readConditions
     // that nothing can reach, wording the same problem differently — so an edit
     // to the sentence a caller sees would have left the unreachable copy quietly
     // disagreeing.
@@ -392,8 +388,9 @@ export function validateSystemShape(
     }
     parsedConditions.push(parsed);
     // Length AND depth, both bounded here because the conditions reach an engine
-    // call with nothing else measuring them: MAX_PROBE_CHARS bounds the probe and
-    // MAX_COMMAND_CHARS the finished command, and both run later.
+    // call with nothing else measuring them: MAX_PROBE_CHARS and MAX_COMMAND_CHARS,
+    // both in ode-system.ts, bound the probe and the finished command and run only
+    // after this function has returned.
     //
     // Two shapes, because they trap differently and neither bound catches the
     // other. Measured on `exact([y(0)=1*2*2*…,z(0)=0])`, a FLAT condition answers
@@ -426,10 +423,10 @@ export function validateSystemShape(
     }
   }
 
-  if (parsedConditions.length === 0) return { functions, rhss, zeroAll };
+  if (parsedConditions.length === 0) return { functions, rhss };
   const read = readConditions(parsedConditions, functions);
   if ('error' in read) return read;
-  return { functions, rhss, zeroAll, conditions: read };
+  return { functions, rhss, conditions: read };
 }
 
 /**

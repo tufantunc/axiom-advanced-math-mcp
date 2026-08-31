@@ -1,8 +1,7 @@
 import { isPrintedZero, splitTopLevel } from './output-cleanup.js';
 import { stripEnclosingBrackets } from './compute/arg-parsing.js';
 import type { GiacEngineLike } from './compute/hygiene.js';
-import type { OdeSystem } from './ode-system-shape.js';
-import { validateSystemShape } from './ode-system-shape.js';
+import { validateSystemShape, type OdeSystem } from './ode-system-shape.js';
 
 /**
  * Translating a list-form ODE system into the form this CAS actually solves.
@@ -104,6 +103,18 @@ const MAX_CONDITION_FLOAT_DEGREE = 14;
  * z'=-y]` emitted `desolve(Y'=[[0,Y],[-1,0]]*Y,x,Y)` and answered `[]` — the very
  * defect this module exists to remove — and `[y'=z+Y, z'=-y]` answered wrongly.
  */
+/**
+ * Whitespace-free copy, for comparing two of the engine's own prints of the same
+ * expression — `exact()` reformats spacing without changing the value, so a raw
+ * string compare reports a difference that is not one.
+ *
+ * One copy: it was defined twice inside translateOdeSystem, in two adjacent try
+ * blocks feeding the same comparison, so normalising a different whitespace class
+ * in one would have moved the matrix verdict while leaving the conditions verdict
+ * on the old rule.
+ */
+const flat = (text: string) => text.trim().replaceAll(/\s+/g, '');
+
 function vectorSymbol(taken: string[]): string {
   const used = new Set(taken.flatMap((t) => t.match(/[A-Za-z_]\w*/g) ?? []));
   let name = 'Y';
@@ -175,7 +186,7 @@ export async function translateOdeSystem(
   const evaluate = (expr: string): Promise<string> => engine.evaluate(expr);
   const shape = validateSystemShape(system, variable);
   if ('error' in shape) return shape;
-  const { functions, rhss, zeroAll, conditions } = shape;
+  const { functions, rhss, conditions } = shape;
 
   // `grad` gives the whole row at once, and its entries answer BOTH questions a
   // hand-built residual used to: an entry naming an unknown function means the
@@ -203,6 +214,7 @@ export async function translateOdeSystem(
   // is already binding. What it gives up is a coefficient that is constant only
   // under a trig identity, which it reports as non-constant.
   const vec = `[${functions.join(',')}]`;
+  const zeroAll = `[${functions.map((f) => `${f}=0`).join(',')}]`;
   const probe =
     `[[${rhss.map((r) => `normal(grad(${r},${vec}))`).join(',')}],` +
     `subst([${rhss.join(',')}],${zeroAll}),` +
@@ -389,7 +401,6 @@ export async function translateOdeSystem(
       evaluate(`exact(${matrix})`),
       evaluate(`exact(${constants})`),
     ]);
-    const flat = (text: string) => text.trim().replaceAll(/\s+/g, '');
     holdsExact = Number(atoms.trim()) > 0;
     floatInMatrix = flat(exactMatrix) !== flat(matrix);
     floatInForcing = flat(exactForcing) !== flat(constants);
@@ -431,7 +442,6 @@ export async function translateOdeSystem(
         evaluate(`exact(${written})`),
         evaluate(written),
       ]);
-      const flat = (text: string) => text.trim().replaceAll(/\s+/g, '');
       floatInConditions = flat(asExact) !== flat(asWritten);
     } catch (failure) {
       // Same classification as the probe's. An outage that lands here is not the
@@ -603,28 +613,21 @@ export async function translateOdeSystem(
   const rhs = homogeneous ? `${matrix}*${vector}` : `${matrix}*${vector}+${constants}`;
   const body = `${vector}'=${rhs}`;
 
-  // The fact that decides the branch is the one carrying the values, so the
-  // branch cannot disagree with what it guards.
-  if (conditions === undefined) {
-    return withinLimit(
-      `desolve(${body},${variable},${vector})`,
-      functions,
-      0,
-      matrix,
-      homogeneous ? '' : constants
-    );
-  }
   // Conditions have to become one vector condition: Giac takes `Y(0)=[1,0]`, not
-  // the per-function `y(0)=1, z(0)=0` the caller wrote.
-  const vectorCondition = buildVectorCondition(vector, conditions.point, conditions.values);
-  return withinLimit(
-    `desolve([${body},${vectorCondition}],${variable},${vector})`,
+  // the per-function `y(0)=1, z(0)=0` the caller wrote. The fact that decides
+  // this is the one carrying the values, so it cannot disagree with what it
+  // guards.
+  const vectorCondition =
+    conditions && buildVectorCondition(vector, conditions.point, conditions.values);
+  return withinLimit({
+    command: vectorCondition
+      ? `desolve([${body},${vectorCondition}],${variable},${vector})`
+      : `desolve(${body},${variable},${vector})`,
     functions,
-    vectorCondition.length,
     matrix,
-    homogeneous ? '' : constants,
-    vectorCondition
-  );
+    constants: homogeneous ? '' : constants,
+    ...(vectorCondition ? { condition: vectorCondition } : {}),
+  });
 }
 
 /**
@@ -645,22 +648,18 @@ export async function translateOdeSystem(
  * of one question: how much text this module is willing to hand the engine.
  */
 function withinLimit(
-  command: string,
-  functions: string[],
-  conditionChars: number,
-  matrix: string,
-  constants: string,
-  condition?: string
+  translation: Extract<SystemTranslation, { command: string }>
 ): SystemTranslation {
+  const { command, condition } = translation;
   if (command.length <= MAX_COMMAND_CHARS) {
-    return { command, functions, matrix, constants, ...(condition ? { condition } : {}) };
+    return translation;
   }
   // Name the part that is actually large. Blaming the conditions unconditionally
   // told a caller who wrote none — `[y'=z+10^900, z'=-y]`, whose 938 characters
   // are all the engine's own expansion of the forcing term — to shorten initial
   // conditions it never supplied.
   const cause =
-    conditionChars * 2 > command.length
+    (condition?.length ?? 0) * 2 > command.length
       ? 'use shorter initial conditions'
       : 'use a shorter forcing term';
   return {
@@ -673,7 +672,8 @@ function withinLimit(
 /**
  * The vector condition Giac takes, `Y(0)=[1,0]`, from an already-checked reading.
  *
- * Split from the checking above because the checks need only the caller's text
+ * Split from the checking in ode-system-shape.ts because those need only the
+ * caller's text
  * while this needs the vector symbol, which is not known until the coefficient
  * matrix has been extracted. Together they made four decisions that are pure
  * string work wait for five engine round trips that a bad condition made

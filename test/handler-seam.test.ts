@@ -606,6 +606,29 @@ describe('spellings the router has to tell apart', () => {
       expect(text(r)).toMatch(/k_undefined/);
     });
 
+    it.each([['T_Inf'], ['V_Inf'], ['Inf_k'], ['a1Inf']])(
+      'does not refuse a coefficient whose NAME contains Inf (%s)',
+      async (name) => {
+        // Same defect as the row above, on a different token, and reintroduced by
+        // sharing detectFailure: its `Inf` rule bounded the token with [^A-Za-z] and
+        // (?![A-Za-z]), so _ and digits counted as boundaries. `T_Inf` is free-stream
+        // notation. Giac solves these and the substitution check verifies them, and
+        // they were being refused with a message blaming the CAS.
+        const r = await computeHandler({ problem: `desolve([y'=${name}*z, z'=-y], x)` });
+        expect(r.isError).toBe(false);
+        expect(text(r)).toMatch(new RegExp(name));
+      }
+    );
+
+    it('refuses an infinite solution component', async () => {
+      // The `infinity` arm, which a comment here once called unreachable. No other
+      // arm fires on this: detectFailure passes `infinity` (correct divergence, as
+      // in integrate(1/x^2,x,0,1)) and there is no poly1[ or ilaplace(. The pole
+      // rule cannot refuse it either — denom(x^x) does not mention x.
+      const r = await computeHandler({ problem: "desolve([y'=z, z'=-y+x^x], x)" });
+      expect(r.isError).toBe(true);
+    });
+
     // One row per arm of the unfinished-answer guard that CAN be discriminated,
     // each an input that ships something other than an answer when its arm is
     // removed. Before these, only the `[]` arm had a test and the others could be

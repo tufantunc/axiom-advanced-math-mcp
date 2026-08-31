@@ -15,5 +15,15 @@
     "unicorn/prefer-string-replace-all": "warn",
     "unicorn/prefer-string-raw": "warn"
   },
+  "overrides": [
+    {
+      "files": ["src/server/tools/ode-system-shape.ts"],
+      "rules": {
+        "no-restricted-imports": ["error", {
+          "patterns": ["**/giac/*", "./giac-eval.js", "./self-verify.js", "./calculus.ts"]
+        }]
+      }
+    }
+  ],
   "ignorePatterns": ["dist/", "node_modules/", "src/server/giac/giac.wasm.js"]
 }

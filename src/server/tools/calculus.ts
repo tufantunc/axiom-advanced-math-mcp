@@ -206,16 +206,18 @@ export async function calculusHandler(args: Record<string, unknown>) {
       //
       // `infinity` stays local. It is not a failure in general — `integrate(1/x^2,
       // x, 0, 1)` correctly diverges to `+infinity` and detectFailure is right to
-      // pass it — but a COMPONENT of a solution vector that is infinite is not a
-      // solution. `[y'=z+exp(x)/x, z'=-y]` answered `[[infinity,infinity]]` with
-      // isError:false. Token-matched so a coefficient named `infinity_k` is not
-      // caught by its own name.
+      // pass it — but neither an infinite COMPONENT of a solution vector nor an
+      // `integrate(…,0,+infinity)` the engine never evaluated is a solution.
+      // Token-matched so a coefficient named `infinity_k` is not caught by its own
+      // name.
       //
-      // Currently unreachable: the pole rule refuses that input, and every other
-      // shape tried, before the answer is computed. Kept because it states a
-      // different fact — an infinite component is not a solution, whatever
-      // produced it — and the pole rule has already been narrowed once, from nine
-      // named functions to three. Recorded so the missing test is not hunted for.
+      // Reached by `[y'=z, z'=-y+x^x]`, which answers `[[infinity,infinity]]`, and
+      // by four forcing terms that come back with an unevaluated
+      // `integrate(…,x,0,+infinity)`: exp(exp(x)), Gamma(x), log(x)^2,
+      // exp(x)*sin(exp(x)). The pole rule cannot refuse any of them — `denom(x^x)`
+      // does not mention x, and none is tan/cotan/tanh — so this arm is the only
+      // guard on that answer. An earlier version of this comment called the arm
+      // unreachable; `x^x` was the counterexample, and the test below pins it.
       //
       // `ilaplace(` has never been observed without `poly1[` beside it — over 120
       // random matrices and every shape tried here — so no input discriminates
