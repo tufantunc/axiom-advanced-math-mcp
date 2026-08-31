@@ -19,6 +19,7 @@ import {
   extractNumberTheory,
   extractGeometry,
   extractNumericalMethods,
+  extractSequenceIdentify,
 } from '../src/server/tools/compute/extractors.js';
 
 describe('Extractors', () => {
@@ -253,6 +254,15 @@ describe('Extractors', () => {
       const result = extractNumericalMethods('newton(x^2-2, x, 1.5)');
       expect(result.args.method).toBe('newton_raphson');
       expect(result.args.expression).toBe('x^2-2');
+      expect(result.args.initial_guess).toBe(1.5);
+    });
+  });
+
+  describe('extractSequenceIdentify', () => {
+    it('parses numeric terms and drops non-numeric junk', () => {
+      const result = extractSequenceIdentify('sequence_identify(1, x, 4, 9, 16)');
+      expect(result.handler).toBe('sequence_identify');
+      expect(result.args.terms).toEqual([1, 4, 9, 16]);
     });
   });
 });

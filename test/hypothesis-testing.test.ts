@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import { giacEngine } from '../src/server/giac/index.js';
 import { hypothesisTestingHandler } from '../src/server/tools/hypothesis-testing.js';
 
@@ -154,6 +154,67 @@ describe('hypothesis_testing', () => {
       });
       expect(result.isError).toBe(false);
       expect(allText(result)).toContain('Error');
+    });
+  });
+
+  // The p-value fallbacks: when Giac cannot produce the CDF, the tool must
+  // say so ("computation error" / "Could not determine significance") rather
+  // than printing NaN or a fabricated verdict.
+  describe('engine-failure fallbacks', () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('chi-square reports a computation error when the engine rejects', async () => {
+      const spy = vi.spyOn(giacEngine, 'evaluate').mockRejectedValue(new Error('engine down'));
+      const result = await hypothesisTestingHandler({
+        test: 'chi_square_independence',
+        data: { contingency_table: [[10, 20], [30, 40]], significance: 0.05 },
+      });
+      expect(spy).toHaveBeenCalled();
+      expect(result.isError).toBe(false);
+      const text = allText(result);
+      expect(text).toContain('p-value = computation error');
+      expect(text).toContain('Could not determine significance');
+    });
+
+    it('chi-square treats unparseable Giac output like a failure', async () => {
+      vi.spyOn(giacEngine, 'evaluate').mockResolvedValue('undef');
+      const result = await hypothesisTestingHandler({
+        test: 'chi_square_independence',
+        data: { contingency_table: [[10, 20], [30, 40]], significance: 0.05 },
+      });
+      expect(result.isError).toBe(false);
+      const text = allText(result);
+      expect(text).toContain('p-value = computation error');
+      expect(text).toContain('Could not determine significance');
+    });
+
+    it('anova with small F reports a computation error when the engine fails', async () => {
+      vi.spyOn(giacEngine, 'evaluate').mockRejectedValue(new Error('engine down'));
+      // Nearly identical group means → small F → no p=0 heuristic
+      const result = await hypothesisTestingHandler({
+        test: 'one_way_anova',
+        data: { groups: [[1, 2, 3], [2, 3, 4], [3, 4, 5]], significance: 0.05 },
+      });
+      expect(result.isError).toBe(false);
+      const text = allText(result);
+      expect(text).toContain('p-value = computation error');
+      expect(text).toContain('Could not determine significance');
+    });
+
+    it('anova with large F reports p = 0 when the engine fails', async () => {
+      vi.spyOn(giacEngine, 'evaluate').mockRejectedValue(new Error('engine down'));
+      // Zero within-group variance, huge between-group variance → F > 10
+      const result = await hypothesisTestingHandler({
+        test: 'one_way_anova',
+        data: { groups: [[1, 1, 1], [50, 50, 50], [100, 100, 100]], significance: 0.05 },
+      });
+      expect(result.isError).toBe(false);
+      const text = allText(result);
+      expect(text).toContain('p-value = 0.000000');
+      expect(text).toContain('Reject H₀');
+      expect(text).not.toContain('computation error');
     });
   });
 });
