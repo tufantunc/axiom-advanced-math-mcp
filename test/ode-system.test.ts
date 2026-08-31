@@ -15,13 +15,20 @@ import { parseOdeSystem, translateOdeSystem } from '../src/server/tools/ode-syst
  * question a non-homogeneous system asks is answered with `degree` (default 0),
  * so a test that sets a forcing term does not have to care about it.
  */
-const stub = (reply: string | Error, degree = '[0,0,0]') => ({
+const stub = (reply: string | Error, degree = '[0,0]') => ({
   evaluate: (expr: string): Promise<string> => {
     if (expr.startsWith('[max(')) return Promise.resolve(degree);
     // The domain classifier: `exact` echoes its argument, so nothing reads as a
     // float unless a test says otherwise.
     if (expr.startsWith('size(lvar(')) return Promise.resolve('0');
     if (expr.startsWith('exact(')) return Promise.resolve(expr.slice(6, -1));
+    // The conditions scan makes TWO calls — `exact([...])` and the bare list —
+    // and only the first was answered. The bare one fell through to the
+    // coefficient reply below, so the two never matched and every conditioned
+    // system built on this stub read as holding a float. Nothing failed only
+    // because the conditioned tests here are homogeneous; the next one written
+    // would have asserted a float refusal for a system with no float in it.
+    if (/^\[[A-Za-z_]\w*\(/.test(expr)) return Promise.resolve(expr);
     return reply instanceof Error ? Promise.reject(reply) : Promise.resolve(reply);
   },
 });
@@ -252,6 +259,178 @@ describe('translateOdeSystem refusals', () => {
   });
 });
 
+describe('what is decided before the engine is asked', () => {
+  const system = (equation: string) => {
+    const parsed = parseOdeSystem(equation);
+    if (!parsed) throw new Error(`not a system: ${equation}`);
+    return parsed;
+  };
+
+  it.each([
+    // Every one of these is decidable from the caller's text, and every one used
+    // to cost five engine round trips first — on a shared, single-threaded
+    // worker, for a request that was never going to be answered.
+    ["[y'=z, z'=-y, y(0)=1, w(0)=2]", /names w in an initial condition/],
+    ["[y'=z, z'=-y, y(0)=1]", /a value for every function, or none/],
+    ["[y'=z, z'=-y, y(0)=1, z(1)=0]", /different points/],
+    ["[y'=z, z'=-y, y(0)=1, y(0)=2, z(0)=0]", /two different initial conditions/],
+    ["[y'=z, z'=-y, 7]", /not of the form y\(0\)=1/],
+    ["[y'=z, z'=-y, y(0)=10^100000, z(0)=0]", /implausible magnitude/],
+  ])('refuses %s without asking the engine at all', async (equation, expected) => {
+    let calls = 0;
+    const out = await translateOdeSystem(system(equation), 'x', {
+      evaluate: (): Promise<string> => {
+        calls += 1;
+        return Promise.resolve('[[[0,1],[-1,0]],[0,0],[0,0]]');
+      },
+    });
+    expect('error' in out && out.error).toMatch(expected);
+    expect(calls).toBe(0);
+  });
+
+  it.each([
+    // The engine's own text is not the caller's business: one names this
+    // service's internal worker recycling, the other a probe expression the
+    // caller never wrote.
+    // The worker's lifecycle is not a verdict on the caller's mathematics: the
+    // class is reported so an outage is distinguishable from a real refusal,
+    // while the engine's own text still never reaches them.
+    [new Error('Giac worker exited (code 1)'), /^could not be analysed: the CAS was unavailable/],
+    [new Error('Bad Argument Value'), /^could not be analysed$/],
+    // A per-call timeout is the caller's cost, not an outage — this input wedged
+    // the shared worker for the whole budget. Classifying it as unavailable
+    // inverted the fix's purpose and advised a retry that repeats the wedge.
+    [new Error('Giac evaluation timed out'), /^could not be analysed in the time the CAS allows/],
+    // ...and the state where every caller would otherwise be told their
+    // mathematics is broken because the engine never came up.
+    [new Error('Giac worker init failed: WASM init timeout'), /the CAS was unavailable/],
+    [new Error('worker host disposed'), /the CAS was unavailable/],
+    // The two most common outages there are, and both were deletable from the
+    // classifier with the suite green: `Giac worker unavailable` is what every
+    // call pending on a recycle receives.
+    [new Error('Giac worker unavailable'), /the CAS was unavailable — retry/],
+    [
+      new Error('Giac worker recycled repeatedly; call abandoned'),
+      /the CAS was unavailable — retry/,
+    ],
+    [
+      'GIAC_ERROR: Bad Argument Value grad(z,[y,z]) at line 1 col 7',
+      // ...and the function NAMES are the caller's own data — the one signal
+      // identifying a name the CAS has reserved, which dropping the raw string
+      // had removed entirely.
+      /could not be read for y, z — one of those names may be reserved/,
+    ],
+  ])('refuses without quoting the engine (%s)', async (reply, expected) => {
+    const out = await translateOdeSystem(system("[y'=z, z'=-y]"), 'x', {
+      evaluate: (): Promise<string> =>
+        reply instanceof Error ? Promise.reject(reply) : Promise.resolve(reply),
+    });
+    expect('error' in out && out.error).toMatch(expected);
+  });
+
+  it.each([
+    // The bound at its value, both ways. A real initial condition is a number —
+    // these are far past anything a caller writes, and the trapping shape is only
+    // a factor of two above the cap, so the number matters rather than just the
+    // direction.
+    // `y(0)=` is five of the characters the bound counts, so these are the
+    // 280th and 281st character of the condition itself.
+    ['at the limit', 275, 'accept'],
+    ['one over', 276, 'refuse'],
+  ])('reads a condition %s as %s', async (_label, valueLength, verdict) => {
+    let calls = 0;
+    const value = 'x'.repeat(valueLength);
+    const out = await translateOdeSystem(system(`[y'=z, z'=-y, y(0)=${value}, z(0)=0]`), 'x', {
+      evaluate: (expr: string): Promise<string> => {
+        calls += 1;
+        if (expr.startsWith('[max(')) return Promise.resolve('[0,0,0]');
+        if (expr.startsWith('size(lvar(')) return Promise.resolve('0');
+        if (expr.startsWith('exact(')) return Promise.resolve(expr.slice(6, -1));
+        return Promise.resolve('[[[0,1],[-1,0]],[0,0],[0,0]]');
+      },
+    });
+    if (verdict === 'refuse') {
+      expect('error' in out && out.error).toMatch(/281 characters, above the 280/);
+      expect(calls).toBe(0);
+    } else {
+      // That it was ACCEPTED, not merely that something downstream ran. `calls > 0`
+      // holds for a refusal further down too, so the row named "accept" was pinned
+      // only against the bound being tightened, never against the value at the
+      // limit becoming unusable for some other reason.
+      expect('command' in out).toBe(true);
+    }
+  });
+
+  it('refuses an over-long condition before it reaches the engine', async () => {
+    // Nothing else measured this channel: MAX_PROBE_CHARS bounds the probe and
+    // MAX_COMMAND_CHARS the finished command, both later. A flat 7,441-character
+    // condition traps the engine, and at that size it exhausts the JS stack
+    // rather than trapping in WASM — which left the worker UP and corrupted, so
+    // three unrelated callers got raw engine text before it crashed itself out.
+    let calls = 0;
+    // The worst shape rather than the cheapest: a division chain traps at 606
+    // characters where a flat product survives to 994, and a factorial chain
+    // poisons the worker WITHOUT throwing, so nothing downstream would catch it.
+    const long = `9${'/9'.repeat(400)}`;
+    const out = await translateOdeSystem(system(`[y'=z, z'=-y, y(0)=${long}, z(0)=0]`), 'x', {
+      evaluate: (): Promise<string> => {
+        calls += 1;
+        return Promise.resolve('[[[0,1],[-1,0]],[0,0],[0,0]]');
+      },
+    });
+    expect('error' in out && out.error).toMatch(/\d+ characters, above the \d+/);
+    expect(calls).toBe(0);
+  });
+
+  it('refuses a condition nested past what the CAS can parse', async () => {
+    // Depth is a separate axis from length: nested 600 deep this was 2,415
+    // characters — inside every length cap that existed — and killed the shared
+    // worker. Sending one copy per call raised that threshold; it did not remove
+    // it.
+    let calls = 0;
+    // Deep but SHORT — 203 characters, inside the length bound above, so this
+    // exercises the depth axis rather than falling through to it.
+    // Grouping parentheses, because they are the only shape dense enough to pass
+    // 100 levels inside the 400-character bound above — two characters a level
+    // against four for the cheapest call. They are also harmless to the engine
+    // past 600, so this pins the GUARD rather than the hazard; the hazard is
+    // function nesting, which is graceful at 100 and fatal at 400.
+    const deep = `${'('.repeat(101)}1${')'.repeat(101)}`;
+    const out = await translateOdeSystem(system(`[y'=z, z'=-y, y(0)=${deep}, z(0)=0]`), 'x', {
+      evaluate: (): Promise<string> => {
+        calls += 1;
+        return Promise.resolve('[[[0,1],[-1,0]],[0,0],[0,0]]');
+      },
+    });
+    expect('error' in out && out.error).toMatch(/nested \d+ deep, above the \d+ this tool accepts/);
+    expect(calls).toBe(0);
+  });
+
+  it('sends the condition text once per call, not twice in one', async () => {
+    // Doubling it into a single command turned a 7,528-character request — inside
+    // the 8,192 input cap — into a ~15,000-character command, past the ~10,000
+    // where Giac traps fatally and takes the shared worker with it.
+    const sent: string[] = [];
+    await translateOdeSystem(system("[y'=z, z'=-y, y(0)=1, z(0)=0]"), 'x', {
+      evaluate: (expr: string): Promise<string> => {
+        sent.push(expr);
+        if (expr.startsWith('[max(')) return Promise.resolve('[0,0]');
+        if (expr.startsWith('size(lvar(')) return Promise.resolve('0');
+        if (expr.startsWith('exact(')) return Promise.resolve(expr.slice(6, -1));
+        return Promise.resolve('[[[0,1],[-1,0]],[0,0],[0,0]]');
+      },
+    });
+    // The TOTAL, not a per-expression ceiling. `copies < 2` is satisfied by zero,
+    // so the assertion passed when the substring appeared nowhere — including on
+    // the doubled command it exists to forbid, if the condition were spelt with a
+    // space. Two occurrences across two calls is the shape being asserted: one
+    // inside `exact(...)`, one bare.
+    const total = sent.reduce((n, expr) => n + expr.split('y(0)=1').length - 1, 0);
+    expect(total).toBe(2);
+    expect(sent.every((expr) => expr.split('y(0)=1').length - 1 <= 1)).toBe(true);
+  });
+});
+
 describe('translateOdeSystem numeric domain', () => {
   const system = (equation: string) => {
     const parsed = parseOdeSystem(equation);
@@ -304,13 +483,35 @@ describe('translateOdeSystem numeric domain', () => {
     expect(seen.some((e) => e.startsWith('evalf('))).toBe(false);
   });
 
+  it.each([
+    // An outage that lands in the CONDITIONS scan is still an outage. Only the
+    // probe's catch classified at first, so a recycle caused by somebody else's
+    // request read as a verdict on this caller's initial conditions.
+    [new Error('Giac worker exited (code 1)'), /the CAS was unavailable/],
+    [new Error('Giac evaluation timed out'), /in the time the CAS allows/],
+    [new Error('Bad Argument Value'), /could not be applied$/],
+  ])('classifies %s in the conditions scan too', async (thrown, expected) => {
+    const out = await translateOdeSystem(system("[y'=z, z'=-y, y(0)=1, z(0)=0]"), 'x', {
+      evaluate: (expr: string): Promise<string> => {
+        if (expr.startsWith('exact([y')) return Promise.reject(thrown);
+        if (expr.startsWith('[max(')) return Promise.resolve('[0,0,0]');
+        if (expr.startsWith('size(lvar(')) return Promise.resolve('0');
+        if (expr.startsWith('exact(')) return Promise.resolve(expr.slice(6, -1));
+        return Promise.resolve('[[[0,1],[-1,0]],[0,0],[0,0]]');
+      },
+    });
+    expect('error' in out && out.error).toMatch(expected);
+  });
+
   it('refuses when the engine cannot examine the CONDITIONS for a decimal', async () => {
     // The sibling of the test below, and split out deliberately so one failure
     // cannot clear the other's flags — but only the matrix/forcing half was
     // pinned. Silently clearing this one turns off MAX_CONDITION_FLOAT_DEGREE.
     const out = await translateOdeSystem(system("[y'=z, z'=-y, y(0)=1, z(0)=0]"), 'x', {
       evaluate: (expr: string): Promise<string> => {
-        if (expr.startsWith('[exact(')) return Promise.reject(new Error('trap'));
+        // Two calls now, one copy of the condition text each — the single
+        // doubled command it used to send could cross Giac's trap threshold.
+        if (expr.startsWith('exact([y(0)')) return Promise.reject(new Error('trap'));
         if (expr.startsWith('[max(')) return Promise.resolve('[0,0]');
         if (expr.startsWith('size(lvar(')) return Promise.resolve('0');
         if (expr.startsWith('exact(')) return Promise.resolve(expr.slice(6, -1));

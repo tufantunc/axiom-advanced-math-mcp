@@ -23,6 +23,16 @@ export function isFatalWasmTrap(message: string): boolean {
     // identifies itself by type rather than by one of the phrases above is
     // still caught. Matching on Emscripten's exact wording alone would tie
     // detection to a build detail.
-    /\bRuntimeError\b/.test(message)
+    /\bRuntimeError\b/.test(message) ||
+    // Two more shapes that are just as unrecoverable and were not matched, so the
+    // worker stayed up serving a corrupted engine rather than being recycled.
+    // A deep or long expression can exhaust the JS stack inside the wrapper
+    // instead of trapping in WASM, and the engine afterwards answers every later
+    // caller with `WebAssembly.Exception` — three unrelated callers observed
+    // getting raw engine text before it eventually crashed itself out. Neither is
+    // reachable from a user typo: a syntax error is a RETURN value here, not an
+    // exception.
+    /Maximum call stack size exceeded/i.test(message) ||
+    /WebAssembly\.Exception/.test(message)
   );
 }

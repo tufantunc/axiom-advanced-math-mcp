@@ -2,6 +2,7 @@ import { isPrintedZero, splitTopLevel } from './output-cleanup.js';
 import { stripEnclosingBrackets } from './compute/arg-parsing.js';
 import type { GiacEngineLike } from './compute/hygiene.js';
 import { unicodeToAscii } from './unicode-normalize.js';
+import { nestingDepth } from './giac-eval.js';
 
 /**
  * Translating a list-form ODE system into the form this CAS actually solves.
@@ -83,6 +84,42 @@ const MAX_PROBE_REPLY_CHARS = 4_000;
 const MAX_COMMAND_CHARS = 800;
 
 /**
+ * Ceiling on a single initial condition, as written by the caller.
+ *
+ * Its own number rather than MAX_COMMAND_CHARS, which is measured for the
+ * finished command and only happens to sit nearby: the two bound different text
+ * against different limits, and borrowing one for the other hides the
+ * measurement.
+ *
+ * Sized from the WORST shape, not the cheapest. A flat product survives to 994
+ * characters, but the same call on `y(0)=9/9/9/…` answers at 566 and traps at
+ * 606, and on `y(0)=1!!!…` at 726 — so a bound justified by the product would
+ * have carried a third of the headroom it claimed. 280 keeps a factor of two
+ * below the worst measured, and costs nothing: a real initial condition is a
+ * number and rarely passes thirty characters.
+ *
+ * This bound is also the ONLY thing guarding the channel. The factorial shape
+ * does not throw — `exact([y(0)=1!!!…])` RETURNS a normal-looking answer and
+ * leaves the worker dead — so nothing downstream notices: `isFatalWasmTrap` is
+ * never consulted, and the try/catch around the call never runs.
+ */
+const MAX_CONDITION_CHARS = 280;
+
+/**
+ * Ceiling on how deeply a single initial condition may nest.
+ *
+ * Its own number for the same reason the one above is: MAX_ENGINE_DEPTH is
+ * measured for handing a RESULT back to `latex(...)`, and borrowing it here
+ * would be the mistake the length bound was just corrected for. Measured on
+ * `exact([y(0)=sqrt(1+…),z(0)=0])`, function nesting is refused gracefully at
+ * depth 100, burns the whole per-call budget at 200, and kills the worker at
+ * 400. Grouping parentheses are harmless past 600, so this refuses a little more
+ * than it must — one number cannot tell the two apart, and the conservative end
+ * is the one that does not take the worker down.
+ */
+const MAX_CONDITION_DEPTH = 100;
+
+/**
  * Ceiling on the degree of the forcing term in the independent variable.
  *
  * The third axis, and the one no character count reaches: see the measurement
@@ -116,7 +153,7 @@ const MAX_CONDITION_FLOAT_DEGREE = 14;
  *
  * Defined once because two places need it and they must not disagree. The form
  * is checked BEFORE the member is ever handed to the engine — it used to be
- * checked only in buildVectorCondition, 300 lines downstream, so
+ * checked only while assembling the vector condition, 300 lines downstream, so
  * `[y'=z, z'=-y, ifactor(2^257-1)]` was EXECUTED on the shared worker for the
  * full 10s budget and then rejected as "not of the form y(0)=1". Whatever this
  * does not match is not evaluated at all.
@@ -271,19 +308,60 @@ export type SystemTranslation =
   | { error: string };
 
 /**
- * Rewrites a linear constant-coefficient system as a matrix product.
+ * How an engine rejection should be described to the caller, if at all.
  *
- * Asks Giac for the coefficient matrix, the inhomogeneous term and the residual
- * in ONE call: the residual is what the right-hand side still contains after the
- * linear part is subtracted, so a nonzero residual means the system is not
- * linear in the unknown functions and there is no matrix to build.
+ * Three classes, because they are three different facts and only one is about
+ * the caller's mathematics. Dropping the error entirely told someone their
+ * system "could not be analysed" when the truth was that the engine never
+ * started; matching availability too broadly then told someone their input was
+ * an outage and invited them to retry it.
+ *
+ * A TIMEOUT is the caller's cost, not an outage: `Giac evaluation timed out`
+ * means this input wedged the shared worker for the whole per-call budget, and
+ * "retry" is advice that repeats the wedge and the recycle it causes.
+ *
+ * The engine's own wording is never returned — it named this service's worker
+ * recycling and probe expressions the caller never wrote.
  */
-export async function translateOdeSystem(
+function engineFailureSuffix(failure: unknown): string {
+  const message = failure instanceof Error ? failure.message : String(failure);
+  if (
+    /worker (unavailable|exited|init (timed out|failed))|recycled repeatedly|host disposed/i.test(
+      message
+    )
+  ) {
+    return ': the CAS was unavailable — retry';
+  }
+  if (/timed out/i.test(message)) {
+    return ' in the time the CAS allows — simplify the system';
+  }
+  return '';
+}
+
+/**
+ * Everything decidable from the text alone, before any engine call.
+ *
+ * Extracted so that "no caller text reaches the engine unchecked" is the call
+ * order rather than a claim in a comment. It was a claim, and it was wrong: a
+ * comment asserting the conditions were the only caller text reaching an engine
+ * call is why the right-hand sides went unguarded for a round, and the four
+ * condition checks below used to run AFTER five round trips that a bad
+ * condition made pointless.
+ *
+ * Contains no `await`, which is what makes the boundary safe to move.
+ */
+function validateSystemShape(
   system: OdeSystem,
-  variable: string,
-  engine: GiacEngineLike
-): Promise<SystemTranslation> {
-  const evaluate = (expr: string): Promise<string> => engine.evaluate(expr);
+  variable: string
+):
+  | {
+      functions: string[];
+      rhss: string[];
+      zeroAll: string;
+      /** Present exactly when the caller gave conditions; absent is "none". */
+      conditions?: { point: string; values: string[] };
+    }
+  | { error: string } {
   // The probe expands to N x N `grad` entries, so its SIZE is quadratic in the
   // equation count while the input is linear. 25 equations — 166 characters, far
   // inside MAX_EXPRESSION_LENGTH — built a probe that fatally trapped the WASM
@@ -426,6 +504,91 @@ export async function translateOdeSystem(
         `${name}, or solve in the variable it is applied to`,
     };
   }
+  // The second channel of caller text, bounded here because this is where caller
+  // text is bounded — the scan that evaluates these runs only after this function
+  // returns, and this function makes no engine call at all. That used to be an
+  // argument about ordering: `y(0)=10^100000` refused with a clean, correct
+  // message while having killed the shared worker in the scan that produced the
+  // refusal, and the next unrelated call came back as "Giac worker exited (code
+  // 1)".
+  //
+  // SIZE is bounded here — length, depth and magnitude — and that much is a
+  // property of the call graph rather than a claim. COST is not: a condition
+  // value is `(.+)`, so `y(0)=ifactor(2^257-1)` is twenty-one characters, depth
+  // one, and still wedges the shared worker for its whole budget. main does the
+  // same, so it is not a regression — but this channel is bounded, not closed,
+  // and saying otherwise is how the last four of these were missed.
+  const parsedConditions: RegExpExecArray[] = [];
+  for (const condition of system.conditions) {
+    // Matched once, and the match is what the reading below consumes. Checking
+    // the form here and then again there left a second refusal eleven lines away
+    // that nothing can reach, wording the same problem differently — so an edit
+    // to the sentence a caller sees would have left the unreachable copy quietly
+    // disagreeing.
+    const parsed = CONDITION_FORM.exec(condition);
+    if (!parsed) {
+      return { error: `has a member "${condition.slice(0, 60)}" that is not of the form y(0)=1` };
+    }
+    parsedConditions.push(parsed);
+    // Length AND depth, both bounded here because the conditions reach an engine
+    // call with nothing else measuring them: MAX_PROBE_CHARS bounds the probe and
+    // MAX_COMMAND_CHARS the finished command, and both run later.
+    //
+    // Two shapes, because they trap differently and neither bound catches the
+    // other. Measured on `exact([y(0)=1*2*2*…,z(0)=0])`, a FLAT condition answers
+    // at 1,015 characters and traps at 1,415, killing the worker; further up it
+    // exhausts the JS stack instead, which left the worker running and corrupted
+    // rather than recycled. A NESTED one traps at 2,415 characters — inside any
+    // length bound that would allow the flat case — which is why depth is
+    // measured separately.
+    if (condition.length > MAX_CONDITION_CHARS) {
+      return {
+        error:
+          `gives an initial condition of ${condition.length} characters, above the ` +
+          `${MAX_CONDITION_CHARS} this tool accepts`,
+      };
+    }
+    if (nestingDepth(condition) > MAX_CONDITION_DEPTH) {
+      return {
+        error:
+          `gives an initial condition nested ${nestingDepth(condition)} deep, above ` +
+          `the ${MAX_CONDITION_DEPTH} this tool accepts`,
+      };
+    }
+    const oversized = implausibleMagnitude(condition);
+    if (oversized !== undefined) {
+      return {
+        error:
+          `gives an initial condition of implausible magnitude (${oversized}) — ` +
+          'initial conditions are ordinary numbers',
+      };
+    }
+  }
+
+  if (parsedConditions.length === 0) return { functions, rhss, zeroAll };
+  const read = readConditions(parsedConditions, functions);
+  if ('error' in read) return read;
+  return { functions, rhss, zeroAll, conditions: read };
+}
+
+/**
+ * Rewrites a linear constant-coefficient system as a matrix product.
+ *
+ * Asks Giac for the coefficient matrix, the inhomogeneous term and the residual
+ * in ONE call: the residual is what the right-hand side still contains after the
+ * linear part is subtracted, so a nonzero residual means the system is not
+ * linear in the unknown functions and there is no matrix to build.
+ */
+export async function translateOdeSystem(
+  system: OdeSystem,
+  variable: string,
+  engine: GiacEngineLike
+): Promise<SystemTranslation> {
+  const evaluate = (expr: string): Promise<string> => engine.evaluate(expr);
+  const shape = validateSystemShape(system, variable);
+  if ('error' in shape) return shape;
+  const { functions, rhss, zeroAll, conditions } = shape;
+
   // `grad` gives the whole row at once, and its entries answer BOTH questions a
   // hand-built residual used to: an entry naming an unknown function means the
   // system is not linear in them, and an entry naming the independent variable
@@ -489,20 +652,22 @@ export async function translateOdeSystem(
           'faster than the input that produced them',
       };
     }
-  } catch (error) {
+  } catch (failure) {
     // A trap or timeout in the probe is this operation's failure, not a raw
     // engine string for the caller to decipher.
-    return {
-      error: `could not be analysed: ${error instanceof Error ? error.message : String(error)}`,
-    };
+    return { error: `could not be analysed${engineFailureSuffix(failure)}` };
   }
   if (raw.includes('GIAC_ERROR')) {
-    return { error: `has coefficients that could not be read: ${raw.slice(0, 160)}` };
+    return {
+      error:
+        `has coefficients that could not be read for ${functions.join(', ')} — one of ` +
+        'those names may be reserved by the CAS; rename it',
+    };
   }
 
   const parts = splitTopLevel(stripEnclosingBrackets(raw), ',');
   if (parts.length !== 3) {
-    return { error: `has coefficients that could not be read: ${raw.slice(0, 160)}` };
+    return { error: 'has coefficients that could not be read' };
   }
   let [matrix, constants] = parts.map((p) => p.trim());
   const residual = parts[2].trim();
@@ -512,7 +677,6 @@ export async function translateOdeSystem(
   // a damped oscillator, an SIR model — and told the caller its linear system
   // was not linear. Exact rationals (`z/2`) print as `0` and so were unaffected,
   // which is why this survived a suite full of them.
-  const isZero = isPrintedZero;
   // A residual entry that is a bare NUMBER is not evidence of nonlinearity. A
   // nonlinear term always survives as something symbolic — `y*z`, `floor(z)` —
   // because the linear part and the constant are what were subtracted off. A
@@ -523,7 +687,7 @@ export async function translateOdeSystem(
   // solved. Bounded rather than ignored, so a large leftover constant — which
   // would mean the matrix/constant split itself disagreed — still refuses.
   const negligible = (entry: string): boolean => {
-    // The empty check is load-bearing, as it is in isZero: `Number('')` is 0, so
+    // The empty check is load-bearing, as it is in isPrintedZero: `Number('')` is 0, so
     // without it a malformed reply with a missing entry reads as a negligible
     // residue and the system is accepted instead of refused.
     const text = entry.trim();
@@ -532,7 +696,9 @@ export async function translateOdeSystem(
     return Number.isFinite(value) && Math.abs(value) < 1e-9;
   };
   const leftover = (text: string): boolean =>
-    splitTopLevel(stripEnclosingBrackets(text), ',').some((r) => !isZero(r) && !negligible(r));
+    splitTopLevel(stripEnclosingBrackets(text), ',').some(
+      (r) => !isPrintedZero(r) && !negligible(r)
+    );
   let notAffine = leftover(residual);
   if (notAffine) {
     // One round trip, and only when the text alone says nonlinear. A float in
@@ -595,26 +761,6 @@ export async function translateOdeSystem(
   // whose residual is [0,-1] — it satisfies z'=-y-1, not the system asked for.
   // The IVP form hid it completely, since the initial conditions still held.
   const vector = vectorSymbol([variable, ...functions, matrix, constants, ...system.conditions]);
-  // One numeric domain, but only where two domains actually collide.
-  //
-  // Giac mishandles a coefficient matrix that mixes a float with an exact
-  // TRANSCENDENTAL: `[[0,1],[-1.5,ln(2)]]` comes back as an ordinary-looking
-  // vector of functions whose residual is 2.1, not 0 — a confidently wrong
-  // answer no shape guard can see. Evaluating that matrix to floats makes it
-  // 7.6e-12.
-  //
-  // It needs BOTH. Applying it whenever a float appeared anywhere reached
-  // systems with nothing to normalise and made them worse: an all-rational
-  // matrix with a decimal only in the FORCING term — `[y'=z, z'=w,
-  // w'=(2/7)^3*y-3*(2/7)^2*z+3*(2/7)*w+0.5]` — has a triple root at 2/7, and a
-  // 12-digit float matrix splits it, so `desolve` failed outright on a system
-  // that answers correctly when the matrix is left exact. Writing `1/2` for
-  // `0.5` made the identical system solve, which is not a distinction a caller
-  // should have to know. So: the MATRIX must hold both a float and a name.
-  //
-  // The engine's Digits is 12, so this costs about 11 good significant figures
-  // rather than the caller's full double — better than the wrong answer it
-  // replaces, and not the same thing as exact.
   // Ask the ENGINE what the matrix holds, rather than reading how it printed it.
   //
   // This was a pair of character tests, and each one was a guess about Giac's
@@ -627,27 +773,6 @@ export async function translateOdeSystem(
   // float entries, both from the engine's own type tags — which also gets `E`
   // (a free identifier, not Euler's number) and `1.5*i` right, where the
   // character tests did not.
-  // The second channel of caller text, guarded the same way and for the same
-  // reason: the scan below EVALUATES these, so the magnitude check has to run
-  // first or it is checking a worker that is already dead. `y(0)=10^100000`
-  // refused with a clean, correct message while having killed the shared worker
-  // on the way, and the NEXT unrelated call came back as "Giac worker exited
-  // (code 1)" — collateral `main` never causes. The right-hand sides are the
-  // first channel and are guarded above; an earlier version of this comment
-  // claimed they did not exist, which is how they went unguarded.
-  for (const condition of system.conditions) {
-    if (!CONDITION_FORM.test(condition)) {
-      return { error: `has a member "${condition.slice(0, 60)}" that is not of the form y(0)=1` };
-    }
-    const oversized = implausibleMagnitude(condition);
-    if (oversized !== undefined) {
-      return {
-        error:
-          `gives an initial condition of implausible magnitude (${oversized}) — ` +
-          'initial conditions are ordinary numbers',
-      };
-    }
-  }
 
   // Two questions, both asked of the ENGINE rather than of how it printed: does
   // this hold an exact symbolic constant, and does it hold a float.
@@ -695,23 +820,39 @@ export async function translateOdeSystem(
         'that depend on that could not be applied',
     };
   }
-  // Asked separately, and only after the magnitude guard above. Folded into the
+  // Asked separately, and only after validateSystemShape has bounded them. Folded into the
   // same `Promise.all`, a failure on this one — the only member built from caller
   // text — silently cleared the matrix and forcing flags too, reopening the
   // unscanned-float hole and skipping the normalisation that prevents the
   // mixed-domain wrong answer.
   if (system.conditions.length > 0) {
     try {
+      // Two calls, one copy of the text each. Asking both questions in one
+      // command doubled the caller's own text: the input cap is 8,192 characters
+      // and a long flat expression traps around 10,000, so a 7,528-character
+      // request — comfortably inside the cap — became a ~15,000-character command
+      // and killed the shared worker, where main answers it in 21ms.
+      //
+      // This RAISES the threshold; it does not remove it. The engine also traps on
+      // parse DEPTH, which no character count expresses: a condition nested 600
+      // deep is 2,415 characters and kills the worker in one copy. That is bounded
+      // in validateSystemShape, before either of these calls — saying otherwise
+      // here is what would stop the next reader from noticing.
       const written = `[${system.conditions.join(',')}]`;
-      const reply = await evaluate(`[exact(${written}),${written}]`);
-      const [asExact, asWritten] = splitTopLevel(stripEnclosingBrackets(reply), ',');
+      const [asExact, asWritten] = await Promise.all([
+        evaluate(`exact(${written})`),
+        evaluate(written),
+      ]);
       const flat = (text: string) => text.trim().replace(/\s+/g, '');
-      floatInConditions = flat(asExact ?? '') !== flat(asWritten ?? '');
-    } catch {
+      floatInConditions = flat(asExact) !== flat(asWritten);
+    } catch (failure) {
+      // Same classification as the probe's. An outage that lands here is not the
+      // caller's conditions being at fault, and a recycle caused by somebody
+      // else's request read as a verdict on theirs.
       return {
         error:
           'has initial conditions that could not be examined for decimals, so the ' +
-          'accuracy bound that depends on that could not be applied',
+          `accuracy bound that depends on that could not be applied${engineFailureSuffix(failure)}`,
       };
     }
   }
@@ -743,7 +884,7 @@ export async function translateOdeSystem(
   }
 
   const constantEntries = splitTopLevel(stripEnclosingBrackets(constants), ',');
-  const homogeneous = constantEntries.every(isZero);
+  const homogeneous = constantEntries.every(isPrintedZero);
   // A forcing term's cost to the matrix `desolve` is driven by its DEGREE, and
   // none of the three text bounds can see that: `[y'=z+(x+1)^300, z'=-y]` is 35
   // characters, builds a 229-character probe and a 46-character command — inside
@@ -874,7 +1015,9 @@ export async function translateOdeSystem(
   const rhs = homogeneous ? `${matrix}*${vector}` : `${matrix}*${vector}+${constants}`;
   const body = `${vector}'=${rhs}`;
 
-  if (system.conditions.length === 0) {
+  // The fact that decides the branch is the one carrying the values, so the
+  // branch cannot disagree with what it guards.
+  if (conditions === undefined) {
     return withinLimit(
       `desolve(${body},${variable},${vector})`,
       functions,
@@ -885,15 +1028,14 @@ export async function translateOdeSystem(
   }
   // Conditions have to become one vector condition: Giac takes `Y(0)=[1,0]`, not
   // the per-function `y(0)=1, z(0)=0` the caller wrote.
-  const vectorCondition = buildVectorCondition(system.conditions, functions, vector);
-  if ('error' in vectorCondition) return vectorCondition;
+  const vectorCondition = buildVectorCondition(vector, conditions.point, conditions.values);
   return withinLimit(
-    `desolve([${body},${vectorCondition.text}],${variable},${vector})`,
+    `desolve([${body},${vectorCondition}],${variable},${vector})`,
     functions,
-    vectorCondition.text.length,
+    vectorCondition.length,
     matrix,
     homogeneous ? '' : constants,
-    vectorCondition.text
+    vectorCondition
   );
 }
 
@@ -1003,25 +1145,24 @@ function implausibleMagnitude(text: string): string | undefined {
 }
 
 /**
- * Turns per-function initial conditions into the single vector condition Giac
- * takes for a system. Every function must be given a value at the same point —
+ * Reads and cross-checks the per-function initial conditions.
+ *
+ * Every function must have a value and every value the same point; the vector
+ * text Giac takes is assembled separately, once the vector symbol is known. Every function must be given a value at the same point —
  * a partially specified system has no unique solution to name, and Giac would
  * silently ignore the extra conditions rather than reject them.
  */
-function buildVectorCondition(
-  conditions: string[],
-  functions: string[],
-  vector: string
-): { text: string } | { error: string } {
+function readConditions(
+  parsedConditions: RegExpExecArray[],
+  functions: string[]
+): { point: string; values: string[] } | { error: string } {
   const values = new Map<string, string>();
   let point = '0';
-  for (const condition of conditions) {
-    const parsed = CONDITION_FORM.exec(condition);
-    if (!parsed) return { error: `initial condition "${condition}" is not of the form y(0)=1` };
-    const [, fn, at, value] = parsed;
+  for (const parsed of parsedConditions) {
+    const [condition, fn, at, value] = parsed;
     if (!functions.includes(fn)) {
       return {
-        error: `initial condition "${condition}" names ${fn}, which the system does not solve for`,
+        error: `names ${fn} in an initial condition ("${condition}"), which it does not solve for`,
       };
     }
     const existing = values.get(fn);
@@ -1046,5 +1187,24 @@ function buildVectorCondition(
         'a system needs a value for every function, or none',
     };
   }
-  return { text: `${vector}(${point})=[${functions.map((f) => values.get(f)).join(',')}]` };
+  // `string[]`, not the Map: this is the line that proves every function has a
+  // value, so it is the line that should hand back something which cannot be
+  // missing one. Returning the Map left `.get()` optional at the far end and made
+  // "never call this without conditions" an unwritten rule enforced by a
+  // different predicate in a different function — the emitted command would have
+  // been `Y(0)=[undefined,undefined]`.
+  return { point, values: functions.map((f) => values.get(f) as string) };
+}
+
+/**
+ * The vector condition Giac takes, `Y(0)=[1,0]`, from an already-checked reading.
+ *
+ * Split from the checking above because the checks need only the caller's text
+ * while this needs the vector symbol, which is not known until the coefficient
+ * matrix has been extracted. Together they made four decisions that are pure
+ * string work wait for five engine round trips that a bad condition made
+ * pointless.
+ */
+function buildVectorCondition(vector: string, point: string, values: string[]): string {
+  return `${vector}(${point})=[${values.join(',')}]`;
 }
