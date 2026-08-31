@@ -616,7 +616,11 @@ describe('spellings the router has to tell apart', () => {
         // they were being refused with a message blaming the CAS.
         const r = await computeHandler({ problem: `desolve([y'=${name}*z, z'=-y], x)` });
         expect(r.isError).toBe(false);
-        expect(text(r)).toMatch(new RegExp(name));
+        // The Result line specifically. Matching anywhere also matches the
+        // `Command:` echo of the caller's own text, which cannot fail independently
+        // of the assertion above.
+        const result = /^Result:\s*(.*)$/m.exec(text(r))?.[1] ?? '';
+        expect(result).toContain(name);
       }
     );
 
@@ -627,6 +631,10 @@ describe('spellings the router has to tell apart', () => {
       // rule cannot refuse it either — denom(x^x) does not mention x.
       const r = await computeHandler({ problem: "desolve([y'=z, z'=-y+x^x], x)" });
       expect(r.isError).toBe(true);
+      // The message too, not just isError: `disproved` and the pole rule also
+      // refuse, with different wording, so isError alone would stay green if this
+      // input started being refused for some other reason and the arm rotted.
+      expect(text(r)).toMatch(/the CAS could not finish it/);
     });
 
     // One row per arm of the unfinished-answer guard that CAN be discriminated,

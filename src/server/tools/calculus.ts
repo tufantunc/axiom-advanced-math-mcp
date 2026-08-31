@@ -217,7 +217,8 @@ export async function calculusHandler(args: Record<string, unknown>) {
       // exp(x)*sin(exp(x)). The pole rule cannot refuse any of them — `denom(x^x)`
       // does not mention x, and none is tan/cotan/tanh — so this arm is the only
       // guard on that answer. An earlier version of this comment called the arm
-      // unreachable; `x^x` was the counterexample, and the test below pins it.
+      // unreachable; `x^x` was the counterexample, and the row named
+      // 'refuses an infinite solution component' in handler-seam.test.ts pins it.
       //
       // `ilaplace(` has never been observed without `poly1[` beside it — over 120
       // random matrices and every shape tried here — so no input discriminates

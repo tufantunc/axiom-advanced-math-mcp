@@ -12,14 +12,19 @@ import { unicodeToAscii } from './unicode-normalize.js';
  * equation right-hand sides went unguarded for a whole review round.
  *
  * The invariant is that nothing here EVALUATES anything, and it is checkable
- * rather than asserted. Two halves, two mechanisms, and the prose is kept no
- * broader than they cover: there is no `async` function and no `await` in this
- * file, pinned in ode-system-shape-boundary.test.ts; and neither this file nor
- * any of the three leaf modules it imports may import the CAS, pinned by an
- * oxlint no-restricted-imports rule listing exactly those four files. Those three
- * imports have no imports of their own today, so the set is the whole graph — but
- * the rule is what keeps that true, and it covers the leaves precisely because a
- * rule scoped to this file alone could not.
+ * rather than asserted. Three mechanisms, and the prose claims only what they
+ * cover:
+ *
+ *   - No `async` and no `await` in this file, and no engine symbol named in it.
+ *     Both are text assertions in ode-system-shape-boundary.test.ts.
+ *   - No path from this file, or from any of the three leaf modules it imports, to
+ *     `src/server/giac`. That is the real invariant, and only a walk of the import
+ *     closure can state it — the same test does that walk, per guarded file.
+ *   - An oxlint no-restricted-imports rule in .oxlintrc.json, which is a DENYLIST
+ *     of five spellings and is therefore not the guarantee. It exists to fail fast,
+ *     in the editor, on the imports someone is most likely to reach for. Of the 60
+ *     modules under src/server/tools, 30 reach the CAS transitively and the rule
+ *     names 4 of them, so 26 are unblocked. The closure walk is what catches those.
  */
 
 /**

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 
 /**
  * The split's invariant, checked rather than asserted in a comment.
@@ -33,6 +34,41 @@ describe('the shape half evaluates nothing', () => {
     expect(code).not.toMatch(/giacEngine|GiacEngineLike|\.evaluate\(/);
   });
 
+  // The transitive half, and the only mechanism that can state it. The oxlint
+  // no-restricted-imports rule in .oxlintrc.json is a denylist of five spellings:
+  // it fails fast on the imports someone is most likely to reach for, but 27 other
+  // modules under src/server/tools also reach the CAS, and a denylist cannot say
+  // "no path to the engine". An earlier version of this file pinned an allowlist
+  // with an ordered `toEqual`, which was deleted for failing on import ORDER —
+  // that was a real complaint with the wrong remedy, since sorting fixes ordering
+  // and deleting it removed the only check that saw the graph at all.
+  //
+  // So: walk the value-import closure from each guarded file and assert the engine
+  // is not in it. This holds no matter which module is added, or how the specifier
+  // is spelt.
+  it.each([
+    ['src/server/tools/ode-system-shape.ts'],
+    ['src/server/tools/output-cleanup.ts'],
+    ['src/server/tools/unicode-normalize.ts'],
+    ['src/server/tools/compute/arg-parsing.ts'],
+  ])('reaches the engine from no path out of %s', (entry) => {
+    const seen = new Set<string>();
+    const walk = (file: string) => {
+      if (seen.has(file)) return;
+      seen.add(file);
+      const text = readFileSync(file, 'utf8');
+      const stripped = text.replaceAll(/\/\*[\s\S]*?\*\//g, '').replaceAll(/\/\/.*/g, '');
+      for (const m of stripped.matchAll(/(?:^|\n)\s*import\s+(?!type\b)[^;]*?from\s+'([^']+)'/g)) {
+        const spec = m[1];
+        if (!spec.startsWith('.')) continue;
+        walk(resolve(dirname(file), spec.replace(/\.js$/, '.ts')));
+      }
+    };
+    walk(entry);
+    const engine = [...seen].filter((f) => f.includes('/src/server/giac/'));
+    expect(engine).toEqual([]);
+  });
+
   // The split invalidated all five comments in the original file that located
   // something by distance, each true while it was one 1210-line file: "only
   // happens to sit nearby", "139 lines ahead of the conditions scan", "300 lines
@@ -43,20 +79,21 @@ describe('the shape half evaluates nothing', () => {
   //
   // Every string quoted above is covered by an assertion below; if a phrasing is
   // named here it must fail, or this comment is doing what it was written to stop.
-  it.each([['src/server/tools/ode-system-shape.ts'], ['src/server/tools/ode-system.ts']])(
-    'locates nothing in %s by distance',
-    (path) => {
-      const comments = readFileSync(path, 'utf8')
-        .split('\n')
-        .filter((l) => l.trimStart().startsWith('//') || l.trimStart().startsWith('*'))
-        .join('\n');
-      expect(comments).not.toMatch(/\d+\s+lines\b/);
-      expect(comments).not.toMatch(/\b(?:\w+ )?lines (?:ahead|downstream|away|below|above)\b/);
-      expect(comments).not.toMatch(/\bsits? nearby\b/);
-      expect(comments).not.toMatch(
-        /\bthe (?:checking|check|scan|rule|code|block) (?:above|below)\b/
-      );
-      expect(comments).not.toMatch(/\b(?:far|a long way|further still)\s+from\b/);
-    }
-  );
+  // calculus.ts is here because it is the third file whose comments cross into the
+  // pair, and it had written "the test below pins it" about a test in another file.
+  it.each([
+    ['src/server/tools/ode-system-shape.ts'],
+    ['src/server/tools/ode-system.ts'],
+    ['src/server/tools/calculus.ts'],
+  ])('locates nothing in %s by distance', (path) => {
+    const comments = readFileSync(path, 'utf8')
+      .split('\n')
+      .filter((l) => l.trimStart().startsWith('//') || l.trimStart().startsWith('*'))
+      .join('\n');
+    expect(comments).not.toMatch(/\d+\s+lines\b/);
+    expect(comments).not.toMatch(/\b(?:\w+ )?lines (?:ahead|downstream|away|below|above)\b/);
+    expect(comments).not.toMatch(/\bsits? nearby\b/);
+    expect(comments).not.toMatch(/\bthe (?:checking|check|scan|rule|code|block) (?:above|below)\b/);
+    expect(comments).not.toMatch(/\b(?:far|a long way|further still)\s+from\b/);
+  });
 });
