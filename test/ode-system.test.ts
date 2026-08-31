@@ -15,13 +15,20 @@ import { parseOdeSystem, translateOdeSystem } from '../src/server/tools/ode-syst
  * question a non-homogeneous system asks is answered with `degree` (default 0),
  * so a test that sets a forcing term does not have to care about it.
  */
-const stub = (reply: string | Error, degree = '[0,0,0]') => ({
+const stub = (reply: string | Error, degree = '[0,0]') => ({
   evaluate: (expr: string): Promise<string> => {
     if (expr.startsWith('[max(')) return Promise.resolve(degree);
     // The domain classifier: `exact` echoes its argument, so nothing reads as a
     // float unless a test says otherwise.
     if (expr.startsWith('size(lvar(')) return Promise.resolve('0');
     if (expr.startsWith('exact(')) return Promise.resolve(expr.slice(6, -1));
+    // The conditions scan makes TWO calls — `exact([...])` and the bare list —
+    // and only the first was answered. The bare one fell through to the
+    // coefficient reply below, so the two never matched and every conditioned
+    // system built on this stub read as holding a float. Nothing failed only
+    // because the conditioned tests here are homogeneous; the next one written
+    // would have asserted a float refusal for a system with no float in it.
+    if (/^\[[A-Za-z_]\w*\(/.test(expr)) return Promise.resolve(expr);
     return reply instanceof Error ? Promise.reject(reply) : Promise.resolve(reply);
   },
 });
@@ -298,6 +305,14 @@ describe('what is decided before the engine is asked', () => {
     // mathematics is broken because the engine never came up.
     [new Error('Giac worker init failed: WASM init timeout'), /the CAS was unavailable/],
     [new Error('worker host disposed'), /the CAS was unavailable/],
+    // The two most common outages there are, and both were deletable from the
+    // classifier with the suite green: `Giac worker unavailable` is what every
+    // call pending on a recycle receives.
+    [new Error('Giac worker unavailable'), /the CAS was unavailable — retry/],
+    [
+      new Error('Giac worker recycled repeatedly; call abandoned'),
+      /the CAS was unavailable — retry/,
+    ],
     [
       'GIAC_ERROR: Bad Argument Value grad(z,[y,z]) at line 1 col 7',
       // ...and the function NAMES are the caller's own data — the one signal
@@ -338,7 +353,11 @@ describe('what is decided before the engine is asked', () => {
       expect('error' in out && out.error).toMatch(/281 characters, above the 280/);
       expect(calls).toBe(0);
     } else {
-      expect(calls).toBeGreaterThan(0);
+      // That it was ACCEPTED, not merely that something downstream ran. `calls > 0`
+      // holds for a refusal further down too, so the row named "accept" was pinned
+      // only against the bound being tightened, never against the value at the
+      // limit becoming unusable for some other reason.
+      expect('command' in out).toBe(true);
     }
   });
 
@@ -401,10 +420,14 @@ describe('what is decided before the engine is asked', () => {
         return Promise.resolve('[[[0,1],[-1,0]],[0,0],[0,0]]');
       },
     });
-    for (const expr of sent) {
-      const copies = expr.split('y(0)=1').length - 1;
-      expect(copies).toBeLessThan(2);
-    }
+    // The TOTAL, not a per-expression ceiling. `copies < 2` is satisfied by zero,
+    // so the assertion passed when the substring appeared nowhere — including on
+    // the doubled command it exists to forbid, if the condition were spelt with a
+    // space. Two occurrences across two calls is the shape being asserted: one
+    // inside `exact(...)`, one bare.
+    const total = sent.reduce((n, expr) => n + expr.split('y(0)=1').length - 1, 0);
+    expect(total).toBe(2);
+    expect(sent.every((expr) => expr.split('y(0)=1').length - 1 <= 1)).toBe(true);
   });
 });
 
