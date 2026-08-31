@@ -60,13 +60,14 @@ describe('geometry — 2D distances and magnitudes', () => {
     expect(allText(perp)).toContain('Result: 90°');
   });
 
-  it('distance overflows to Infinity at 1e154 coordinates (pre-hypot fact)', async () => {
-    // The hypot conversion flips this expectation together with the switch;
-    // this comment keeps today's rationale discoverable.
+  it('distance stays finite at 1e154 coordinates (hypot is overflow-safe)', async () => {
+    // The sqrt(x²+y²) form answered Infinity here; Math.hypot computes the
+    // correct 1.4142135623730953e+154. Shape-matched: formatNumber's 10th
+    // decimal rounding may move the last digits of the mantissa.
     const r = await geometryHandler({
       operation: 'distance',
       points: [[0, 0], [1e154, 1e154]],
     });
-    expect(allText(r)).toContain('Result: Infinity');
+    expect(allText(r)).toMatch(/Result: 1\.41421\d*e\+154/);
   });
 });
