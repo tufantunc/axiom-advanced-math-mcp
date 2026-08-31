@@ -116,7 +116,7 @@ const MAX_CONDITION_FLOAT_DEGREE = 14;
  *
  * Defined once because two places need it and they must not disagree. The form
  * is checked BEFORE the member is ever handed to the engine — it used to be
- * checked only in buildVectorCondition, 300 lines downstream, so
+ * checked only while assembling the vector condition, 300 lines downstream, so
  * `[y'=z, z'=-y, ifactor(2^257-1)]` was EXECUTED on the shared worker for the
  * full 10s budget and then rejected as "not of the form y(0)=1". Whatever this
  * does not match is not evaluated at all.
@@ -290,8 +290,8 @@ function validateSystemShape(
       functions: string[];
       rhss: string[];
       zeroAll: string;
-      point: string;
-      values: Map<string, string>;
+      /** Present exactly when the caller gave conditions; absent is "none". */
+      conditions?: { point: string; values: string[] };
     }
   | { error: string } {
   // The probe expands to N x N `grad` entries, so its SIZE is quadratic in the
@@ -436,18 +436,25 @@ function validateSystemShape(
         `${name}, or solve in the variable it is applied to`,
     };
   }
-  // The second channel of caller text, guarded the same way and for the same
-  // reason: the scan below EVALUATES these, so the magnitude check has to run
-  // first or it is checking a worker that is already dead. `y(0)=10^100000`
-  // refused with a clean, correct message while having killed the shared worker
-  // on the way, and the NEXT unrelated call came back as "Giac worker exited
-  // (code 1)" — collateral `main` never causes. The right-hand sides are the
-  // first channel and are guarded above; an earlier version of this comment
-  // claimed they did not exist, which is how they went unguarded.
+  // The second channel of caller text, bounded here because this is where caller
+  // text is bounded — the scan that evaluates these runs only after this function
+  // returns, and this function makes no engine call at all. That used to be an
+  // argument about ordering: `y(0)=10^100000` refused with a clean, correct
+  // message while having killed the shared worker in the scan that produced the
+  // refusal, and the next unrelated call came back as "Giac worker exited (code
+  // 1)". It is a property of the call graph now rather than a claim.
+  const parsedConditions: RegExpExecArray[] = [];
   for (const condition of system.conditions) {
-    if (!CONDITION_FORM.test(condition)) {
+    // Matched once, and the match is what the reading below consumes. Checking
+    // the form here and then again there left a second refusal eleven lines away
+    // that nothing can reach, wording the same problem differently — so an edit
+    // to the sentence a caller sees would have left the unreachable copy quietly
+    // disagreeing.
+    const parsed = CONDITION_FORM.exec(condition);
+    if (!parsed) {
       return { error: `has a member "${condition.slice(0, 60)}" that is not of the form y(0)=1` };
     }
+    parsedConditions.push(parsed);
     const oversized = implausibleMagnitude(condition);
     if (oversized !== undefined) {
       return {
@@ -458,10 +465,10 @@ function validateSystemShape(
     }
   }
 
-  const read = readConditions(system.conditions, functions);
+  if (parsedConditions.length === 0) return { functions, rhss, zeroAll };
+  const read = readConditions(parsedConditions, functions);
   if ('error' in read) return read;
-
-  return { functions, rhss, zeroAll, ...read };
+  return { functions, rhss, zeroAll, conditions: read };
 }
 
 /**
@@ -480,7 +487,7 @@ export async function translateOdeSystem(
   const evaluate = (expr: string): Promise<string> => engine.evaluate(expr);
   const shape = validateSystemShape(system, variable);
   if ('error' in shape) return shape;
-  const { functions, rhss, zeroAll, point, values } = shape;
+  const { functions, rhss, zeroAll, conditions } = shape;
 
   // `grad` gives the whole row at once, and its entries answer BOTH questions a
   // hand-built residual used to: an entry naming an unknown function means the
@@ -570,7 +577,6 @@ export async function translateOdeSystem(
   // a damped oscillator, an SIR model — and told the caller its linear system
   // was not linear. Exact rationals (`z/2`) print as `0` and so were unaffected,
   // which is why this survived a suite full of them.
-  const isZero = isPrintedZero;
   // A residual entry that is a bare NUMBER is not evidence of nonlinearity. A
   // nonlinear term always survives as something symbolic — `y*z`, `floor(z)` —
   // because the linear part and the constant are what were subtracted off. A
@@ -581,7 +587,7 @@ export async function translateOdeSystem(
   // solved. Bounded rather than ignored, so a large leftover constant — which
   // would mean the matrix/constant split itself disagreed — still refuses.
   const negligible = (entry: string): boolean => {
-    // The empty check is load-bearing, as it is in isZero: `Number('')` is 0, so
+    // The empty check is load-bearing, as it is in isPrintedZero: `Number('')` is 0, so
     // without it a malformed reply with a missing entry reads as a negligible
     // residue and the system is accepted instead of refused.
     const text = entry.trim();
@@ -590,7 +596,9 @@ export async function translateOdeSystem(
     return Number.isFinite(value) && Math.abs(value) < 1e-9;
   };
   const leftover = (text: string): boolean =>
-    splitTopLevel(stripEnclosingBrackets(text), ',').some((r) => !isZero(r) && !negligible(r));
+    splitTopLevel(stripEnclosingBrackets(text), ',').some(
+      (r) => !isPrintedZero(r) && !negligible(r)
+    );
   let notAffine = leftover(residual);
   if (notAffine) {
     // One round trip, and only when the text alone says nonlinear. A float in
@@ -653,26 +661,6 @@ export async function translateOdeSystem(
   // whose residual is [0,-1] — it satisfies z'=-y-1, not the system asked for.
   // The IVP form hid it completely, since the initial conditions still held.
   const vector = vectorSymbol([variable, ...functions, matrix, constants, ...system.conditions]);
-  // One numeric domain, but only where two domains actually collide.
-  //
-  // Giac mishandles a coefficient matrix that mixes a float with an exact
-  // TRANSCENDENTAL: `[[0,1],[-1.5,ln(2)]]` comes back as an ordinary-looking
-  // vector of functions whose residual is 2.1, not 0 — a confidently wrong
-  // answer no shape guard can see. Evaluating that matrix to floats makes it
-  // 7.6e-12.
-  //
-  // It needs BOTH. Applying it whenever a float appeared anywhere reached
-  // systems with nothing to normalise and made them worse: an all-rational
-  // matrix with a decimal only in the FORCING term — `[y'=z, z'=w,
-  // w'=(2/7)^3*y-3*(2/7)^2*z+3*(2/7)*w+0.5]` — has a triple root at 2/7, and a
-  // 12-digit float matrix splits it, so `desolve` failed outright on a system
-  // that answers correctly when the matrix is left exact. Writing `1/2` for
-  // `0.5` made the identical system solve, which is not a distinction a caller
-  // should have to know. So: the MATRIX must hold both a float and a name.
-  //
-  // The engine's Digits is 12, so this costs about 11 good significant figures
-  // rather than the caller's full double — better than the wrong answer it
-  // replaces, and not the same thing as exact.
   // Ask the ENGINE what the matrix holds, rather than reading how it printed it.
   //
   // This was a pair of character tests, and each one was a guess about Giac's
@@ -732,7 +720,7 @@ export async function translateOdeSystem(
         'that depend on that could not be applied',
     };
   }
-  // Asked separately, and only after the magnitude guard above. Folded into the
+  // Asked separately, and only after validateSystemShape has bounded them. Folded into the
   // same `Promise.all`, a failure on this one — the only member built from caller
   // text — silently cleared the matrix and forcing flags too, reopening the
   // unscanned-float hole and skipping the normalisation that prevents the
@@ -788,7 +776,7 @@ export async function translateOdeSystem(
   }
 
   const constantEntries = splitTopLevel(stripEnclosingBrackets(constants), ',');
-  const homogeneous = constantEntries.every(isZero);
+  const homogeneous = constantEntries.every(isPrintedZero);
   // A forcing term's cost to the matrix `desolve` is driven by its DEGREE, and
   // none of the three text bounds can see that: `[y'=z+(x+1)^300, z'=-y]` is 35
   // characters, builds a 229-character probe and a 46-character command — inside
@@ -919,7 +907,9 @@ export async function translateOdeSystem(
   const rhs = homogeneous ? `${matrix}*${vector}` : `${matrix}*${vector}+${constants}`;
   const body = `${vector}'=${rhs}`;
 
-  if (system.conditions.length === 0) {
+  // The fact that decides the branch is the one carrying the values, so the
+  // branch cannot disagree with what it guards.
+  if (conditions === undefined) {
     return withinLimit(
       `desolve(${body},${variable},${vector})`,
       functions,
@@ -930,7 +920,7 @@ export async function translateOdeSystem(
   }
   // Conditions have to become one vector condition: Giac takes `Y(0)=[1,0]`, not
   // the per-function `y(0)=1, z(0)=0` the caller wrote.
-  const vectorCondition = buildVectorCondition(vector, point, functions, values);
+  const vectorCondition = buildVectorCondition(vector, conditions.point, conditions.values);
   return withinLimit(
     `desolve([${body},${vectorCondition}],${variable},${vector})`,
     functions,
@@ -1047,21 +1037,21 @@ function implausibleMagnitude(text: string): string | undefined {
 }
 
 /**
- * Turns per-function initial conditions into the single vector condition Giac
- * takes for a system. Every function must be given a value at the same point —
+ * Reads and cross-checks the per-function initial conditions.
+ *
+ * Every function must have a value and every value the same point; the vector
+ * text Giac takes is assembled separately, once the vector symbol is known. Every function must be given a value at the same point —
  * a partially specified system has no unique solution to name, and Giac would
  * silently ignore the extra conditions rather than reject them.
  */
 function readConditions(
-  conditions: string[],
+  parsedConditions: RegExpExecArray[],
   functions: string[]
-): { point: string; values: Map<string, string> } | { error: string } {
+): { point: string; values: string[] } | { error: string } {
   const values = new Map<string, string>();
   let point = '0';
-  for (const condition of conditions) {
-    const parsed = CONDITION_FORM.exec(condition);
-    if (!parsed) return { error: `initial condition "${condition}" is not of the form y(0)=1` };
-    const [, fn, at, value] = parsed;
+  for (const parsed of parsedConditions) {
+    const [condition, fn, at, value] = parsed;
     if (!functions.includes(fn)) {
       return {
         error: `initial condition "${condition}" names ${fn}, which the system does not solve for`,
@@ -1081,12 +1071,7 @@ function readConditions(
     point = at.trim();
     values.set(fn, value.trim());
   }
-  // "or none" is the other half of the rule, and it has to be checked here now:
-  // this used to run only when the caller supplied conditions, because it was
-  // reached from the branch that had them. Called unconditionally it read an
-  // empty set as "conditions for no functions at all" and refused every general
-  // solution.
-  const missing = values.size === 0 ? [] : functions.filter((f) => !values.has(f));
+  const missing = functions.filter((f) => !values.has(f));
   if (missing.length > 0) {
     return {
       error:
@@ -1094,7 +1079,13 @@ function readConditions(
         'a system needs a value for every function, or none',
     };
   }
-  return { point, values };
+  // `string[]`, not the Map: this is the line that proves every function has a
+  // value, so it is the line that should hand back something which cannot be
+  // missing one. Returning the Map left `.get()` optional at the far end and made
+  // "never call this without conditions" an unwritten rule enforced by a
+  // different predicate in a different function — the emitted command would have
+  // been `Y(0)=[undefined,undefined]`.
+  return { point, values: functions.map((f) => values.get(f) as string) };
 }
 
 /**
@@ -1106,11 +1097,6 @@ function readConditions(
  * string work wait for five engine round trips that a bad condition made
  * pointless.
  */
-function buildVectorCondition(
-  vector: string,
-  point: string,
-  functions: string[],
-  values: Map<string, string>
-): string {
-  return `${vector}(${point})=[${functions.map((f) => values.get(f)).join(',')}]`;
+function buildVectorCondition(vector: string, point: string, values: string[]): string {
+  return `${vector}(${point})=[${values.join(',')}]`;
 }

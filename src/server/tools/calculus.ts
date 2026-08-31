@@ -144,9 +144,12 @@ export async function calculusHandler(args: Record<string, unknown>) {
     if (validationError) return formatErrorResponse(validationError.message);
 
     const { expr: giacExpr, functions, system } = await buildGiacExpression(operation, args);
-    const hasConditions =
-      operation === 'solve_ode' &&
-      (parseOdeSystem(args.equation as string)?.conditions.length ?? 0) > 0;
+    // From the translation, not a second parse of the caller's text. Re-running
+    // unicodeToAscii, splitTopLevel and classify over the whole argument to
+    // recover one boolean also made this handler depend on the parser's
+    // internals rather than on what buildGiacExpression handed back — and two
+    // independent computations over the same string can disagree.
+    const hasConditions = system?.condition !== undefined;
     const isIndefiniteIntegral =
       operation === 'integrate' && args.lower_bound === undefined && args.upper_bound === undefined;
     // A rewritten system is checked against Y' = A*Y + b. The shape guards below
