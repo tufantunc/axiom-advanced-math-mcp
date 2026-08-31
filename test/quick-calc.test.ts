@@ -466,5 +466,10 @@ describe('tiny non-zero results are not snapped to zero', () => {
   it('an exact zero still snaps to 0', async () => {
     const r = await quickCalcHandler({ expression: 'sin(0)' });
     expect(text(r)).toMatch(/^Result: 0$/m);
+    // And at the seam: the `|| numericResult === 0` allowance in the snap
+    // condition is what keeps this returning {exact, decimal} rather than
+    // null. The rendered output is byte-identical either way (the fallback
+    // also prints Result: 0), so only this direct call can pin the path.
+    expect(await tryExactResult('sin(0)', 0)).toEqual({ exact: '0', decimal: 0 });
   });
 });

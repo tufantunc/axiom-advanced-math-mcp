@@ -40,6 +40,17 @@ describe('exactValueHandler — to_exact', () => {
     expect(text).toContain('Result: 4e-10');
     expect(text).not.toMatch(/^Result: 0$/m);
   });
+
+  it('to_exact of exact zero does not claim irrationality', async () => {
+    // Pins the `|| numericResult === 0` allowance in the snap condition from
+    // the observable surface: without it, 0 falls through to Giac (which
+    // declines the echo) and this note appears for the integer zero.
+    const r = await exactValueHandler({ operation: 'to_exact', value: '0' });
+    expect(r.isError).toBe(false);
+    const text = allText(r);
+    expect(text).toMatch(/^Result: 0$/m);
+    expect(text).not.toContain('No simpler exact form');
+  });
 });
 
 describe('exactValueHandler — to_decimal', () => {
