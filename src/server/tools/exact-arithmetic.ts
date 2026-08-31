@@ -36,7 +36,7 @@ export async function tryExactResult(
         // `\d+(?:\.\d*)?` rather than `\d+\.?\d*`: the latter can split a run of
         // digits many ways, so a long number with no degree sign after it
         // backtracks through all of them. Same strings, one way to match them.
-        giacExpr = giacExpr.replace(/(\d+(?:\.\d*)?)\s*°/g, '($1*pi/180)');
+        giacExpr = giacExpr.replaceAll(/(\d+(?:\.\d*)?)\s*°/g, '($1*pi/180)');
       }
       const giacResult = await giacEngine.evaluate(giacExpr);
       if (
@@ -72,9 +72,9 @@ export async function tryExactResult(
 
 function normalizeLatex(s: string): string {
   return s
-    .replace(/\\dfrac\b/g, '\\frac')
-    .replace(/\\displaystyle\s*/g, '')
-    .replace(/\\textstyle\s*/g, '');
+    .replaceAll(/\\dfrac\b/g, String.raw`\frac`)
+    .replaceAll(/\\displaystyle\s*/g, '')
+    .replaceAll(/\\textstyle\s*/g, '');
 }
 
 function looksLikeGiacExpression(expr: string): boolean {

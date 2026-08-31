@@ -62,9 +62,9 @@ export async function evalWithLatex(options: EvalOptions) {
       const rawLatex = await giacEngine.evaluate(`latex(${raw})`);
       if (rawLatex && rawLatex !== 'undef' && !rawLatex.startsWith('latex')) {
         latex = stripQuotes(rawLatex)
-          .replace(/\\dfrac\b/g, '\\frac')
-          .replace(/\\displaystyle\s*/g, '')
-          .replace(/\\textstyle\s*/g, '');
+          .replaceAll(/\\dfrac\b/g, String.raw`\frac`)
+          .replaceAll(/\\displaystyle\s*/g, '')
+          .replaceAll(/\\textstyle\s*/g, '');
       }
     } catch {
       /* best effort */

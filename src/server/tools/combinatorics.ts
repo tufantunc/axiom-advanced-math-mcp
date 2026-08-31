@@ -103,7 +103,7 @@ export async function combinatoricsHandler(args: Record<string, unknown>) {
         if (k > n) return error(`k (${k}) cannot exceed n (${n})`);
         // Use Giac for large inputs for extra confidence; JS for verification
         const raw = await giacEngine.evaluate(`comb(${n},${k})`);
-        const giacVal = BigInt(raw.trim().replace(/[^0-9-]/g, ''));
+        const giacVal = BigInt(raw.trim().replaceAll(/[^0-9-]/g, ''));
         result = giacVal;
         description = `Combinations C(${n}, ${k}): choosing ${k} items from ${n} (order doesn't matter)`;
         formula = `C(${n},${k}) = ${n}! / (${k}! · ${n - k}!)`;
@@ -114,7 +114,7 @@ export async function combinatoricsHandler(args: Record<string, unknown>) {
         if (k === undefined) return error('k is required for permutations');
         if (k > n) return error(`k (${k}) cannot exceed n (${n})`);
         const raw = await giacEngine.evaluate(`perm(${n},${k})`);
-        result = BigInt(raw.trim().replace(/[^0-9-]/g, ''));
+        result = BigInt(raw.trim().replaceAll(/[^0-9-]/g, ''));
         description = `Permutations P(${n}, ${k}): arranging ${k} items from ${n} (order matters)`;
         formula = `P(${n},${k}) = ${n}! / ${n - k}!`;
         break;

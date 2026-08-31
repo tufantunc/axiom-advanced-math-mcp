@@ -106,13 +106,13 @@ export function extractSolveSystem(problem: string): RouteResult {
     // Expected: [equations], [variables]
     const equations = parts[0]
       ? parts[0]
-          .replace(/^\[|\]$/g, '')
+          .replaceAll(/^\[|\]$/g, '')
           .split(',')
           .map((e) => e.trim())
       : [];
     const variables = parts[1]
       ? parts[1]
-          .replace(/^\[|\]$/g, '')
+          .replaceAll(/^\[|\]$/g, '')
           .split(',')
           .map((v) => v.trim())
       : [];
@@ -130,7 +130,7 @@ export function extractSolveSystem(problem: string): RouteResult {
     };
   }
   // [eq1, eq2] bracket format
-  const inner = problem.replace(/^\[|\]$/g, '').trim();
+  const inner = problem.replaceAll(/^\[|\]$/g, '').trim();
   const equations = splitArgs(inner);
   return {
     handler: 'solve_system',

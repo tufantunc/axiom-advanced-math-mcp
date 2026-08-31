@@ -21,9 +21,9 @@ async function toLatex(result: string): Promise<string | undefined> {
     const raw = await giacEngine.evaluate(`latex(${result})`);
     if (!raw || raw === 'undef' || raw.startsWith('latex')) return undefined;
     return stripQuotes(raw)
-      .replace(/\\dfrac\b/g, '\\frac')
-      .replace(/\\displaystyle\s*/g, '')
-      .replace(/\\textstyle\s*/g, '');
+      .replaceAll(/\\dfrac\b/g, String.raw`\frac`)
+      .replaceAll(/\\displaystyle\s*/g, '')
+      .replaceAll(/\\textstyle\s*/g, '');
   } catch {
     return undefined;
   }

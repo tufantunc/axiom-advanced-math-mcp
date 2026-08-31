@@ -11,7 +11,9 @@
     "typescript/explicit-function-return-type": "off",
     "typescript/no-explicit-any": "warn",
     "typescript/no-non-null-assertion": "warn",
-    "unicorn/prefer-number-properties": "warn"
+    "unicorn/prefer-number-properties": "warn",
+    "unicorn/prefer-string-replace-all": "warn",
+    "unicorn/prefer-string-raw": "warn"
   },
   "ignorePatterns": ["dist/", "node_modules/", "src/server/giac/giac.wasm.js"]
 }

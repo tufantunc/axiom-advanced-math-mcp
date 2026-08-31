@@ -5,19 +5,19 @@
  */
 export function unicodeToAscii(s: string): string {
   return s
-    .replace(/√/g, 'sqrt')
-    .replace(/π/g, 'pi')
-    .replace(/×/g, '*')
-    .replace(/·/g, '*')
-    .replace(/÷/g, '/')
-    .replace(/²/g, '^2')
-    .replace(/³/g, '^3')
-    .replace(/⁰/g, '^0')
-    .replace(/¹/g, '^1')
-    .replace(/⁴/g, '^4')
-    .replace(/⁵/g, '^5')
-    .replace(/⁶/g, '^6')
-    .replace(/⁷/g, '^7')
-    .replace(/⁸/g, '^8')
-    .replace(/⁹/g, '^9');
+    .replaceAll('√', 'sqrt')
+    .replaceAll('π', 'pi')
+    .replaceAll('×', '*')
+    .replaceAll('·', '*')
+    .replaceAll('÷', '/')
+    .replaceAll('²', '^2')
+    .replaceAll('³', '^3')
+    .replaceAll('⁰', '^0')
+    .replaceAll('¹', '^1')
+    .replaceAll('⁴', '^4')
+    .replaceAll('⁵', '^5')
+    .replaceAll('⁶', '^6')
+    .replaceAll('⁷', '^7')
+    .replaceAll('⁸', '^8')
+    .replaceAll('⁹', '^9');
 }

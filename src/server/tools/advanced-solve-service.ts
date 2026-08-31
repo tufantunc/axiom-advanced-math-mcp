@@ -59,7 +59,7 @@ export class AdvancedSolveService {
         const vars = await giacEngine.evaluate(`lname(${expression})`);
         if (vars && vars !== '[]' && vars !== 'undef') {
           // Parse Giac list output: [x,y,z] -> ['x', 'y', 'z']
-          const cleaned = vars.replace(/[[\]]/g, '').trim();
+          const cleaned = vars.replaceAll(/[[\]]/g, '').trim();
           if (cleaned) {
             output.variables = cleaned.split(',').map((v) => v.trim());
           }

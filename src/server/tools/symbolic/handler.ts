@@ -5,9 +5,9 @@ import { evaluationCache, isCacheable } from './cache.js';
 
 function normalizeLaTeX(s: string): string {
   return s
-    .replace(/\\dfrac\b/g, '\\frac')
-    .replace(/\\displaystyle\s*/g, '')
-    .replace(/\\textstyle\s*/g, '');
+    .replaceAll(/\\dfrac\b/g, String.raw`\frac`)
+    .replaceAll(/\\displaystyle\s*/g, '')
+    .replaceAll(/\\textstyle\s*/g, '');
 }
 
 export function createSymbolicHandler(definition: SymbolicToolDefinition) {

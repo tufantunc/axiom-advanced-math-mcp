@@ -70,7 +70,7 @@ export async function analyzeNumberCore(n: number): Promise<string[]> {
 }
 
 export function parseIfactor(ifactorResult: string): [number, number][] {
-  const cleaned = ifactorResult.trim().replace(/[()]/g, '');
+  const cleaned = ifactorResult.trim().replaceAll(/[()]/g, '');
   if (!cleaned || cleaned === '1') return [];
   const factors: [number, number][] = [];
   const parts = cleaned.split('*');
