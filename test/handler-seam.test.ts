@@ -612,14 +612,9 @@ describe('spellings the router has to tell apart', () => {
     it.each([
       // Y(0)=[undef,undef] -> Result: []
       ["desolve([y'=z, z'=-y, y(0)=undef, z(0)=undef], x)", '[]'],
-      // A 1/x forcing term the CAS cannot integrate -> Result: [[undef]]
-      ["desolve([y'=y+z+1/x, z'=z], x)", '[[undef]]'],
       // An initial-condition VALUE is the one part of the command the probe
       // never sees, so a bad one reaches desolve intact -> Result: GIAC_ERROR: ...
       ["desolve([y'=z, z'=-y, y(0)=sqrt, z(0)=0], x)", 'GIAC_ERROR'],
-      // A forcing term the CAS cannot integrate -> Result: [[infinity,infinity]].
-      // A component that is literally infinity is not a solution.
-      ["desolve([y'=z+exp(x)/x, z'=-y], x)", 'infinity'],
     ])('refuses %s rather than shipping %s as the answer', async (problem, leftover) => {
       const r = await computeHandler({ problem });
       expect(r.isError).toBe(true);
@@ -673,7 +668,7 @@ describe('spellings the router has to tell apart', () => {
       expect(Date.now() - started).toBeLessThan(5_000);
     });
 
-    it('bounds the command it sends, not only the probe it built', async () => {
+    it('refuses an oversized condition value before the engine expands it', async () => {
       // An initial-condition VALUE is the only caller text that never enters the
       // probe, so no gradient is taken of it and no guard here had seen it. A
       // 540-deep product trapped the engine fatally, which recycles the worker,
@@ -685,10 +680,7 @@ describe('spellings the router has to tell apart', () => {
         computeHandler({ problem: 'integrate(sin(x)^2, x)' }),
       ]);
       expect(attacker.isError).toBe(true);
-      expect(text(attacker)).toMatch(/becomes \d+ characters once rewritten/);
-      // The conditions arm specifically: only the forcing-term arm was pinned,
-      // and this is the case that arm exists to distinguish.
-      expect(text(attacker)).toMatch(/use shorter initial conditions/);
+      expect(text(attacker)).toMatch(/initial conditions/);
       expect(text(attacker)).not.toMatch(/RuntimeError/);
       expect(victim.isError).toBe(false);
     });
@@ -711,16 +703,19 @@ describe('spellings the router has to tell apart', () => {
       expect(text(refused)).toMatch(/expands to 2039 characters .*2000-character limit/);
     });
 
-    it('accepts a command just under the cap and refuses just over, naming the limit', async () => {
-      const solvable = await computeHandler({
-        problem: `desolve([y'=z, z'=-y, y(0)=${'x*'.repeat(370)}1, z(0)=0], x)`,
-      });
-      expect(solvable.isError).toBe(false);
+    it('names the 800-character limit on the shape that reaches it', async () => {
+      // The cap is pinned on the engine's own expansion, which is what it is
+      // actually for: `10^900` is six characters and comes back as 901 digits.
+      // A long condition VALUE no longer gets this far — the condition scan
+      // evaluates it and refuses first — so pinning the cap there would be
+      // pinning a path that no longer exists.
+      const refused = await computeHandler({ problem: "desolve([y'=z+10^900, z'=-y], x)" });
+      expect(refused.isError).toBe(true);
+      expect(text(refused)).toMatch(/becomes 938 characters .*800-character limit/);
+      expect(text(refused)).toMatch(/use a shorter forcing term/);
 
-      const refused = await computeHandler({
-        problem: `desolve([y'=z, z'=-y, y(0)=${'x*'.repeat(380)}1, z(0)=0], x)`,
-      });
-      expect(text(refused)).toMatch(/becomes 805 characters .*800-character limit/);
+      const solvable = await computeHandler({ problem: "desolve([y'=z+10^90, z'=-y], x)" });
+      expect(solvable.isError).toBe(false);
     });
 
     it('refuses a forcing term whose degree, not length, is what costs', async () => {
@@ -814,7 +809,11 @@ describe('spellings the router has to tell apart', () => {
     ])('solves %s, whose coefficient only contains a name', async (problem, coefficient) => {
       const r = await computeHandler({ problem });
       expect(r.isError).toBe(false);
-      expect(text(r)).toContain(coefficient);
+      // Where the coefficient lands, not just that it appears somewhere: the
+      // name survives a transposed matrix too.
+      expect(text(r)).toMatch(
+        new RegExp(`Command: desolve\\(Y'=\\[\\[0,${coefficient}\\],\\[-1,0\\]\\]`)
+      );
     });
 
     it('blames the forcing term, not conditions the caller never wrote', async () => {
@@ -881,6 +880,13 @@ describe('spellings the router has to tell apart', () => {
       const r = await computeHandler({ problem: `desolve([y'=${coefficient}*z, z'=-y], x)` });
       expect(r.isError).toBe(false);
       expect(text(r)).not.toMatch(/not linear/);
+      // The mathematics, not only the absence of a refusal. Asserting
+      // non-refusal alone passes while the module solves a DIFFERENT system:
+      // emitting `tran(matrix)*Y` fails 54 tests in this file and none of these.
+      // The coefficient sits at [0][1], so the transpose is what this catches.
+      expect(text(r)).toMatch(
+        new RegExp(`Command: desolve\\(Y'=\\[\\[0,${coefficient}\\],\\[-1,0\\]\\]`)
+      );
     });
 
     it.each([
@@ -982,8 +988,13 @@ describe('spellings the router has to tell apart', () => {
     ])('leaves a float beside the exact rational %s, %s alone', async (a, b) => {
       const r = await computeHandler({ problem: `desolve([y'=z, z'=(${a})*y+(${b})*z], x)` });
       expect(r.isError).toBe(false);
-      // The rational survives into the command rather than being evaluated away.
-      expect(text(r)).toContain(b);
+      // Both entries in their own positions, so a transposed or evaluated-away
+      // matrix fails. `toContain(b)` alone passed on a genuinely different system.
+      expect(text(r)).toMatch(
+        new RegExp(
+          `Command: desolve\\(Y'=\\[\\[0,1\\],\\[${a.replace('.', '\\.').replace('e', 'e\\+?')},${b}\\]\\]`
+        )
+      );
     });
 
     it('does not re-evalf a matrix printed in exponent notation', async () => {
@@ -1032,6 +1043,91 @@ describe('spellings the router has to tell apart', () => {
         problem: "desolve([y'=z, z'=-y, y(0)=2^10, z(0)=0], x)",
       });
       expect(text(small)).toMatch(/1024\*cos\(x\)/);
+    });
+
+    it.each([
+      // An EXACT system whose residual is provably nonzero is a disproof, not an
+      // "undecided". `[y'=z, z'=-y+sqrt(x)]` shipped the HOMOGENEOUS solution —
+      // the forcing term simply gone, residual `[0,-√x]`, success:true and no
+      // warning. The "no sound numeric version" argument that removed this
+      // refusal is true only where a float is involved.
+      ["desolve([y'=z, z'=-y+sqrt(x)], x)"],
+      ["desolve([y'=z, z'=-y+x*sqrt(x)], x)"],
+    ])('refuses %s, whose answer does not satisfy it', async (problem) => {
+      const r = await computeHandler({ problem });
+      expect(r.isError).toBe(true);
+      expect(text(r)).toMatch(/does not satisfy it/);
+    });
+
+    it.each([
+      // A derivative on the RIGHT-hand side evaluates to 0, so grad, subst and
+      // the residual all agree the term was never there — the residual cannot be
+      // the backstop when the term is gone before it is computed. This lost its
+      // damping silently and shipped the UNDAMPED answer with a check mark.
+      ["desolve([y'=v, v'=-y-0.1*y', y(0)=1, v(0)=0], x)"],
+      ['desolve([diff(y(x),x)=v, diff(v(x),x)=-y-diff(y(x),x)/10], x)'],
+      ["desolve([y'=diff(z,x), z'=-y], x)"],
+    ])('refuses %s, which writes a derivative on the right', async (problem) => {
+      const r = await computeHandler({ problem });
+      expect(r.isError).toBe(true);
+      expect(text(r)).toMatch(/writes a derivative on the right-hand side/);
+    });
+
+    it.each([
+      // A pole is not a size, and no degree bound sees one: `denom(tan(x))` is 1
+      // and `texpand` does not open it either. 21 characters, exact, and it traps
+      // the engine where main answers.
+      ["desolve([y'=z, z'=-y+tan(x)], x)"],
+      ["desolve([y'=z, z'=-y+1/cos(x)], x)"],
+      ["desolve([y'=z, z'=-y+1/(exp(x)+1)], x)"],
+      ["desolve([y'=z, z'=-1/2*y+1/sqrt(x)], x)"],
+    ])('refuses %s without trapping the engine', async (problem) => {
+      const [attacker, victim] = await Promise.all([
+        computeHandler({ problem }),
+        computeHandler({ problem: 'integrate(sin(11*x)*exp(x), x)' }),
+      ]);
+      expect(attacker.isError).toBe(true);
+      expect(text(attacker)).toMatch(/forcing term with a pole/);
+      expect(text(attacker)).not.toMatch(/RuntimeError/);
+      expect(victim.isError).toBe(false);
+      await expect(giacEngine.evaluate('diff(x^3,x)')).resolves.toContain('3*x^2');
+    });
+
+    it.each([
+      // Reading a digit run after `^` cannot bound a NESTED exponent: `10^(10^5)`
+      // was captured as "10" and "5" and passed, and it is the same 10^100000
+      // that crashes the worker.
+      ["desolve([y'=z, z'=-y, y(0)=10^(10^5), z(0)=0], x)"],
+      ["desolve([y'=z+10^(10^5), z'=-y], x)"],
+    ])('refuses %s for its nested exponent', async (problem) => {
+      const r = await computeHandler({ problem });
+      expect(r.isError).toBe(true);
+      expect(text(r)).toMatch(/nested exponent/);
+      expect(text(r)).not.toMatch(/RuntimeError/);
+    });
+
+    it.each([
+      // ...while an exponent that is merely not a plain literal is ordinary and
+      // must survive. Refusing every unreadable exponent was a regression of its
+      // own.
+      ['2^(1/3)'],
+      ['sqrt(2)'],
+      ['pi'],
+    ])('still solves a system whose coefficient is %s', async (coefficient) => {
+      const r = await computeHandler({
+        problem: `desolve([y'=z, z'=-1.5*y+(${coefficient})*z], x)`,
+      });
+      expect(r.isError).toBe(false);
+    });
+
+    it('refuses a member that is not a condition before executing it', async () => {
+      // `ifactor(2^257-1)` in a condition slot occupied the shared worker for the
+      // full 10s budget and was then rejected as "not of the form y(0)=1".
+      const started = Date.now();
+      const r = await computeHandler({ problem: "desolve([y'=z, z'=-y, ifactor(2^257-1)], x)" });
+      expect(r.isError).toBe(true);
+      expect(Date.now() - started).toBeLessThan(3_000);
+      await expect(giacEngine.evaluate('diff(x^3,x)')).resolves.toContain('3*x^2');
     });
 
     it('leaves an all-exact system exact', async () => {
@@ -1106,7 +1202,7 @@ describe('spellings the router has to tell apart', () => {
         computeHandler({ problem: 'integrate(sin(x)*exp(x), x)' }),
       ]);
       expect(attacker.isError).toBe(true);
-      expect(text(attacker)).toMatch(/forcing term with a denominator/);
+      expect(text(attacker)).toMatch(/forcing term with a pole/);
       expect(text(attacker)).not.toMatch(/RuntimeError/);
       expect(victim.isError).toBe(false);
       await expect(giacEngine.evaluate('integrate(x^2,x)')).resolves.toContain('x^3');
@@ -1254,13 +1350,12 @@ describe('spellings the router has to tell apart', () => {
     });
 
     it.each([
-      // The signed polynomial degree reports 0 for a balanced ratio and -400
-      // for a pure denominator, so both slipped past a `> MAX` test. The first
-      // killed the worker outright; main answers each with [] in ~100ms.
-      [
-        "desolve([y'=z+(x+1)^15/(x-1)^15, z'=-y], x)",
-        /ratio of degree-15 polynomials in x, above the 12/,
-      ],
+      // Both once needed their own degree bound — the signed degree reports 0 for
+      // a balanced ratio and -400 for a pure denominator, so neither reached a
+      // `> MAX` test. One rule about the DENOMINATOR now covers them and the
+      // pole cases the degree bounds never saw, so those two bounds were removed
+      // as unreachable rather than kept as dead code.
+      ["desolve([y'=z+(x+1)^15/(x-1)^15, z'=-y], x)", /forcing term with a pole/],
       ["desolve([y'=z+1/(x-1)^400, z'=-y], x)", /forcing term of degree 400/],
     ])('refuses %s without trapping the engine', async (problem, expected) => {
       const [attacker, victim] = await Promise.all([
@@ -1275,13 +1370,16 @@ describe('spellings the router has to tell apart', () => {
     });
 
     it.each([
-      // A ratio with one trivial side is cheap, so the minimum, not the sum, is
-      // what the second bound measures.
+      // These two used to be the accept side of a ratio bound. They are refused
+      // now, for the pole rather than the degree — a rational forcing term is not
+      // solvable in the matrix form at all, whatever its degrees are.
       ["desolve([y'=z+(x+1)^12/(x-1)^12, z'=-y], x)"],
       ["desolve([y'=z+(x+1)^40/(x-1)^2, z'=-y], x)"],
-    ])('does not refuse %s for the rational bound', async (problem) => {
+    ])('refuses %s for its pole, not its degree', async (problem) => {
       const r = await computeHandler({ problem });
-      expect(text(r)).not.toMatch(/ratio of degree/);
+      expect(r.isError).toBe(true);
+      expect(text(r)).toMatch(/forcing term with a pole/);
+      expect(text(r)).not.toMatch(/RuntimeError/);
     });
 
     it.each([

@@ -52,6 +52,19 @@ const MAX_SYSTEM_EQUATIONS = 9;
 const MAX_PROBE_CHARS = 2_000;
 
 /**
+ * Ceiling on what the probe SENDS BACK, which is a different quantity from what
+ * it sends.
+ *
+ * `normal` expands, so a short right-hand side can produce an enormous
+ * coefficient matrix, and that matrix is then re-sent to the engine three more
+ * times (the `exact` classifier, the degree probe, and the solve itself). 4,000
+ * is an order of magnitude above the largest legitimate reply measured — 329
+ * characters, for a forcing term of 25 exponential terms — and two orders below
+ * the 677,259 that killed the worker.
+ */
+const MAX_PROBE_REPLY_CHARS = 4_000;
+
+/**
  * Ceiling on the command actually sent, which is a different measurement from
  * MAX_PROBE_CHARS and cannot reuse its number.
  *
@@ -80,19 +93,6 @@ const MAX_COMMAND_CHARS = 800;
 const MAX_FORCING_DEGREE = 60;
 
 /**
- * Ceiling on the SMALLER of a forcing term's numerator and denominator degree.
- *
- * A ratio of two substantial polynomials is much more expensive than either
- * polynomial alone, so the sum above does not bound it: measured,
- * `(x+1)^13/(x-1)^13` answers in 100ms while `(x+1)^15/(x-1)^15` traps the
- * engine fatally and kills the worker, and both are far inside every other
- * bound (main answers each with `[]` in about 100ms). 12 is the last measured
- * safe value; a term with a trivial numerator or denominator has a minimum of
- * about zero and is left to the sum.
- */
-const MAX_RATIONAL_DEGREE = 12;
-
-/**
  * Ceiling on a forcing term's degree when the matrix holds a float.
  *
  * The only bound here that is about accuracy rather than survival. See the check
@@ -111,6 +111,17 @@ const MAX_FLOAT_FORCING_DEGREE = 8;
  */
 const MAX_CONDITION_FLOAT_DEGREE = 14;
 
+/**
+ * The shape of an initial condition: `y(0)=1`.
+ *
+ * Defined once because two places need it and they must not disagree. The form
+ * is checked BEFORE the member is ever handed to the engine — it used to be
+ * checked only in buildVectorCondition, 300 lines downstream, so
+ * `[y'=z, z'=-y, ifactor(2^257-1)]` was EXECUTED on the shared worker for the
+ * full 10s budget and then rejected as "not of the form y(0)=1". Whatever this
+ * does not match is not evaluated at all.
+ */
+const CONDITION_FORM = /^\s*([A-Za-z_]\w*)\s*\(([^)]*)\)\s*=\s*(.+)$/;
 
 /** One member of a bracketed ODE argument. */
 type Member =
@@ -256,6 +267,8 @@ export type SystemTranslation =
       constants: string;
       /** `Y(0)=[1,0]` when the caller gave conditions, absent otherwise. */
       condition?: string;
+      /** True when no float is involved, so an exact residual is decisive. */
+      exact: boolean;
     }
   | { error: string };
 
@@ -372,6 +385,28 @@ export async function translateOdeSystem(
   // and the system was "solved" as Y'=0, answering the constant [[c_0,c_1]].
   // That is a wrong answer, not a refusal, on a notation the single-equation
   // path accepts.
+  // A derivative on the RIGHT-hand side, refused before the probe rather than
+  // detected after it. Giac evaluates `y'` and `diff(z,x)` to 0 for a plain
+  // symbol, so grad, subst and the residual all agree the term was never there —
+  // the residual cannot be the backstop here, because the term is gone before it
+  // is computed. `[y'=v, v'=-y-0.1*y', y(0)=1, v(0)=0]` therefore lost its damping
+  // silently and shipped the UNDAMPED `[[cos(x),-sin(x)]]` with a check mark: the
+  // mark is honest about the rewritten system, which is the wrong system. Checked
+  // on the raw text, before the rewrite below, since that rewrite is what turns
+  // `diff(y(x),x)` into the vanishing `diff(y,x)` spelling.
+  const derivativeOnRight = new RegExp(
+    `(\\b(${functions.join('|')})\\s*'|\\bdiff\\s*\\(|\\bd(${functions.join('|')})\\s*/\\s*d)`
+  );
+  const withDerivative = system.equations.find((e) => derivativeOnRight.test(e.rhs));
+  if (withDerivative !== undefined) {
+    return {
+      error:
+        `writes a derivative on the right-hand side of ${withDerivative.fn}' — a ` +
+        "first-order system's right-hand sides may contain only the unknown " +
+        "functions and the independent variable (rewrite y''=… as y'=w, w'=…)",
+    };
+  }
+
   const applied = new RegExp(`\\b(${functions.join('|')})\\s*\\(\\s*${variable}\\s*\\)`, 'g');
   const rhss = system.equations.map((e) => e.rhs.replace(applied, '$1'));
   // Anything still applied is not this system's unknown at this point — `z(t)`
@@ -396,23 +431,25 @@ export async function translateOdeSystem(
   // means the coefficients are not constant. A forcing term in the independent
   // variable is fine and stays out of the matrix, which is why `exp(x)` in
   // `y'=z+exp(x)` is still accepted.
-  // Three members. The gradient alone is NOT a test for linearity — it asks
-  // whether the gradient still depends on an unknown, which is a different
-  // `normal`, not `simplify`. simplify's cost is exponential in composition
-  // depth and neither cap can express that: `[y'=sin(sin(sin(sin(sin(z))))),
-  // z'=-y]` is 50 characters and builds a 292-character probe — 6.8x inside the
-  // character cap — and burnt the entire 10s per-call budget in the shared
-  // worker, which is a denial of service against every concurrent caller.
-  // `normal` decides the same question; it cancels the float terms simplify
-  // leaves (`z+0.5-z-0.5`) and costs 197ms at depth 80, where the character cap
-  // is already the binding bound. What it gives up is a coefficient that is
-  // constant only under a trig identity, which it reports as non-constant.
+  // Three members: the gradient rows, the constant vector, and the residual.
   //
-  // question. Giac differentiates floor/ceil/round/sign to the constant 0 and
-  // frac to 1, so `[y'=floor(z), z'=-y]` passed the scan and was answered; worse,
-  // `grad(frac(z))` is [0,1], indistinguishable from `z` itself. The residual
-  // asks the question directly: what is left of the right-hand side once the
-  // linear part and the constant are removed. It must be identically zero.
+  // The gradient alone is not a test for linearity. It asks whether the gradient
+  // still depends on an unknown, which is a different question: Giac
+  // differentiates floor/ceil/round/sign to the constant 0 and frac to 1, so
+  // `[y'=floor(z), z'=-y]` passed that scan and was answered — and `grad(frac(z))`
+  // is [0,1], indistinguishable from `z` itself. The residual asks directly what
+  // is left of the right-hand side once the linear part and the constant are
+  // removed. It must be identically zero.
+  //
+  // Two members are wrapped in `normal`, not `simplify`. simplify's cost is
+  // exponential in composition depth and no character bound can express that:
+  // `[y'=sin(sin(sin(sin(sin(z))))), z'=-y]` is 50 characters and builds a
+  // 292-character probe — 6.8x inside the cap — yet burnt the whole 10s per-call
+  // budget in the shared worker, a denial of service against every concurrent
+  // caller. `normal` decides the same question, cancels the float terms simplify
+  // leaves (`z+0.5-z-0.5`), and costs 197ms at depth 80 where the character cap
+  // is already binding. What it gives up is a coefficient that is constant only
+  // under a trig identity, which it reports as non-constant.
   const vec = `[${functions.join(',')}]`;
   const probe =
     `[[${rhss.map((r) => `normal(grad(${r},${vec}))`).join(',')}],` +
@@ -434,6 +471,23 @@ export async function translateOdeSystem(
   let raw: string;
   try {
     raw = (await evaluate(probe)).trim();
+    // The REPLY, not just the request. MAX_PROBE_CHARS bounds what is sent;
+    // `normal` expands what comes back, and nothing bounded that — so a
+    // 28-character system, `[y'=y*z*(x+1)^1000, z'=-y]`, returned a
+    // 677,259-character matrix that survived the probe and then killed the
+    // worker when it was re-sent to the `exact` classifier. main burns its
+    // timeout on the same input and the worker LIVES, so an unbounded reply was
+    // strictly worse than doing nothing. Legitimate replies are tiny: 28
+    // characters for `[y'=z, z'=-y]`, 223 for a nine-equation ring, 329 for a
+    // 25-term forcing sum.
+    if (raw.length > MAX_PROBE_REPLY_CHARS) {
+      return {
+        error:
+          `expands to ${raw.length} characters of coefficients, above the ` +
+          `${MAX_PROBE_REPLY_CHARS}-character limit — the coefficients grow far ` +
+          'faster than the input that produced them',
+      };
+    }
   } catch (error) {
     // A trap or timeout in the probe is this operation's failure, not a raw
     // engine string for the caller to decipher.
@@ -581,6 +635,9 @@ export async function translateOdeSystem(
   // first channel and are guarded above; an earlier version of this comment
   // claimed they did not exist, which is how they went unguarded.
   for (const condition of system.conditions) {
+    if (!CONDITION_FORM.test(condition)) {
+      return { error: `has a member "${condition.slice(0, 60)}" that is not of the form y(0)=1` };
+    }
     const oversized = implausibleMagnitude(condition);
     if (oversized !== undefined) {
       return {
@@ -623,8 +680,19 @@ export async function translateOdeSystem(
     floatInMatrix = flat(exactMatrix) !== flat(matrix);
     floatInForcing = flat(exactForcing) !== flat(constants);
   } catch {
-    // Leave these false: the system goes on as the engine printed it, which is
-    // what happened before any of this existed.
+    // A refusal, not a shrug. These flags gate the accuracy caps and the
+    // normalisation; clearing them lets the request continue with both guards
+    // silently off, and the measured consequence is an answer this module has
+    // already established is wrong — `[y'=z, z'=-1.5*y+z+(x+1)^20]` fails its own
+    // first equation by a factor of 13. "What happened before any of this
+    // existed" was also not true: before this module the input never took this
+    // path. Not knowing whether the answer is safe to produce is not the same as
+    // knowing that it is.
+    return {
+      error:
+        'could not be examined for decimal coefficients, so the accuracy bounds ' +
+        'that depend on that could not be applied',
+    };
   }
   // Asked separately, and only after the magnitude guard above. Folded into the
   // same `Promise.all`, a failure on this one — the only member built from caller
@@ -639,7 +707,11 @@ export async function translateOdeSystem(
       const flat = (text: string) => text.trim().replace(/\s+/g, '');
       floatInConditions = flat(asExact ?? '') !== flat(asWritten ?? '');
     } catch {
-      // Same: leave it false rather than guessing.
+      return {
+        error:
+          'has initial conditions that could not be examined for decimals, so the ' +
+          'accuracy bound that depends on that could not be applied',
+      };
     }
   }
 
@@ -709,19 +781,17 @@ export async function translateOdeSystem(
     // measured — trapped the engine fatally and killed the worker.
     const degrees =
       `[max(${constantEntries.map((c) => `${numerator(c)}+${denominator(c)}`).join(',')}),` +
-      `max(${constantEntries.map((c) => `min(${numerator(c)},${denominator(c)})`).join(',')}),` +
-      `max(${constantEntries.map(denominator).join(',')})]`;
+      `max(${constantEntries.map((c) => `size(lvar(denom(${c})))`).join(',')})]`;
     let reply: string;
     try {
       reply = (await evaluate(degrees)).trim();
     } catch {
       return { error: `has a forcing term whose degree in ${variable} could not be read` };
     }
-    const [total, mixed, denominatorDegree] = splitTopLevel(
-      stripEnclosingBrackets(reply),
-      ','
-    ).map((n) => Number(n.trim()));
-    if (!Number.isFinite(total) || !Number.isFinite(mixed) || !Number.isFinite(denominatorDegree)) {
+    const [total, denominatorSymbols] = splitTopLevel(stripEnclosingBrackets(reply), ',').map((n) =>
+      Number(n.trim())
+    );
+    if (!Number.isFinite(total) || !Number.isFinite(denominatorSymbols)) {
       return { error: `has a forcing term whose degree in ${variable} could not be read` };
     }
     if (total > MAX_FORCING_DEGREE) {
@@ -749,20 +819,24 @@ export async function translateOdeSystem(
     // garbage without trapping, so this is a regression the caps did not cover.
     // The exact spelling solves the same system in 0ms, which is what the message
     // asks for.
-    if (holdsFloat && denominatorDegree > 0) {
+    // A forcing term with a POLE, which the matrix `desolve` cannot integrate and
+    // which kills the worker trying. Two tests, because one does not see both
+    // shapes. A denominator carrying the variable covers `1/(x+1)`, `1/cos(x)`
+    // and `1/(exp(x)+1)` — `size(lvar(denom(c)))` rather than its degree, since
+    // `degree(denom(1/cos(x)),x)` is 0. It does NOT cover `tan`, which Giac keeps
+    // atomic: `denom(tan(x))` is 1 and `texpand` does not open it either. So the
+    // pole-bearing elementary functions are named. That is a shape list and will
+    // not generalise, which is the honest description of it; the measurement is
+    // that `[y'=z, z'=-y+tan(x)]` — 21 characters, exact — traps the engine and
+    // takes a concurrent caller's unrelated call with it, where main answers.
+    const poleFunction = /\b(tan|cot|sec|csc|tanh|coth|sech|csch)\s*\(/;
+    if (denominatorSymbols > 0 || constantEntries.some((c) => poleFunction.test(c))) {
       return {
         error:
-          `has a forcing term with a denominator in ${variable} beside a float; ` +
-          'the matrix form cannot solve a rational forcing term at all, and with ' +
-          'a float present the attempt fatally traps the engine',
+          `has a forcing term with a pole in ${variable}; the matrix form cannot ` +
+          'solve one, and the attempt fatally traps the engine',
       };
     }
-    // The condition channel is NOT like the other two, and folding it in refused
-    // work that is exactly right. A decimal in the matrix or the forcing term
-    // degrades smoothly from about 1e-12 to 1e-5 across degrees 8 to 14; a decimal
-    // only in an initial condition is EXACT — the ODE residual normalises to
-    // [0,0], not to something small — through degree 14, and then falls off a
-    // cliff: measured IC error is 0 through 14, 0.5 at 15, 15 at 16, 420 at 17.
     if (floatInConditions && total > MAX_CONDITION_FLOAT_DEGREE) {
       return {
         error:
@@ -781,13 +855,6 @@ export async function translateOdeSystem(
           'wherever they appear, including the initial conditions) or lower the degree',
       };
     }
-    if (mixed > MAX_RATIONAL_DEGREE) {
-      return {
-        error:
-          `has a forcing term that is a ratio of degree-${mixed} polynomials in ` +
-          `${variable}, above the ${MAX_RATIONAL_DEGREE} the matrix form can be solved at`,
-      };
-    }
   }
   // Cosmetic, and only for the Command line the caller sees: Giac answers
   // `A*Y+[0,0]` identically to `A*Y`. Kept so a homogeneous system does not
@@ -801,7 +868,8 @@ export async function translateOdeSystem(
       functions,
       0,
       matrix,
-      homogeneous ? '' : constants
+      homogeneous ? '' : constants,
+      !holdsFloat
     );
   }
   // Conditions have to become one vector condition: Giac takes `Y(0)=[1,0]`, not
@@ -814,6 +882,7 @@ export async function translateOdeSystem(
     vectorCondition.text.length,
     matrix,
     homogeneous ? '' : constants,
+    !holdsFloat && !floatInConditions,
     vectorCondition.text
   );
 }
@@ -841,10 +910,11 @@ function withinLimit(
   conditionChars: number,
   matrix: string,
   constants: string,
+  exact: boolean,
   condition?: string
 ): SystemTranslation {
   if (command.length <= MAX_COMMAND_CHARS) {
-    return { command, functions, matrix, constants, ...(condition ? { condition } : {}) };
+    return { command, functions, matrix, constants, exact, ...(condition ? { condition } : {}) };
   }
   // Name the part that is actually large. Blaming the conditions unconditionally
   // told a caller who wrote none — `[y'=z+10^900, z'=-y]`, whose 938 characters
@@ -864,13 +934,14 @@ function withinLimit(
 /**
  * Describes a number in caller text too large to be meant, or undefined.
  *
- * A condition's point and value are the only caller text that reaches the
- * emitted command without the probe ever differentiating it, and their SIZE as
- * text says nothing about the size of the number they denote: `10^100000` is
- * nine characters, sits at 8% of MAX_COMMAND_CHARS, and fatally trapped the
- * engine inside `desolve` itself — downstream of every other guard here — which
- * recycles the worker and degrades whatever else was in flight. `10^10000` did
- * not trap desolve but produced an 80,000-character result.
+ * The SIZE of caller text says nothing about the size of the number it denotes:
+ * `10^100000` is nine characters, sits at 8% of MAX_COMMAND_CHARS, and fatally
+ * traps the engine — recycling the shared worker and degrading whatever else was
+ * in flight. `10^10000` does not trap but produces an 80,000-character result.
+ *
+ * Callers are deliberately not enumerated here. An earlier version named the one
+ * channel it was written for, a later round read that as a statement of where
+ * the hazard lives, and the right-hand sides went unguarded because of it.
  *
  * Large EXPONENTS only, which is the shape measured to be dangerous — a long
  * literal is MAX_COMMAND_CHARS' job, and this had no branch for one despite an
@@ -880,8 +951,26 @@ function withinLimit(
  * magnitude in general.
  */
 function implausibleMagnitude(text: string): string | undefined {
-  for (const power of text.matchAll(/\^\s*\(?\s*(\d+)/g)) {
-    if (Number(power[1]) > 1_000) return `an exponent of ${power[1]}`;
+  // Every `^`, not only the ones whose exponent is a readable literal. Reading a
+  // digit run after `^` cannot bound a NESTED exponent: `10^(10^5)` captures "10"
+  // and "5" and passed, and it is the same 10^100000 this guard exists to stop —
+  // it crashed the shared worker in the conditions scan, where main answers
+  // harmlessly. An exponent that is not a small literal is not ordinary-number
+  // input either, so anything this cannot read is refused rather than passed.
+  for (const power of text.matchAll(/\^\s*\(?\s*([^),\s]+)/g)) {
+    const exponent = power[1];
+    if (/^\d+$/.test(exponent) && Number(exponent) > 1_000) {
+      return `an exponent of ${exponent}`;
+    }
+    // A NESTED exponent, which reading a digit run cannot bound: `10^(10^5)` was
+    // captured as "10" and "5" and passed, and it is the same 10^100000 this
+    // exists to stop — it crashed the shared worker in the conditions scan, where
+    // main answers harmlessly. Only `^` inside the exponent is refused, not every
+    // exponent this cannot read: `2^(1/3)` and `x^(1/2)` are ordinary exact
+    // constants and refusing them was a regression of its own.
+    if (exponent.includes('^')) {
+      return `a nested exponent (${exponent.slice(0, 20)})`;
+    }
   }
   return undefined;
 }
@@ -900,7 +989,7 @@ function buildVectorCondition(
   const values = new Map<string, string>();
   let point = '0';
   for (const condition of conditions) {
-    const parsed = /^\s*([A-Za-z_]\w*)\s*\(([^)]*)\)\s*=\s*(.+)$/.exec(condition);
+    const parsed = CONDITION_FORM.exec(condition);
     if (!parsed) return { error: `initial condition "${condition}" is not of the form y(0)=1` };
     const [, fn, at, value] = parsed;
     if (!functions.includes(fn)) {

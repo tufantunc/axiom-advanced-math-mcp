@@ -1,4 +1,5 @@
 import { giacEngine } from '../giac/index.js';
+import { MAX_ENGINE_DEPTH, nestingDepth } from './giac-eval.js';
 import { isPrintedZero, splitTopLevel } from './output-cleanup.js';
 import { stripEnclosingBrackets } from './compute/arg-parsing.js';
 
@@ -158,7 +159,8 @@ export async function verifyOdeSystem(
   variable: string,
   result: string,
   evaluate: (expr: string) => Promise<string>,
-  condition?: string
+  condition?: string,
+  exact = false
 ): Promise<VerificationResult | undefined> {
   const method = 'substitution';
   const raw = result.trim();
@@ -170,7 +172,15 @@ export async function verifyOdeSystem(
   // one is its own hazard to send back to the engine — but "I did not check" is
   // not evidence against the answer, and returning a failure here refused a
   // correct degree-60 forcing term whose exact residual is [0,0].
-  if (raw.length > MAX_VERIFIABLE_RESULT) return undefined;
+  // Length AND depth, the same pair `toLatex` bounds and for the same reason:
+  // this hands engine output straight back to the engine, embedding the solution
+  // twice. Length alone was not enough — a depth-140 answer is 1,127 characters,
+  // well inside the 4,000, and killed the worker outright. The bound is imported
+  // rather than restated; the last predicate this file wrote out a second time
+  // silently cost a correct answer its verification mark.
+  if (raw.length > MAX_VERIFIABLE_RESULT || nestingDepth(raw) > MAX_ENGINE_DEPTH) {
+    return undefined;
+  }
   const solution = raw.slice(1, -1);
   const rhs = `(${matrix})*(${solution})${constants ? `+(${constants})` : ''}`;
   try {
@@ -190,9 +200,17 @@ export async function verifyOdeSystem(
     // never a failure it cannot stand behind. The mixed-domain answer that
     // motivated the check is now prevented at the source instead, by giving the
     // matrix a single numeric domain before it is solved.
-    const exact = (await evaluate(`normal(diff(${solution},${variable})-(${rhs}))`)).trim();
-    if (!allZero(exact)) {
-      return undefined;
+    const residual = (await evaluate(`normal(diff(${solution},${variable})-(${rhs}))`)).trim();
+    if (!allZero(residual)) {
+      // "No sound numeric version" is true only where a FLOAT is involved. With
+      // an exact system there is no rounding to hide behind: `normal` returning
+      // anything but zero is proof the answer does not solve the system, and
+      // discarding that as "undecided" shipped `[y'=z, z'=-y+sqrt(x)]` as the
+      // HOMOGENEOUS solution — the forcing term simply gone, residual `[0,-√x]`,
+      // success:true and no warning. main answered it wrongly too but said so.
+      return exact
+        ? { verified: false, method, detail: `does not satisfy Y’ = A·Y + b; residual ${residual}` }
+        : undefined;
     }
     // An IVP asks a strictly stronger question, and the mark has to mean the
     // whole of it. Satisfying `Y' = A*Y + b` while missing the conditions is a

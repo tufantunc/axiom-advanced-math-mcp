@@ -55,7 +55,13 @@ interface BuiltCommand {
   /** Present only for a rewritten system: the functions, in component order. */
   functions?: string[];
   /** Present only for a rewritten system: what the answer is checked against. */
-  system?: { matrix: string; constants: string; variable: string; condition?: string };
+  system?: {
+    matrix: string;
+    constants: string;
+    variable: string;
+    condition?: string;
+    exact: boolean;
+  };
 }
 
 /**
@@ -91,6 +97,7 @@ async function buildGiacExpression(
           matrix: translated.matrix,
           constants: translated.constants,
           variable: (args.variable as string) ?? 'x',
+          exact: translated.exact,
           ...(translated.condition ? { condition: translated.condition } : {}),
         },
       };
@@ -158,7 +165,8 @@ export async function calculusHandler(args: Record<string, unknown>) {
               system.variable,
               result,
               (expr: string) => giacEngine.evaluate(expr),
-              system.condition
+              system.condition,
+              system.exact
             )
         : undefined;
     // Through `notes`, not appended to the formatted content: formatToolResponse
@@ -194,9 +202,20 @@ export async function calculusHandler(args: Record<string, unknown>) {
         // not caught by its own name.
         /(^|[^A-Za-z_0-9])infinity([^A-Za-z_0-9]|$)/.test(result) ||
         result.includes('GIAC_ERROR');
-      if (unfinished) {
+      // Reachable again. This branch was removed when verifyOdeSystem could only
+      // say ✓ or nothing; it can now prove failure for an exact system, and a
+      // disproved answer must not ship — `[y'=z, z'=-y+sqrt(x)]` was going out as
+      // the homogeneous solution with success:true.
+      const disproved = /Verified: ✗/.test(response.content.map((c) => c.text).join('\n'));
+      if (unfinished || disproved) {
         // The initial-condition hint only when there were any: a 10-equation
         // cycle with none was being told to check conditions it never supplied.
+        if (disproved && !unfinished) {
+          return formatErrorResponse(
+            'solve_ode cannot solve this system — the CAS returned an answer that ' +
+              'does not satisfy it'
+          );
+        }
         const hint = hasConditions ? '; check the initial conditions' : '';
         return formatErrorResponse(
           `solve_ode cannot solve this system — the CAS could not finish it${hint}`

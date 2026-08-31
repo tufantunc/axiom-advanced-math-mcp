@@ -25,19 +25,20 @@ export interface EvalOptions {
 }
 
 /** Deepest nesting handed back to `latex(...)`; see the note in toLatex. */
-const MAX_LATEX_DEPTH = 100;
+export const MAX_ENGINE_DEPTH = 100;
+const MAX_LATEX_DEPTH = MAX_ENGINE_DEPTH;
 
 /**
- * Deepest run of nested CALL parentheses in a printed result.
+ * Deepest parenthesis nesting in a printed result, call or grouping alike.
  *
  * Parentheses only. Counting `[` and `{` as well seemed the cautious reading —
  * how deep the tree goes, whichever delimiter spelt it — but it refuses LaTeX
  * that renders perfectly well: a list nested 200 deep is 401 characters and
  * `latex()` answers it with the worker untouched, where a 140-deep run of
- * `sqrt(1+...)` kills it. The hazard is nested function application, so that is
- * what this counts.
+ * `sqrt(1+...)` kills it. The hazard is nested function application; grouping
+ * parentheses are counted too, which only makes this more conservative.
  */
-function nestingDepth(text: string): number {
+export function nestingDepth(text: string): number {
   let depth = 0;
   let deepest = 0;
   for (const ch of text) {

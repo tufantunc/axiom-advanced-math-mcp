@@ -304,22 +304,23 @@ describe('translateOdeSystem numeric domain', () => {
     expect(seen.some((e) => e.startsWith('evalf('))).toBe(false);
   });
 
-  it('leaves the matrix alone when the engine cannot classify it', async () => {
-    // The safe direction is "neither", not "both". Assuming a mixed domain would
-    // evalf a matrix that may be exact, which is what split a repeated root and
-    // made a solvable system fail outright; assuming a float would also apply the
-    // accuracy cap to systems it does not govern.
+  it('refuses when the engine cannot say whether a decimal is involved', async () => {
+    // Not a shrug. These flags gate the accuracy bounds and the normalisation, so
+    // clearing them lets the request continue with both guards silently off — and
+    // the measured consequence is an answer this module has already established is
+    // wrong. Not knowing whether the answer is safe to produce is not the same as
+    // knowing that it is.
     const seen: string[] = [];
     const out = await translateOdeSystem(system("[y'=z, z'=-y]"), 'x', {
       evaluate: (expr: string): Promise<string> => {
         seen.push(expr);
-        if (expr.startsWith('[size(lvar(')) return Promise.reject(new Error('trap'));
+        if (expr.startsWith('size(lvar(')) return Promise.reject(new Error('trap'));
         if (expr.startsWith('[max(')) return Promise.resolve('[0,0]');
         return Promise.resolve('[[[0,1],[-1/4*pi^2,pi]],[0,0],[0,0]]');
       },
     });
+    expect('error' in out && out.error).toMatch(/could not be examined for decimal/);
     expect(seen.some((e) => e.startsWith('evalf('))).toBe(false);
-    expect('command' in out && out.command).toContain('pi');
   });
 
   it.each([
