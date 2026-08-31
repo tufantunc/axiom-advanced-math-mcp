@@ -171,6 +171,259 @@ function engineFailureSuffix(failure: unknown): string {
 }
 
 /**
+ * The caps that only a forcing term can trip: polynomial degree, a pole in the
+ * solve variable, and the tighter degree allowed once a decimal is in play.
+ *
+ * Extracted for the same reason as readNumericDomain — it is a self-contained
+ * phase that takes four inputs and produces only refusals, and inlining it put
+ * its caps a long way from the flags they read.
+ */
+async function checkForcingTerm(
+  constantEntries: string[],
+  variable: string,
+  decimals: { holdsFloat: boolean; floatInConditions: boolean },
+  evaluate: (command: string) => Promise<string>
+): Promise<{ error: string } | undefined> {
+  const { holdsFloat, floatInConditions } = decimals;
+// A forcing term's cost to the matrix `desolve` is driven by its DEGREE, and
+// none of the three text bounds can see that: `[y'=z+(x+1)^300, z'=-y]` is 35
+// characters, builds a 229-character probe and a 46-character command — inside
+// every cap — and then trapped the engine fatally, after which the NEXT
+// unrelated caller got "Giac worker exited (code 1)". `grad` and `subst`
+// differentiate the term away rather than expanding it, so the probe never
+// grows, and `^300` is four characters in the command.
+//
+// Measured on `desolve(Y'=[[0,1],[-1,0]]*Y+[(x+1)^n,0],x,Y)`: n=60 answers in
+// 800ms, n=80 takes 4.1s of a 10s budget, and n=100 traps and kills the
+// worker. 60 is the last comfortable one. Only asked when there is a forcing
+// term to ask about, so the homogeneous systems that are the common case pay
+// nothing.
+  // numerator AND denominator. `degree` is the SIGNED polynomial degree, so it
+  // reports 0 for `(x+1)^60/(x-1)^60` and -400 for `1/(x-1)^400` — both sail
+  // past a `> MAX` test, and both are what the cap exists to stop: the first
+  // killed the worker outright, the second burnt the full 10s budget, where
+  // main answered each with a harmless `[]` in about 100ms. Summing the two
+  // degrees measures the work the rational form actually implies; a
+  // transcendental term is 0 on both, so `exp(x)` and `sin(2*x)` stay free.
+  // Two numbers, because two different shapes are expensive. The SUM bounds
+  // sheer size — `(x+1)^300`, and `1/(x-1)^400`, which the signed degree
+  // reports as -400. The MINIMUM bounds a genuine rational, which is far
+  // costlier per degree than either half alone: measured, numerator 40 over
+  // denominator 2 and numerator 2 over denominator 40 both answer in under
+  // 200ms, and so does 13 over 13, but 15 over 15 traps the engine fatally.
+  const numerator = (c: string) => `degree(numer(${c}),${variable})`;
+  const denominator = (c: string) => `degree(denom(${c}),${variable})`;
+  // Written out rather than assembled by patching a comma into a shared
+  // template: `.replace(',', '+')` on `degree(numer(c),x),degree(denom(c),x)`
+  // replaces the FIRST comma, which is the argument separator inside the first
+  // `degree` call, giving `degree(numer(c)+x)` and a MAX where the sum was
+  // meant. The sum guard was therefore never computed, and
+  // `(x+1)^50/(x-1)^12` — total 62, minimum 12, outside neither cap as
+  // measured — trapped the engine fatally and killed the worker.
+  const degrees =
+    `[max(${constantEntries.map((c) => `${numerator(c)}+${denominator(c)}`).join(',')}),` +
+    `max(${constantEntries.map((c) => `has(denom(${c}),${variable})`).join(',')})]`;
+  let reply: string;
+  try {
+    reply = (await evaluate(degrees)).trim();
+  } catch {
+    return { error: `has a forcing term whose degree in ${variable} could not be read` };
+  }
+  const [total, denominatorSymbols] = splitTopLevel(stripEnclosingBrackets(reply), ',').map((n) =>
+    Number(n.trim())
+  );
+  if (!Number.isFinite(total) || !Number.isFinite(denominatorSymbols)) {
+    return { error: `has a forcing term whose degree in ${variable} could not be read` };
+  }
+  if (total > MAX_FORCING_DEGREE) {
+    return {
+      error:
+        `has a forcing term of degree ${total} in ${variable}, above the ` +
+        `${MAX_FORCING_DEGREE} the matrix form can be solved at`,
+    };
+  }
+  // A float coefficient and a high-degree forcing term cannot be solved to
+  // usable precision, whatever the engine survives. Every other bound here is
+  // about the WORKER staying alive; this one is about the ANSWER being worth
+  // having, and the two are far apart: degree 60 is comfortable for the engine
+  // while `[y'=z, z'=-1.5*y+z+(x+1)^20]` — thirty ordinary characters, inside
+  // every other cap — came back failing its own first equation `y'=z`, which
+  // has no coefficient at all, by a factor of 13. Measured worst relative error
+  // over three points: degree 8 is 4.6e-10, 10 is 8.7e-8, 12 is 2.0e-5, 15 is
+  // 2.9e-2. Refusing is right where verifying is not: the answer is
+  // unverifiable by construction, since an exact residual does not exist for a
+  // float matrix.
+  // A float anywhere beside a forcing term with a DENOMINATOR traps the engine
+  // fatally, and no degree cap can see it because the hazard is not size:
+  // `[y'=z, z'=-0.5*y+1/(x+1)]` is 26 characters, its numerator degree is 0 and
+  // its denominator degree 1, and it killed the worker — where `main` returned
+  // garbage without trapping, so this is a regression the caps did not cover.
+  // The exact spelling solves the same system in 0ms, which is what the message
+  // asks for.
+  // A forcing term with a POLE, which the matrix `desolve` cannot integrate and
+  // which kills the worker trying. Two tests, because one does not see both
+  // shapes. A denominator carrying the variable covers `1/(x+1)`, `1/cos(x)`
+  // and `1/(exp(x)+1)` — `size(lvar(denom(c)))` rather than its degree, since
+  // `degree(denom(1/cos(x)),x)` is 0. It does NOT cover `tan`, which Giac keeps
+  // atomic: `denom(tan(x))` is 1 and `texpand` does not open it either. So the
+  // pole-bearing elementary functions are named. That is a shape list and will
+  // not generalise, which is the honest description of it; the measurement is
+  // that `[y'=z, z'=-y+tan(x)]` — 21 characters, exact — traps the engine and
+  // takes a concurrent caller's unrelated call with it, where main answers.
+  // Three names, not nine. Giac gives `cot`, `sec`, `csc`, `coth`, `sech` and
+  // `csch` a denominator that mentions the variable, so the rule above already
+  // refuses them and those six alternatives were unreachable — measured with
+  // `has(denom(f(x)),x)`, which is 1 for each of them and 0 for these three.
+  // A shape list should hold only the shapes nothing else catches.
+  //
+  // The variable has to be IN it. Matching the function name alone refused
+  // `tan(1)*x`, whose `tan(1)` is a constant, and asking `size(lvar(denom(c)))`
+  // rather than whether the denominator involves the variable refused
+  // `1/(a+1)` and `x/(a+b)` — all three solve, and the message told the caller
+  // they had a pole in x that is not there.
+  const poleFunction = new RegExp(`\\b(tan|cotan|tanh)\\s*\\([^)]*\\b${variable}\\b`);
+  if (denominatorSymbols > 0 || constantEntries.some((c) => poleFunction.test(c))) {
+    return {
+      error:
+        `has a forcing term with a pole in ${variable}; the matrix form cannot ` +
+        'solve one, and the attempt fatally traps the engine',
+    };
+  }
+  if (floatInConditions && total > MAX_CONDITION_FLOAT_DEGREE) {
+    return {
+      error:
+        `has a float initial condition and a forcing term of degree ${total} in ` +
+        `${variable}; above degree ${MAX_CONDITION_FLOAT_DEGREE} the condition is ` +
+        'no longer met — write the decimals exactly (3/2 rather than 1.5) or ' +
+        'lower the degree',
+    };
+  }
+  if (holdsFloat && total > MAX_FLOAT_FORCING_DEGREE) {
+    return {
+      error:
+        `has a float and a forcing term of degree ${total} in ${variable}; above ` +
+        `degree ${MAX_FLOAT_FORCING_DEGREE} that combination cannot be solved to ` +
+        'usable precision — write the decimals exactly (1/2 rather than 0.5, ' +
+        'wherever they appear, including the initial conditions) or lower the degree',
+    };
+  }
+  return undefined;
+}
+/**
+ * What the rewritten system holds NUMERICALLY: an exact symbolic constant, and a
+ * float in any of the three places one can hide.
+ *
+ * Extracted because translateOdeSystem held every phase of the translation in one
+ * body, and these four facts were declared as mutable `let`s far from the branch
+ * that reads them and further still from the caps that act on them. They are one
+ * question asked in three places, so they are returned as one record.
+ */
+async function readNumericDomain(
+  matrix: string,
+  constants: string,
+  conditions: string[],
+  evaluate: (command: string) => Promise<string>
+): Promise<
+  | { holdsExact: boolean; floatInMatrix: boolean; floatInForcing: boolean; floatInConditions: boolean }
+  | { error: string }
+> {
+// Ask the ENGINE what the matrix holds, rather than reading how it printed it.
+//
+// This was a pair of character tests, and each one was a guess about Giac's
+// printer that turned out to be wrong. "Exact constant = contains a letter"
+// missed U+221A, the glyph Giac prints radicals with, so a float beside `√2`
+// was never normalised and `[y'=z, z'=-1.5*y+sqrt(3)*z]` returned a
+// complex-valued answer. Fixing that half moved the bug across the `&&`:
+// "float = contains a decimal point" missed `-3e+15`, and the same wrong
+// answer came back. `lvar` reports the non-numeric atoms and `DOM_FLOAT` the
+// float entries, both from the engine's own type tags — which also gets `E`
+// (a free identifier, not Euler's number) and `1.5*i` right, where the
+// character tests did not.
+
+// Two questions, both asked of the ENGINE rather than of how it printed: does
+// this hold an exact symbolic constant, and does it hold a float.
+//
+// `exact()` rewrites every float as a rational and leaves everything else
+// alone, so comparing its result with what came in answers the second question
+// — and it looks INSIDE an expression, which a type tag does not. Tagging was
+// the first attempt and `type(0.5*(x+1)^15)` is DOM_SYMBOLIC, not DOM_FLOAT, so
+// a float anywhere but at the top level was invisible. The comparison is
+// string-wise, which is only sound because both sides are the engine's own
+// print of the same expression: `matrix` and `constants` are probe output, and
+// `exact` reprints through the same writer.
+//
+// The forcing vector is asked about separately, not folded in with the matrix.
+// It was not asked about at all, and a float living only there skipped the
+// accuracy cap: `[y'=z, z'=-y+0.5*(x+1)^15]` shipped an answer whose relative
+// residual against its own system is 0.33. The two also degrade at very
+// different rates, so they cannot share a threshold.
+let holdsExact = false;
+let floatInMatrix = false;
+let floatInForcing = false;
+let floatInConditions = false;
+try {
+  const [atoms, exactMatrix, exactForcing] = await Promise.all([
+    evaluate(`size(lvar(${matrix}))`),
+    evaluate(`exact(${matrix})`),
+    evaluate(`exact(${constants})`),
+  ]);
+  holdsExact = Number(atoms.trim()) > 0;
+  floatInMatrix = flat(exactMatrix) !== flat(matrix);
+  floatInForcing = flat(exactForcing) !== flat(constants);
+} catch {
+  // A refusal, not a shrug. These flags gate the accuracy caps and the
+  // normalisation; clearing them lets the request continue with both guards
+  // silently off, and the measured consequence is an answer this module has
+  // already established is wrong — `[y'=z, z'=-1.5*y+z+(x+1)^20]` fails its own
+  // first equation by a factor of 13. "What happened before any of this
+  // existed" was also not true: before this module the input never took this
+  // path. Not knowing whether the answer is safe to produce is not the same as
+  // knowing that it is.
+  return {
+    error:
+      'could not be examined for decimal coefficients, so the accuracy bounds ' +
+      'that depend on that could not be applied',
+  };
+}
+// Asked separately, and only after validateSystemShape has bounded them. Folded into the
+// same `Promise.all`, a failure on this one — the only member built from caller
+// text — silently cleared the matrix and forcing flags too, reopening the
+// unscanned-float hole and skipping the normalisation that prevents the
+// mixed-domain wrong answer.
+if (conditions.length > 0) {
+  try {
+    // Two calls, one copy of the text each. Asking both questions in one
+    // command doubled the caller's own text: the input cap is 8,192 characters
+    // and a long flat expression traps around 10,000, so a 7,528-character
+    // request — comfortably inside the cap — became a ~15,000-character command
+    // and killed the shared worker, where main answers it in 21ms.
+    //
+    // This RAISES the threshold; it does not remove it. The engine also traps on
+    // parse DEPTH, which no character count expresses: a condition nested 600
+    // deep is 2,415 characters and kills the worker in one copy. That is bounded
+    // in validateSystemShape, before either of these calls — saying otherwise
+    // here is what would stop the next reader from noticing.
+    const written = `[${conditions.join(',')}]`;
+    const [asExact, asWritten] = await Promise.all([
+      evaluate(`exact(${written})`),
+      evaluate(written),
+    ]);
+    floatInConditions = flat(asExact) !== flat(asWritten);
+  } catch (failure) {
+    // Same classification as the probe's. An outage that lands here is not the
+    // caller's conditions being at fault, and a recycle caused by somebody
+    // else's request read as a verdict on theirs.
+    return {
+      error:
+        'has initial conditions that could not be examined for decimals, so the ' +
+        `accuracy bound that depends on that could not be applied${engineFailureSuffix(failure)}`,
+    };
+  }
+}
+  return { holdsExact, floatInMatrix, floatInForcing, floatInConditions };
+}
+
+/**
  * Rewrites a linear constant-coefficient system as a matrix product.
  *
  * Asks Giac for the coefficient matrix, the inhomogeneous term and the residual
@@ -361,99 +614,9 @@ export async function translateOdeSystem(
   // whose residual is [0,-1] — it satisfies z'=-y-1, not the system asked for.
   // The IVP form hid it completely, since the initial conditions still held.
   const vector = vectorSymbol([variable, ...functions, matrix, constants, ...system.conditions]);
-  // Ask the ENGINE what the matrix holds, rather than reading how it printed it.
-  //
-  // This was a pair of character tests, and each one was a guess about Giac's
-  // printer that turned out to be wrong. "Exact constant = contains a letter"
-  // missed U+221A, the glyph Giac prints radicals with, so a float beside `√2`
-  // was never normalised and `[y'=z, z'=-1.5*y+sqrt(3)*z]` returned a
-  // complex-valued answer. Fixing that half moved the bug across the `&&`:
-  // "float = contains a decimal point" missed `-3e+15`, and the same wrong
-  // answer came back. `lvar` reports the non-numeric atoms and `DOM_FLOAT` the
-  // float entries, both from the engine's own type tags — which also gets `E`
-  // (a free identifier, not Euler's number) and `1.5*i` right, where the
-  // character tests did not.
-
-  // Two questions, both asked of the ENGINE rather than of how it printed: does
-  // this hold an exact symbolic constant, and does it hold a float.
-  //
-  // `exact()` rewrites every float as a rational and leaves everything else
-  // alone, so comparing its result with what came in answers the second question
-  // — and it looks INSIDE an expression, which a type tag does not. Tagging was
-  // the first attempt and `type(0.5*(x+1)^15)` is DOM_SYMBOLIC, not DOM_FLOAT, so
-  // a float anywhere but at the top level was invisible. The comparison is
-  // string-wise, which is only sound because both sides are the engine's own
-  // print of the same expression: `matrix` and `constants` are probe output, and
-  // `exact` reprints through the same writer.
-  //
-  // The forcing vector is asked about separately, not folded in with the matrix.
-  // It was not asked about at all, and a float living only there skipped the
-  // accuracy cap: `[y'=z, z'=-y+0.5*(x+1)^15]` shipped an answer whose relative
-  // residual against its own system is 0.33. The two also degrade at very
-  // different rates, so they cannot share a threshold.
-  let holdsExact = false;
-  let floatInMatrix = false;
-  let floatInForcing = false;
-  let floatInConditions = false;
-  try {
-    const [atoms, exactMatrix, exactForcing] = await Promise.all([
-      evaluate(`size(lvar(${matrix}))`),
-      evaluate(`exact(${matrix})`),
-      evaluate(`exact(${constants})`),
-    ]);
-    holdsExact = Number(atoms.trim()) > 0;
-    floatInMatrix = flat(exactMatrix) !== flat(matrix);
-    floatInForcing = flat(exactForcing) !== flat(constants);
-  } catch {
-    // A refusal, not a shrug. These flags gate the accuracy caps and the
-    // normalisation; clearing them lets the request continue with both guards
-    // silently off, and the measured consequence is an answer this module has
-    // already established is wrong — `[y'=z, z'=-1.5*y+z+(x+1)^20]` fails its own
-    // first equation by a factor of 13. "What happened before any of this
-    // existed" was also not true: before this module the input never took this
-    // path. Not knowing whether the answer is safe to produce is not the same as
-    // knowing that it is.
-    return {
-      error:
-        'could not be examined for decimal coefficients, so the accuracy bounds ' +
-        'that depend on that could not be applied',
-    };
-  }
-  // Asked separately, and only after validateSystemShape has bounded them. Folded into the
-  // same `Promise.all`, a failure on this one — the only member built from caller
-  // text — silently cleared the matrix and forcing flags too, reopening the
-  // unscanned-float hole and skipping the normalisation that prevents the
-  // mixed-domain wrong answer.
-  if (system.conditions.length > 0) {
-    try {
-      // Two calls, one copy of the text each. Asking both questions in one
-      // command doubled the caller's own text: the input cap is 8,192 characters
-      // and a long flat expression traps around 10,000, so a 7,528-character
-      // request — comfortably inside the cap — became a ~15,000-character command
-      // and killed the shared worker, where main answers it in 21ms.
-      //
-      // This RAISES the threshold; it does not remove it. The engine also traps on
-      // parse DEPTH, which no character count expresses: a condition nested 600
-      // deep is 2,415 characters and kills the worker in one copy. That is bounded
-      // in validateSystemShape, before either of these calls — saying otherwise
-      // here is what would stop the next reader from noticing.
-      const written = `[${system.conditions.join(',')}]`;
-      const [asExact, asWritten] = await Promise.all([
-        evaluate(`exact(${written})`),
-        evaluate(written),
-      ]);
-      floatInConditions = flat(asExact) !== flat(asWritten);
-    } catch (failure) {
-      // Same classification as the probe's. An outage that lands here is not the
-      // caller's conditions being at fault, and a recycle caused by somebody
-      // else's request read as a verdict on theirs.
-      return {
-        error:
-          'has initial conditions that could not be examined for decimals, so the ' +
-          `accuracy bound that depends on that could not be applied${engineFailureSuffix(failure)}`,
-      };
-    }
-  }
+  const domain = await readNumericDomain(matrix, constants, system.conditions, evaluate);
+  if ('error' in domain) return domain;
+  const { holdsExact, floatInMatrix, floatInForcing, floatInConditions } = domain;
 
   // Giac mishandles a matrix mixing a float with an exact irrational:
   // `[[0,1],[-1.5,ln(2)]]` came back as an ordinary-looking vector whose
@@ -483,129 +646,14 @@ export async function translateOdeSystem(
 
   const constantEntries = splitTopLevel(stripEnclosingBrackets(constants), ',');
   const homogeneous = constantEntries.every(isPrintedZero);
-  // A forcing term's cost to the matrix `desolve` is driven by its DEGREE, and
-  // none of the three text bounds can see that: `[y'=z+(x+1)^300, z'=-y]` is 35
-  // characters, builds a 229-character probe and a 46-character command — inside
-  // every cap — and then trapped the engine fatally, after which the NEXT
-  // unrelated caller got "Giac worker exited (code 1)". `grad` and `subst`
-  // differentiate the term away rather than expanding it, so the probe never
-  // grows, and `^300` is four characters in the command.
-  //
-  // Measured on `desolve(Y'=[[0,1],[-1,0]]*Y+[(x+1)^n,0],x,Y)`: n=60 answers in
-  // 800ms, n=80 takes 4.1s of a 10s budget, and n=100 traps and kills the
-  // worker. 60 is the last comfortable one. Only asked when there is a forcing
-  // term to ask about, so the homogeneous systems that are the common case pay
-  // nothing.
   if (!homogeneous) {
-    // numerator AND denominator. `degree` is the SIGNED polynomial degree, so it
-    // reports 0 for `(x+1)^60/(x-1)^60` and -400 for `1/(x-1)^400` — both sail
-    // past a `> MAX` test, and both are what the cap exists to stop: the first
-    // killed the worker outright, the second burnt the full 10s budget, where
-    // main answered each with a harmless `[]` in about 100ms. Summing the two
-    // degrees measures the work the rational form actually implies; a
-    // transcendental term is 0 on both, so `exp(x)` and `sin(2*x)` stay free.
-    // Two numbers, because two different shapes are expensive. The SUM bounds
-    // sheer size — `(x+1)^300`, and `1/(x-1)^400`, which the signed degree
-    // reports as -400. The MINIMUM bounds a genuine rational, which is far
-    // costlier per degree than either half alone: measured, numerator 40 over
-    // denominator 2 and numerator 2 over denominator 40 both answer in under
-    // 200ms, and so does 13 over 13, but 15 over 15 traps the engine fatally.
-    const numerator = (c: string) => `degree(numer(${c}),${variable})`;
-    const denominator = (c: string) => `degree(denom(${c}),${variable})`;
-    // Written out rather than assembled by patching a comma into a shared
-    // template: `.replace(',', '+')` on `degree(numer(c),x),degree(denom(c),x)`
-    // replaces the FIRST comma, which is the argument separator inside the first
-    // `degree` call, giving `degree(numer(c)+x)` and a MAX where the sum was
-    // meant. The sum guard was therefore never computed, and
-    // `(x+1)^50/(x-1)^12` — total 62, minimum 12, outside neither cap as
-    // measured — trapped the engine fatally and killed the worker.
-    const degrees =
-      `[max(${constantEntries.map((c) => `${numerator(c)}+${denominator(c)}`).join(',')}),` +
-      `max(${constantEntries.map((c) => `has(denom(${c}),${variable})`).join(',')})]`;
-    let reply: string;
-    try {
-      reply = (await evaluate(degrees)).trim();
-    } catch {
-      return { error: `has a forcing term whose degree in ${variable} could not be read` };
-    }
-    const [total, denominatorSymbols] = splitTopLevel(stripEnclosingBrackets(reply), ',').map((n) =>
-      Number(n.trim())
+    const refusal = await checkForcingTerm(
+      constantEntries,
+      variable,
+      { holdsFloat, floatInConditions },
+      evaluate
     );
-    if (!Number.isFinite(total) || !Number.isFinite(denominatorSymbols)) {
-      return { error: `has a forcing term whose degree in ${variable} could not be read` };
-    }
-    if (total > MAX_FORCING_DEGREE) {
-      return {
-        error:
-          `has a forcing term of degree ${total} in ${variable}, above the ` +
-          `${MAX_FORCING_DEGREE} the matrix form can be solved at`,
-      };
-    }
-    // A float coefficient and a high-degree forcing term cannot be solved to
-    // usable precision, whatever the engine survives. Every other bound here is
-    // about the WORKER staying alive; this one is about the ANSWER being worth
-    // having, and the two are far apart: degree 60 is comfortable for the engine
-    // while `[y'=z, z'=-1.5*y+z+(x+1)^20]` — thirty ordinary characters, inside
-    // every other cap — came back failing its own first equation `y'=z`, which
-    // has no coefficient at all, by a factor of 13. Measured worst relative error
-    // over three points: degree 8 is 4.6e-10, 10 is 8.7e-8, 12 is 2.0e-5, 15 is
-    // 2.9e-2. Refusing is right where verifying is not: the answer is
-    // unverifiable by construction, since an exact residual does not exist for a
-    // float matrix.
-    // A float anywhere beside a forcing term with a DENOMINATOR traps the engine
-    // fatally, and no degree cap can see it because the hazard is not size:
-    // `[y'=z, z'=-0.5*y+1/(x+1)]` is 26 characters, its numerator degree is 0 and
-    // its denominator degree 1, and it killed the worker — where `main` returned
-    // garbage without trapping, so this is a regression the caps did not cover.
-    // The exact spelling solves the same system in 0ms, which is what the message
-    // asks for.
-    // A forcing term with a POLE, which the matrix `desolve` cannot integrate and
-    // which kills the worker trying. Two tests, because one does not see both
-    // shapes. A denominator carrying the variable covers `1/(x+1)`, `1/cos(x)`
-    // and `1/(exp(x)+1)` — `size(lvar(denom(c)))` rather than its degree, since
-    // `degree(denom(1/cos(x)),x)` is 0. It does NOT cover `tan`, which Giac keeps
-    // atomic: `denom(tan(x))` is 1 and `texpand` does not open it either. So the
-    // pole-bearing elementary functions are named. That is a shape list and will
-    // not generalise, which is the honest description of it; the measurement is
-    // that `[y'=z, z'=-y+tan(x)]` — 21 characters, exact — traps the engine and
-    // takes a concurrent caller's unrelated call with it, where main answers.
-    // Three names, not nine. Giac gives `cot`, `sec`, `csc`, `coth`, `sech` and
-    // `csch` a denominator that mentions the variable, so the rule above already
-    // refuses them and those six alternatives were unreachable — measured with
-    // `has(denom(f(x)),x)`, which is 1 for each of them and 0 for these three.
-    // A shape list should hold only the shapes nothing else catches.
-    //
-    // The variable has to be IN it. Matching the function name alone refused
-    // `tan(1)*x`, whose `tan(1)` is a constant, and asking `size(lvar(denom(c)))`
-    // rather than whether the denominator involves the variable refused
-    // `1/(a+1)` and `x/(a+b)` — all three solve, and the message told the caller
-    // they had a pole in x that is not there.
-    const poleFunction = new RegExp(`\\b(tan|cotan|tanh)\\s*\\([^)]*\\b${variable}\\b`);
-    if (denominatorSymbols > 0 || constantEntries.some((c) => poleFunction.test(c))) {
-      return {
-        error:
-          `has a forcing term with a pole in ${variable}; the matrix form cannot ` +
-          'solve one, and the attempt fatally traps the engine',
-      };
-    }
-    if (floatInConditions && total > MAX_CONDITION_FLOAT_DEGREE) {
-      return {
-        error:
-          `has a float initial condition and a forcing term of degree ${total} in ` +
-          `${variable}; above degree ${MAX_CONDITION_FLOAT_DEGREE} the condition is ` +
-          'no longer met — write the decimals exactly (3/2 rather than 1.5) or ' +
-          'lower the degree',
-      };
-    }
-    if (holdsFloat && total > MAX_FLOAT_FORCING_DEGREE) {
-      return {
-        error:
-          `has a float and a forcing term of degree ${total} in ${variable}; above ` +
-          `degree ${MAX_FLOAT_FORCING_DEGREE} that combination cannot be solved to ` +
-          'usable precision — write the decimals exactly (1/2 rather than 0.5, ' +
-          'wherever they appear, including the initial conditions) or lower the degree',
-      };
-    }
+    if (refusal) return refusal;
   }
   // Cosmetic, and only for the Command line the caller sees: Giac answers
   // `A*Y+[0,0]` identically to `A*Y`. Kept so a homogeneous system does not
