@@ -41,7 +41,7 @@ function stirling1Unsigned(n: number, k: number): bigint {
   if (k > n) return 0n;
   // Recurrence: |s(n,k)| = (n-1)*|s(n-1,k)| + |s(n-1,k-1)|
   // Build table bottom-up
-  const table: bigint[][] = Array.from({ length: n + 1 }, () => new Array(k + 1).fill(0n));
+  const table: bigint[][] = Array.from({ length: n + 1 }, () => Array.from({ length: k + 1 }, () => 0n));
   table[0][0] = 1n;
   for (let i = 1; i <= n; i++) {
     for (let j = 1; j <= k; j++) {
@@ -172,7 +172,7 @@ export async function combinatoricsHandler(args: Record<string, unknown>) {
 
       case 'partition_count': {
         // Pure JS DP for integer partitions p(n): unordered sums of positive integers
-        const p = new Array(n + 1).fill(0n);
+        const p = Array.from({ length: n + 1 }, () => 0n);
         p[0] = 1n;
         for (let k = 1; k <= n; k++) {
           for (let i = k; i <= n; i++) {

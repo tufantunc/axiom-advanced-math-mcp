@@ -26,8 +26,8 @@ async function polynomialFit(
   const stripped = raw.replace(/^\[\[?/, '').replace(/\]?\]$/, '');
   const coeffs = stripped
     .split(/\],?\[?/)
-    .map((s) => parseFloat(s.trim()))
-    .filter((v) => !isNaN(v));
+    .map((s) => Number.parseFloat(s.trim()))
+    .filter((v) => !Number.isNaN(v));
 
   const yHat = x.map((xi) => coeffs.reduce((s, c, j) => s + c * xi ** j, 0));
   return { coeffs, yHat };

@@ -17,7 +17,7 @@ function std(data: number[], sampleStd = true): number {
 }
 
 function formatTestConclusion(pValue: number, significance: number, detail = ''): string {
-  if (isNaN(pValue)) return 'Could not determine significance';
+  if (Number.isNaN(pValue)) return 'Could not determine significance';
   const action = pValue < significance ? '✗ Reject H₀' : '✓ Fail to reject H₀';
   const comparison =
     pValue < significance
@@ -29,8 +29,8 @@ function formatTestConclusion(pValue: number, significance: number, detail = '')
 async function tPValue(t: number, df: number, alternative: string): Promise<number> {
   try {
     const rawCdf = await giacEngine.evaluate(`student_cdf(${df},${t})`);
-    const cdf = parseFloat(rawCdf.trim());
-    if (isNaN(cdf)) throw new Error('Giac returned NaN');
+    const cdf = Number.parseFloat(rawCdf.trim());
+    if (Number.isNaN(cdf)) throw new Error('Giac returned NaN');
     if (alternative === 'less') return cdf;
     if (alternative === 'greater') return 1 - cdf;
     return 2 * Math.min(cdf, 1 - cdf);
@@ -155,10 +155,10 @@ async function chiSquareIndependence(data: {
   let pValue: number;
   try {
     const rawCdf = await giacEngine.evaluate(`chisquare_cdf(${df},${chi2})`);
-    pValue = 1 - parseFloat(rawCdf.trim());
-    if (isNaN(pValue)) throw new Error('NaN');
+    pValue = 1 - Number.parseFloat(rawCdf.trim());
+    if (Number.isNaN(pValue)) throw new Error('NaN');
   } catch {
-    pValue = NaN;
+    pValue = Number.NaN;
   }
 
   return [
@@ -167,7 +167,7 @@ async function chiSquareIndependence(data: {
     `Table: ${rows}×${cols}, N = ${N}`,
     `df = (${rows}-1)×(${cols}-1) = ${df}`,
     `χ² = ${chi2.toFixed(6)}`,
-    `p-value = ${isNaN(pValue) ? 'computation error' : pValue.toFixed(6)}`,
+    `p-value = ${Number.isNaN(pValue) ? 'computation error' : pValue.toFixed(6)}`,
     `α = ${significance}`,
     ``,
     formatTestConclusion(
@@ -202,11 +202,11 @@ async function oneWayAnova(data: { groups?: number[][]; significance: number }):
   let pValue: number;
   try {
     const rawCdf = await giacEngine.evaluate(`fisher_cdf(${dfBetween},${dfWithin},${F})`);
-    const cdf = parseFloat(rawCdf.trim());
-    if (isNaN(cdf)) throw new Error('NaN');
+    const cdf = Number.parseFloat(rawCdf.trim());
+    if (Number.isNaN(cdf)) throw new Error('NaN');
     pValue = 1 - cdf;
   } catch {
-    pValue = F > 10 ? 0 : NaN;
+    pValue = F > 10 ? 0 : Number.NaN;
   }
 
   return [
@@ -222,7 +222,7 @@ async function oneWayAnova(data: { groups?: number[][]; significance: number }):
     `SS_between = ${ssBetween.toFixed(4)}, df = ${dfBetween}, MS = ${msBetween.toFixed(4)}`,
     `SS_within  = ${ssWithin.toFixed(4)}, df = ${dfWithin}, MS = ${msWithin.toFixed(4)}`,
     `F = ${F.toFixed(6)}`,
-    `p-value = ${isNaN(pValue) ? 'computation error' : pValue.toFixed(6)}`,
+    `p-value = ${Number.isNaN(pValue) ? 'computation error' : pValue.toFixed(6)}`,
     `α = ${significance}`,
     ``,
     formatTestConclusion(

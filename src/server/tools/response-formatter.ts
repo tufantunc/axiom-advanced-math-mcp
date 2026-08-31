@@ -25,11 +25,11 @@ export function formatToolResponse(data: MathToolResponse): {
   if (data.notes && data.notes.length > 0) lines.push(...data.notes);
   lines.push('');
   if (data.decimal && data.decimal !== data.result) {
-    const rounded = parseFloat(data.decimal);
-    if (!isNaN(rounded) && isFinite(rounded)) {
+    const rounded = Number.parseFloat(data.decimal);
+    if (Number.isFinite(rounded)) {
       const display = Number.isInteger(rounded)
         ? String(rounded)
-        : parseFloat(rounded.toPrecision(10)).toString();
+        : Number.parseFloat(rounded.toPrecision(10)).toString();
       lines.push(`The answer is ${data.result} (≈ ${display})`);
     } else {
       lines.push(`The answer is ${data.result}`);

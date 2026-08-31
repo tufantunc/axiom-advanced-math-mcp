@@ -10,7 +10,7 @@ export async function tryExactResult(
   originalExpression: string,
   numericResult: number
 ): Promise<ExactResult | null> {
-  if (!isFinite(numericResult)) return null;
+  if (!Number.isFinite(numericResult)) return null;
 
   const rounded = Math.round(numericResult);
   if (Math.abs(numericResult - rounded) < 1e-9) {
@@ -85,7 +85,7 @@ function looksLikeGiacExpression(expr: string): boolean {
 }
 
 function floatToFraction(x: number, maxDenom = 10000): [number, number] | null {
-  if (x === 0 || !isFinite(x)) return null;
+  if (x === 0 || !Number.isFinite(x)) return null;
 
   const sign = x < 0 ? -1 : 1;
   const ax = Math.abs(x);

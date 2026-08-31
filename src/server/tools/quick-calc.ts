@@ -19,9 +19,9 @@ export async function quickCalcHandler(args: Record<string, unknown>) {
     const result = service.evaluate(opts);
 
     const numericResult =
-      typeof result.result === 'number' ? result.result : parseFloat(String(result.result));
+      typeof result.result === 'number' ? result.result : Number.parseFloat(String(result.result));
 
-    if (!isNaN(numericResult)) {
+    if (!Number.isNaN(numericResult)) {
       const exact = await tryExactResult(rawExpr, numericResult);
       if (exact) {
         return formatToolResponse({

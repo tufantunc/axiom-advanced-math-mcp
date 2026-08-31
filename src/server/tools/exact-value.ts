@@ -9,8 +9,8 @@ export async function exactValueHandler(args: Record<string, unknown>) {
 
     switch (op) {
       case 'to_exact': {
-        const n = parseFloat(value);
-        if (isNaN(n)) return formatErrorResponse(`"${value}" is not a valid number`);
+        const n = Number.parseFloat(value);
+        if (Number.isNaN(n)) return formatErrorResponse(`"${value}" is not a valid number`);
         const exact = await tryExactResult(value, n);
         if (exact) {
           return formatToolResponse({
@@ -30,9 +30,9 @@ export async function exactValueHandler(args: Record<string, unknown>) {
         const service = new QuickCalcService();
         const result = service.evaluate({ expression: value, precision });
         const numeric =
-          typeof result.result === 'number' ? result.result : parseFloat(String(result.result));
+          typeof result.result === 'number' ? result.result : Number.parseFloat(String(result.result));
         return formatToolResponse({
-          result: isNaN(numeric) ? String(result.result) : String(numeric),
+          result: Number.isNaN(numeric) ? String(result.result) : String(numeric),
           notes: [`Expression: ${value}`],
         });
       }
@@ -41,8 +41,8 @@ export async function exactValueHandler(args: Record<string, unknown>) {
         const fracMatch = value.match(/^(-?\d+)\s*\/\s*(-?\d+)$/);
         if (!fracMatch)
           return formatErrorResponse(`"${value}" is not a valid fraction (expected "a/b")`);
-        let num = parseInt(fracMatch[1]);
-        let den = parseInt(fracMatch[2]);
+        let num = Number.parseInt(fracMatch[1]);
+        let den = Number.parseInt(fracMatch[2]);
         if (den === 0) return formatErrorResponse('Denominator cannot be zero');
         const sign = num < 0 !== den < 0 ? -1 : 1;
         num = Math.abs(num);

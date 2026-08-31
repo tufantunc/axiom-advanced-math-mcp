@@ -77,10 +77,10 @@ export function parseIfactor(ifactorResult: string): [number, number][] {
   for (const part of parts) {
     if (part.includes('^')) {
       const [base, exp] = part.split('^');
-      factors.push([parseInt(base.trim()), parseInt(exp.trim())]);
+      factors.push([Number.parseInt(base.trim()), Number.parseInt(exp.trim())]);
     } else {
-      const n = parseInt(part.trim());
-      if (!isNaN(n) && n > 1) factors.push([n, 1]);
+      const n = Number.parseInt(part.trim());
+      if (!Number.isNaN(n) && n > 1) factors.push([n, 1]);
     }
   }
   return factors;

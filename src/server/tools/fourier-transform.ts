@@ -4,7 +4,7 @@ import { formatRawResponse, formatRawError } from './response-formatter.js';
 function parseGiacComplex(giac: string): { re: number; im: number }[] {
   const stripped = giac.replace(/^\[/, '').replace(/\]$/, '');
   if (!stripped) return [];
-  const nums = stripped.split(',').map((s) => parseFloat(s.trim()));
+  const nums = stripped.split(',').map((s) => Number.parseFloat(s.trim()));
   const result: { re: number; im: number }[] = [];
   for (let i = 0; i < nums.length; i += 2) {
     result.push({ re: nums[i] ?? 0, im: nums[i + 1] ?? 0 });

@@ -158,7 +158,7 @@ async function verifyNumeric(
       // No variables — direct numeric evaluation
       const lhsVal = await giacEngine.evaluate(`evalf(${lhs})`);
       const rhsVal = await giacEngine.evaluate(`evalf(${rhs})`);
-      const diff = Math.abs(parseFloat(lhsVal) - parseFloat(rhsVal));
+      const diff = Math.abs(Number.parseFloat(lhsVal) - Number.parseFloat(rhsVal));
       // A non-numeric side leaves diff NaN: nothing was compared, so this is
       // "could not check", not "checked and unequal".
       if (Number.isNaN(diff)) {
@@ -191,9 +191,9 @@ async function verifyNumeric(
           substExpr = `subst(${substExpr}, ${v}=${val})`;
         }
         const result = await giacEngine.evaluate(`evalf(${substExpr})`);
-        const numResult = parseFloat(result);
+        const numResult = Number.parseFloat(result);
 
-        if (isNaN(numResult) || !isFinite(numResult)) {
+        if (!Number.isFinite(numResult)) {
           continue; // Skip undefined points
         }
 
@@ -250,11 +250,11 @@ async function verifySolution(
 
     const substituted = `evalf(subst(${expr}, ${variable}=${value}))`;
     const result = await giacEngine.evaluate(substituted);
-    const numResult = parseFloat(result);
+    const numResult = Number.parseFloat(result);
 
     // No number back means the substitution did not produce something
     // comparable to zero — nothing was checked.
-    if (isNaN(numResult)) {
+    if (Number.isNaN(numResult)) {
       return {
         verified: false,
         evaluated: false,

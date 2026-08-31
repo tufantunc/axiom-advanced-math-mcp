@@ -4,16 +4,16 @@ import { formatToolResponse, formatErrorResponse } from './response-formatter.js
 /** Evaluate f(x) at a point using Giac */
 async function evalAt(expr: string, variable: string, x: number): Promise<number> {
   const raw = await giacEngine.evaluate(`evalf(subst(${expr},${variable}=${x}))`);
-  const val = parseFloat(raw.trim());
-  if (isNaN(val)) throw new Error(`Cannot evaluate ${expr} at ${variable}=${x}: got "${raw}"`);
+  const val = Number.parseFloat(raw.trim());
+  if (Number.isNaN(val)) throw new Error(`Cannot evaluate ${expr} at ${variable}=${x}: got "${raw}"`);
   return val;
 }
 
 /** Evaluate f'(x) at a point using Giac symbolic differentiation */
 async function evalDerivAt(expr: string, variable: string, x: number): Promise<number> {
   const raw = await giacEngine.evaluate(`evalf(subst(diff(${expr},${variable}),${variable}=${x}))`);
-  const val = parseFloat(raw.trim());
-  if (isNaN(val)) throw new Error(`Cannot evaluate derivative of ${expr} at ${variable}=${x}`);
+  const val = Number.parseFloat(raw.trim());
+  if (Number.isNaN(val)) throw new Error(`Cannot evaluate derivative of ${expr} at ${variable}=${x}`);
   return val;
 }
 
@@ -165,12 +165,12 @@ async function rombergIntegration(
   b: number
 ): Promise<string[]> {
   const raw = await giacEngine.evaluate(`romberg(${expr},${variable},${a},${b})`);
-  const val = parseFloat(raw.trim());
+  const val = Number.parseFloat(raw.trim());
   const lines = [
     `Method: Romberg Integration (adaptive)`,
     `∫ ${expr} d${variable} from ${a} to ${b}`,
     ``,
-    `Result = ${isNaN(val) ? raw.trim() : val}`,
+    `Result = ${Number.isNaN(val) ? raw.trim() : val}`,
   ];
   return lines;
 }

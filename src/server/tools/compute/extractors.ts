@@ -165,7 +165,7 @@ export function extractDiff(problem: string): RouteResult {
   const parts = splitArgs(inner);
   const expression = parts[0] || '';
   const variable = parts[1] || guessVariable(expression);
-  const order = parts[2] ? parseInt(parts[2], 10) : undefined;
+  const order = parts[2] ? Number.parseInt(parts[2], 10) : undefined;
   return {
     handler: 'calculus',
     args: {
@@ -229,10 +229,10 @@ export function extractTaylor(problem: string): RouteResult {
     const [v, p] = variable.split('=');
     variable = v.trim();
     point = p.trim();
-    order = parts[2] ? parseInt(parts[2], 10) : undefined;
+    order = parts[2] ? Number.parseInt(parts[2], 10) : undefined;
   } else {
     point = parts[2] || '0';
-    order = parts[3] ? parseInt(parts[3], 10) : undefined;
+    order = parts[3] ? Number.parseInt(parts[3], 10) : undefined;
   }
 
   return {
@@ -345,24 +345,24 @@ export function extractNumberTheory(problem: string): RouteResult {
   if (trimmed.startsWith('ifactor')) {
     return {
       handler: 'number_theory',
-      args: { operation: 'prime_factorize', number: parseInt(inner, 10) },
+      args: { operation: 'prime_factorize', number: Number.parseInt(inner, 10) },
     };
   }
   if (trimmed.startsWith('isprime')) {
     return {
       handler: 'number_theory',
-      args: { operation: 'analyze', number: parseInt(inner, 10) },
+      args: { operation: 'analyze', number: Number.parseInt(inner, 10) },
     };
   }
   if (trimmed.startsWith('euler')) {
     return {
       handler: 'number_theory',
-      args: { operation: 'analyze', number: parseInt(inner, 10) },
+      args: { operation: 'analyze', number: Number.parseInt(inner, 10) },
     };
   }
   return {
     handler: 'number_theory',
-    args: { operation: 'prime_factorize', number: parseInt(inner, 10) },
+    args: { operation: 'prime_factorize', number: Number.parseInt(inner, 10) },
   };
 }
 
@@ -378,8 +378,8 @@ export function extractCombinatorics(problem: string): RouteResult {
       handler: 'combinatorics',
       args: {
         operation: 'combinations',
-        n: parseInt(combMatch[1], 10),
-        k: parseInt(combMatch[2], 10),
+        n: Number.parseInt(combMatch[1], 10),
+        k: Number.parseInt(combMatch[2], 10),
       },
     };
   }
@@ -391,8 +391,8 @@ export function extractCombinatorics(problem: string): RouteResult {
       handler: 'combinatorics',
       args: {
         operation: 'permutations',
-        n: parseInt(permMatch[1], 10),
-        k: parseInt(permMatch[2], 10),
+        n: Number.parseInt(permMatch[1], 10),
+        k: Number.parseInt(permMatch[2], 10),
       },
     };
   }
@@ -400,7 +400,7 @@ export function extractCombinatorics(problem: string): RouteResult {
   // Keyword-based: stirling, bell, catalan, derangements, partitions
   const lc = trimmed.toLowerCase();
   const inner = extractFnArgs(problem);
-  const numArgs = splitArgs(inner).map((s) => parseInt(s, 10));
+  const numArgs = splitArgs(inner).map((s) => Number.parseInt(s, 10));
 
   if (lc.includes('stirling')) {
     const kind = lc.includes('first') ? 'stirling_first' : 'stirling_second';
@@ -473,7 +473,7 @@ export function extractProbability(problem: string): RouteResult {
   for (const part of parts) {
     const kvMatch = part.match(/(\w+)\s*=\s*([\d.eE+-]+)/);
     if (kvMatch) {
-      params[kvMatch[1]] = parseFloat(kvMatch[2]);
+      params[kvMatch[1]] = Number.parseFloat(kvMatch[2]);
     }
   }
 
@@ -591,7 +591,7 @@ export function extractNumericalMethods(problem: string): RouteResult {
       method,
       expression: parts[0] || '',
       variable: parts[1] || 'x',
-      ...(parts[2] ? { initial_guess: parseFloat(parts[2]) } : {}),
+      ...(parts[2] ? { initial_guess: Number.parseFloat(parts[2]) } : {}),
     },
   };
 }
@@ -633,8 +633,8 @@ export function extractSequenceIdentify(problem: string): RouteResult {
   } catch {
     terms = inner
       .split(',')
-      .map((s) => parseFloat(s.trim()))
-      .filter((n) => !isNaN(n));
+      .map((s) => Number.parseFloat(s.trim()))
+      .filter((n) => !Number.isNaN(n));
   }
   return { handler: 'sequence_identify', args: { terms } };
 }
@@ -643,7 +643,7 @@ export function extractSequenceIdentify(problem: string): RouteResult {
 
 export function extractNumberProperties(problem: string): RouteResult {
   const inner = extractFnArgs(problem);
-  return { handler: 'number_properties', args: { number: parseInt(inner, 10) } };
+  return { handler: 'number_properties', args: { number: Number.parseInt(inner, 10) } };
 }
 
 // --- Quick calc ---

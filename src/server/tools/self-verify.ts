@@ -24,8 +24,8 @@ function toZeroForm(equation: string): string {
 async function isZeroAfterSubst(zeroForm: string, substs: string): Promise<boolean> {
   try {
     const r = await giacEngine.evaluate(`evalf(subst(${zeroForm},${substs}))`);
-    const n = parseFloat(r);
-    if (!isNaN(n)) return Math.abs(n) < 1e-8;
+    const n = Number.parseFloat(r);
+    if (!Number.isNaN(n)) return Math.abs(n) < 1e-8;
     // Non-numeric result (e.g. a complex residual like "0.+0.*i"): fall back to
     // a symbolic zero check on the un-evalf'd substitution.
     return await simplifiesToZero(`subst(${zeroForm},${substs})`);

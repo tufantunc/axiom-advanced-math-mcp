@@ -59,7 +59,7 @@ export function evaluateFunction(
       const scope: Record<string, number> = { [variable]: x };
       const y = compiled.evaluate(scope);
 
-      if (typeof y === 'number' && isFinite(y)) {
+      if (typeof y === 'number' && Number.isFinite(y)) {
         allPoints.push({ x, y });
         if (y < yMin) yMin = y;
         if (y > yMax) yMax = y;
