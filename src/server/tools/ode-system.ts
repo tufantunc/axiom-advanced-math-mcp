@@ -89,11 +89,21 @@ const MAX_COMMAND_CHARS = 800;
  * Its own number rather than MAX_COMMAND_CHARS, which is measured for the
  * finished command and only happens to sit nearby: the two bound different text
  * against different limits, and borrowing one for the other hides the
- * measurement. `exact([y(0)=1*2*2*…,z(0)=0])` answers at 1,015 characters and
- * traps at 1,415, so 400 keeps a factor of two — and a real initial condition is
- * a number, rarely past thirty characters.
+ * measurement.
+ *
+ * Sized from the WORST shape, not the cheapest. A flat product survives to 994
+ * characters, but the same call on `y(0)=9/9/9/…` answers at 566 and traps at
+ * 606, and on `y(0)=1!!!…` at 726 — so a bound justified by the product would
+ * have carried a third of the headroom it claimed. 280 keeps a factor of two
+ * below the worst measured, and costs nothing: a real initial condition is a
+ * number and rarely passes thirty characters.
+ *
+ * This bound is also the ONLY thing guarding the channel. The factorial shape
+ * does not throw — `exact([y(0)=1!!!…])` RETURNS a normal-looking answer and
+ * leaves the worker dead — so nothing downstream notices: `isFatalWasmTrap` is
+ * never consulted, and the try/catch around the call never runs.
  */
-const MAX_CONDITION_CHARS = 400;
+const MAX_CONDITION_CHARS = 280;
 
 /**
  * Ceiling on how deeply a single initial condition may nest.

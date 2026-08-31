@@ -319,9 +319,9 @@ describe('what is decided before the engine is asked', () => {
     // a factor of two above the cap, so the number matters rather than just the
     // direction.
     // `y(0)=` is five of the characters the bound counts, so these are the
-    // 400th and 401st character of the condition itself.
-    ['at the limit', 395, 'accept'],
-    ['one over', 396, 'refuse'],
+    // 280th and 281st character of the condition itself.
+    ['at the limit', 275, 'accept'],
+    ['one over', 276, 'refuse'],
   ])('reads a condition %s as %s', async (_label, valueLength, verdict) => {
     let calls = 0;
     const value = 'x'.repeat(valueLength);
@@ -335,7 +335,7 @@ describe('what is decided before the engine is asked', () => {
       },
     });
     if (verdict === 'refuse') {
-      expect('error' in out && out.error).toMatch(/401 characters, above the 400/);
+      expect('error' in out && out.error).toMatch(/281 characters, above the 280/);
       expect(calls).toBe(0);
     } else {
       expect(calls).toBeGreaterThan(0);
@@ -349,7 +349,10 @@ describe('what is decided before the engine is asked', () => {
     // rather than trapping in WASM — which left the worker UP and corrupted, so
     // three unrelated callers got raw engine text before it crashed itself out.
     let calls = 0;
-    const long = `1${'*2'.repeat(700)}`;
+    // The worst shape rather than the cheapest: a division chain traps at 606
+    // characters where a flat product survives to 994, and a factorial chain
+    // poisons the worker WITHOUT throwing, so nothing downstream would catch it.
+    const long = `9${'/9'.repeat(400)}`;
     const out = await translateOdeSystem(system(`[y'=z, z'=-y, y(0)=${long}, z(0)=0]`), 'x', {
       evaluate: (): Promise<string> => {
         calls += 1;
