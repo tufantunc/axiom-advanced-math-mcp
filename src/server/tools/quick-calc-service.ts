@@ -36,6 +36,12 @@ export interface QuickCalcResult {
    */
   /** The result as a number when it is one, else null. Never re-derive this. */
   numeric: number | null;
+  /**
+   * The worker's rendered string, formatted with `precision` when the caller
+   * asked for it. Carried verbatim rather than round-tripped through Number(),
+   * so the rendering the caller asked for is exactly what gets displayed.
+   */
+  formatted: string;
   nonFinite: boolean;
 }
 
@@ -90,6 +96,7 @@ export class QuickCalcService {
       // value. Required rather than set-only-when-true so a consumer that forgets
       // to check cannot silently read `undefined` as "finite".
       numeric: parsed.numeric,
+      formatted: parsed.value,
       nonFinite: parsed.nonFinite,
     };
     if (parsed.latex !== undefined) output.latex = parsed.latex;

@@ -38,12 +38,54 @@ describe('exactValueHandler — to_decimal', () => {
     expect(allText(r)).toContain('Expression: 1/4');
   });
 
-  it('returns the full double-precision decimal (precision is advisory today)', async () => {
-    // QuickCalcService forwards `precision` into the mathjs scope but does not
-    // format with it — pin today's actual behavior until that changes.
-    const r = await exactValueHandler({ operation: 'to_decimal', value: 'sqrt(2)', precision: 6 });
+  it('returns the full double-precision decimal when precision is not asked for', async () => {
+    const r = await exactValueHandler({ operation: 'to_decimal', value: 'sqrt(2)' });
     expect(r.isError).toBe(false);
     expect(allText(r)).toContain('Result: 1.4142135623730951');
+  });
+
+  it('renders to the requested precision when the caller asks for it', async () => {
+    const r = await exactValueHandler({ operation: 'to_decimal', value: 'sqrt(2)', precision: 6 });
+    expect(r.isError).toBe(false);
+    // Whole-line anchor: a bare toContain('Result: 1.41421') is satisfied by
+    // the full double's prefix, so it cannot catch the regression alone.
+    expect(allText(r)).toMatch(/^Result: 1\.41421$/m);
+    expect(allText(r)).not.toContain('1.4142135623730951');
+  });
+
+  it('renders exponent form under precision as the worker produced it', async () => {
+    // 1e21 itself would not distinguish old from new: String(1e21) is also
+    // '1e+21'. A mantissa that precision must truncate does.
+    const r = await exactValueHandler({
+      operation: 'to_decimal',
+      value: '1.23456789e21',
+      precision: 3,
+    });
+    expect(r.isError).toBe(false);
+    expect(allText(r)).toMatch(/^Result: 1\.23e\+21$/m);
+    expect(allText(r)).not.toContain('1.23456789e+21');
+  });
+
+  it('still flags an infinite result when precision is requested', async () => {
+    const r = await exactValueHandler({ operation: 'to_decimal', value: '1e308*10', precision: 5 });
+    expect(r.isError).toBe(false);
+    expect(allText(r)).toContain('Result: Infinity');
+    expect(allText(r)).toMatch(/result is infinite/);
+  });
+
+  it('applies precision to a unit result without dropping the unit', async () => {
+    const r = await exactValueHandler({ operation: 'to_decimal', value: '10/3 m', precision: 4 });
+    expect(r.isError).toBe(false);
+    expect(allText(r)).toMatch(/^Result: 3\.333 m$/m);
+    expect(allText(r)).not.toContain('3.3333333333333335');
+  });
+
+  it('keeps the unit on the rendered result', async () => {
+    // The numeric re-derivation this replaces once dropped units:
+    // `to_decimal("1/2 m")` answered "0.5".
+    const r = await exactValueHandler({ operation: 'to_decimal', value: '1/2 m' });
+    expect(r.isError).toBe(false);
+    expect(allText(r)).toContain('Result: 0.5 m');
   });
 });
 

@@ -38,7 +38,14 @@ export async function exactValueHandler(args: Record<string, unknown>) {
         // From the worker. Re-deriving it with parseFloat(String(...)) dropped
         // units: `to_decimal("1/2 m")` answered "0.5".
         return formatToolResponse({
-          result: result.numeric !== null ? String(result.numeric) : String(result.result),
+          // With `precision` the worker's rendering IS the requested answer,
+          // shown verbatim; without it the full double, exactly as before.
+          result:
+            precision !== undefined
+              ? result.formatted
+              : result.numeric !== null
+                ? String(result.numeric)
+                : String(result.result),
           // Same evaluator as quick_calc, so the same caveat: `to_decimal(1e308*10)`
           // reported a bare "Infinity" for a quantity whose true value is finite.
           notes: result.nonFinite
