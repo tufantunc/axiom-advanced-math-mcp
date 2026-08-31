@@ -6,6 +6,23 @@ function allText(r: { content: { text: string }[] }): string {
 }
 
 describe('exactValueHandler — to_exact', () => {
+  it('finds the exact form of a terminating decimal', async () => {
+    const r = await exactValueHandler({ operation: 'to_exact', value: '0.5' });
+    expect(r.isError).toBe(false);
+    const text = allText(r);
+    expect(text).toContain('Result: 1/2');
+    expect(text).toContain('Decimal: 0.5');
+    expect(text).toContain('The answer is 1/2 (≈ 0.5)');
+  });
+
+  it('reports when no simpler exact form exists', async () => {
+    const r = await exactValueHandler({ operation: 'to_exact', value: '3.141592653589793' });
+    expect(r.isError).toBe(false);
+    const text = allText(r);
+    expect(text).toContain('No simpler exact form found');
+    expect(text).toContain('Result: 3.141592653589793');
+  });
+
   it('rejects a non-numeric value', async () => {
     const r = await exactValueHandler({ operation: 'to_exact', value: 'abc' });
     expect(r.isError).toBe(true);
@@ -21,10 +38,12 @@ describe('exactValueHandler — to_decimal', () => {
     expect(allText(r)).toContain('Expression: 1/4');
   });
 
-  it('evaluates an irrational to the requested precision', async () => {
+  it('returns the full double-precision decimal (precision is advisory today)', async () => {
+    // QuickCalcService forwards `precision` into the mathjs scope but does not
+    // format with it — pin today's actual behavior until that changes.
     const r = await exactValueHandler({ operation: 'to_decimal', value: 'sqrt(2)', precision: 6 });
     expect(r.isError).toBe(false);
-    expect(allText(r)).toContain('Result: 1.41421');
+    expect(allText(r)).toContain('Result: 1.4142135623730951');
   });
 });
 

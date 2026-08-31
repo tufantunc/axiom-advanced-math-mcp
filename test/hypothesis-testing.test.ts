@@ -179,11 +179,12 @@ describe('hypothesis_testing', () => {
     });
 
     it('chi-square treats unparseable Giac output like a failure', async () => {
-      vi.spyOn(giacEngine, 'evaluate').mockResolvedValue('undef');
+      const spy = vi.spyOn(giacEngine, 'evaluate').mockResolvedValue('undef');
       const result = await hypothesisTestingHandler({
         test: 'chi_square_independence',
         data: { contingency_table: [[10, 20], [30, 40]], significance: 0.05 },
       });
+      expect(spy).toHaveBeenCalled();
       expect(result.isError).toBe(false);
       const text = allText(result);
       expect(text).toContain('p-value = computation error');
@@ -191,12 +192,13 @@ describe('hypothesis_testing', () => {
     });
 
     it('anova with small F reports a computation error when the engine fails', async () => {
-      vi.spyOn(giacEngine, 'evaluate').mockRejectedValue(new Error('engine down'));
+      const spy = vi.spyOn(giacEngine, 'evaluate').mockRejectedValue(new Error('engine down'));
       // Nearly identical group means → small F → no p=0 heuristic
       const result = await hypothesisTestingHandler({
         test: 'one_way_anova',
         data: { groups: [[1, 2, 3], [2, 3, 4], [3, 4, 5]], significance: 0.05 },
       });
+      expect(spy).toHaveBeenCalled();
       expect(result.isError).toBe(false);
       const text = allText(result);
       expect(text).toContain('p-value = computation error');
@@ -204,14 +206,17 @@ describe('hypothesis_testing', () => {
     });
 
     it('anova with large F reports p = 0 when the engine fails', async () => {
-      vi.spyOn(giacEngine, 'evaluate').mockRejectedValue(new Error('engine down'));
-      // Zero within-group variance, huge between-group variance → F > 10
+      const spy = vi.spyOn(giacEngine, 'evaluate').mockRejectedValue(new Error('engine down'));
+      // Finite F = 63 (MS_between = 63, MS_within = 1) — above the 10 threshold,
+      // so a threshold regression anywhere above ~63 flips this test.
       const result = await hypothesisTestingHandler({
         test: 'one_way_anova',
-        data: { groups: [[1, 1, 1], [50, 50, 50], [100, 100, 100]], significance: 0.05 },
+        data: { groups: [[1, 2, 3], [4, 5, 6], [10, 11, 12]], significance: 0.05 },
       });
+      expect(spy).toHaveBeenCalled();
       expect(result.isError).toBe(false);
       const text = allText(result);
+      expect(text).toContain('F = 63');
       expect(text).toContain('p-value = 0.000000');
       expect(text).toContain('Reject H₀');
       expect(text).not.toContain('computation error');
