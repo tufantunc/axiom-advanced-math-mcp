@@ -271,19 +271,29 @@ export type SystemTranslation =
   | { error: string };
 
 /**
- * Rewrites a linear constant-coefficient system as a matrix product.
+ * Everything decidable from the text alone, before any engine call.
  *
- * Asks Giac for the coefficient matrix, the inhomogeneous term and the residual
- * in ONE call: the residual is what the right-hand side still contains after the
- * linear part is subtracted, so a nonzero residual means the system is not
- * linear in the unknown functions and there is no matrix to build.
+ * Extracted so that "no caller text reaches the engine unchecked" is the call
+ * order rather than a claim in a comment. It was a claim, and it was wrong: a
+ * comment asserting the conditions were the only caller text reaching an engine
+ * call is why the right-hand sides went unguarded for a round, and the four
+ * condition checks below used to run AFTER five round trips that a bad
+ * condition made pointless.
+ *
+ * Contains no `await`, which is what makes the boundary safe to move.
  */
-export async function translateOdeSystem(
+function validateSystemShape(
   system: OdeSystem,
-  variable: string,
-  engine: GiacEngineLike
-): Promise<SystemTranslation> {
-  const evaluate = (expr: string): Promise<string> => engine.evaluate(expr);
+  variable: string
+):
+  | {
+      functions: string[];
+      rhss: string[];
+      zeroAll: string;
+      point: string;
+      values: Map<string, string>;
+    }
+  | { error: string } {
   // The probe expands to N x N `grad` entries, so its SIZE is quadratic in the
   // equation count while the input is linear. 25 equations — 166 characters, far
   // inside MAX_EXPRESSION_LENGTH — built a probe that fatally trapped the WASM
@@ -426,6 +436,52 @@ export async function translateOdeSystem(
         `${name}, or solve in the variable it is applied to`,
     };
   }
+  // The second channel of caller text, guarded the same way and for the same
+  // reason: the scan below EVALUATES these, so the magnitude check has to run
+  // first or it is checking a worker that is already dead. `y(0)=10^100000`
+  // refused with a clean, correct message while having killed the shared worker
+  // on the way, and the NEXT unrelated call came back as "Giac worker exited
+  // (code 1)" — collateral `main` never causes. The right-hand sides are the
+  // first channel and are guarded above; an earlier version of this comment
+  // claimed they did not exist, which is how they went unguarded.
+  for (const condition of system.conditions) {
+    if (!CONDITION_FORM.test(condition)) {
+      return { error: `has a member "${condition.slice(0, 60)}" that is not of the form y(0)=1` };
+    }
+    const oversized = implausibleMagnitude(condition);
+    if (oversized !== undefined) {
+      return {
+        error:
+          `gives an initial condition of implausible magnitude (${oversized}) — ` +
+          'initial conditions are ordinary numbers',
+      };
+    }
+  }
+
+  const read = readConditions(system.conditions, functions);
+  if ('error' in read) return read;
+
+  return { functions, rhss, zeroAll, ...read };
+}
+
+/**
+ * Rewrites a linear constant-coefficient system as a matrix product.
+ *
+ * Asks Giac for the coefficient matrix, the inhomogeneous term and the residual
+ * in ONE call: the residual is what the right-hand side still contains after the
+ * linear part is subtracted, so a nonzero residual means the system is not
+ * linear in the unknown functions and there is no matrix to build.
+ */
+export async function translateOdeSystem(
+  system: OdeSystem,
+  variable: string,
+  engine: GiacEngineLike
+): Promise<SystemTranslation> {
+  const evaluate = (expr: string): Promise<string> => engine.evaluate(expr);
+  const shape = validateSystemShape(system, variable);
+  if ('error' in shape) return shape;
+  const { functions, rhss, zeroAll, point, values } = shape;
+
   // `grad` gives the whole row at once, and its entries answer BOTH questions a
   // hand-built residual used to: an entry naming an unknown function means the
   // system is not linear in them, and an entry naming the independent variable
@@ -489,20 +545,22 @@ export async function translateOdeSystem(
           'faster than the input that produced them',
       };
     }
-  } catch (error) {
+  } catch {
     // A trap or timeout in the probe is this operation's failure, not a raw
     // engine string for the caller to decipher.
-    return {
-      error: `could not be analysed: ${error instanceof Error ? error.message : String(error)}`,
-    };
+    // The engine's own text does not go to the caller. It said things like "Giac
+    // worker exited (code 1)" — this service's internal availability mechanism —
+    // and named a `grad(z,[y,z])` probe the caller never wrote. Neither is
+    // actionable by them; the refusal alone is.
+    return { error: 'could not be analysed' };
   }
   if (raw.includes('GIAC_ERROR')) {
-    return { error: `has coefficients that could not be read: ${raw.slice(0, 160)}` };
+    return { error: 'has coefficients that could not be read' };
   }
 
   const parts = splitTopLevel(stripEnclosingBrackets(raw), ',');
   if (parts.length !== 3) {
-    return { error: `has coefficients that could not be read: ${raw.slice(0, 160)}` };
+    return { error: 'has coefficients that could not be read' };
   }
   let [matrix, constants] = parts.map((p) => p.trim());
   const residual = parts[2].trim();
@@ -627,27 +685,6 @@ export async function translateOdeSystem(
   // float entries, both from the engine's own type tags — which also gets `E`
   // (a free identifier, not Euler's number) and `1.5*i` right, where the
   // character tests did not.
-  // The second channel of caller text, guarded the same way and for the same
-  // reason: the scan below EVALUATES these, so the magnitude check has to run
-  // first or it is checking a worker that is already dead. `y(0)=10^100000`
-  // refused with a clean, correct message while having killed the shared worker
-  // on the way, and the NEXT unrelated call came back as "Giac worker exited
-  // (code 1)" — collateral `main` never causes. The right-hand sides are the
-  // first channel and are guarded above; an earlier version of this comment
-  // claimed they did not exist, which is how they went unguarded.
-  for (const condition of system.conditions) {
-    if (!CONDITION_FORM.test(condition)) {
-      return { error: `has a member "${condition.slice(0, 60)}" that is not of the form y(0)=1` };
-    }
-    const oversized = implausibleMagnitude(condition);
-    if (oversized !== undefined) {
-      return {
-        error:
-          `gives an initial condition of implausible magnitude (${oversized}) — ` +
-          'initial conditions are ordinary numbers',
-      };
-    }
-  }
 
   // Two questions, both asked of the ENGINE rather than of how it printed: does
   // this hold an exact symbolic constant, and does it hold a float.
@@ -702,11 +739,19 @@ export async function translateOdeSystem(
   // mixed-domain wrong answer.
   if (system.conditions.length > 0) {
     try {
+      // Two calls, one copy of the text each. Asking both questions in one
+      // command doubled the caller's own text: the input cap is 8,192 characters
+      // and Giac traps fatally at about 10,000, so a 7,528-character request —
+      // comfortably inside the cap — became a ~15,000-character command and
+      // killed the shared worker, where main answers the same input in 21ms.
+      // A single copy can never reach the trap, because the input cap is below it.
       const written = `[${system.conditions.join(',')}]`;
-      const reply = await evaluate(`[exact(${written}),${written}]`);
-      const [asExact, asWritten] = splitTopLevel(stripEnclosingBrackets(reply), ',');
+      const [asExact, asWritten] = await Promise.all([
+        evaluate(`exact(${written})`),
+        evaluate(written),
+      ]);
       const flat = (text: string) => text.trim().replace(/\s+/g, '');
-      floatInConditions = flat(asExact ?? '') !== flat(asWritten ?? '');
+      floatInConditions = flat(asExact) !== flat(asWritten);
     } catch {
       return {
         error:
@@ -885,15 +930,14 @@ export async function translateOdeSystem(
   }
   // Conditions have to become one vector condition: Giac takes `Y(0)=[1,0]`, not
   // the per-function `y(0)=1, z(0)=0` the caller wrote.
-  const vectorCondition = buildVectorCondition(system.conditions, functions, vector);
-  if ('error' in vectorCondition) return vectorCondition;
+  const vectorCondition = buildVectorCondition(vector, point, functions, values);
   return withinLimit(
-    `desolve([${body},${vectorCondition.text}],${variable},${vector})`,
+    `desolve([${body},${vectorCondition}],${variable},${vector})`,
     functions,
-    vectorCondition.text.length,
+    vectorCondition.length,
     matrix,
     homogeneous ? '' : constants,
-    vectorCondition.text
+    vectorCondition
   );
 }
 
@@ -1008,11 +1052,10 @@ function implausibleMagnitude(text: string): string | undefined {
  * a partially specified system has no unique solution to name, and Giac would
  * silently ignore the extra conditions rather than reject them.
  */
-function buildVectorCondition(
+function readConditions(
   conditions: string[],
-  functions: string[],
-  vector: string
-): { text: string } | { error: string } {
+  functions: string[]
+): { point: string; values: Map<string, string> } | { error: string } {
   const values = new Map<string, string>();
   let point = '0';
   for (const condition of conditions) {
@@ -1038,7 +1081,12 @@ function buildVectorCondition(
     point = at.trim();
     values.set(fn, value.trim());
   }
-  const missing = functions.filter((f) => !values.has(f));
+  // "or none" is the other half of the rule, and it has to be checked here now:
+  // this used to run only when the caller supplied conditions, because it was
+  // reached from the branch that had them. Called unconditionally it read an
+  // empty set as "conditions for no functions at all" and refused every general
+  // solution.
+  const missing = values.size === 0 ? [] : functions.filter((f) => !values.has(f));
   if (missing.length > 0) {
     return {
       error:
@@ -1046,5 +1094,23 @@ function buildVectorCondition(
         'a system needs a value for every function, or none',
     };
   }
-  return { text: `${vector}(${point})=[${functions.map((f) => values.get(f)).join(',')}]` };
+  return { point, values };
+}
+
+/**
+ * The vector condition Giac takes, `Y(0)=[1,0]`, from an already-checked reading.
+ *
+ * Split from the checking above because the checks need only the caller's text
+ * while this needs the vector symbol, which is not known until the coefficient
+ * matrix has been extracted. Together they made four decisions that are pure
+ * string work wait for five engine round trips that a bad condition made
+ * pointless.
+ */
+function buildVectorCondition(
+  vector: string,
+  point: string,
+  functions: string[],
+  values: Map<string, string>
+): string {
+  return `${vector}(${point})=[${functions.map((f) => values.get(f)).join(',')}]`;
 }

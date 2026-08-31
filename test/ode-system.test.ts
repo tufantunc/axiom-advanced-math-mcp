@@ -252,6 +252,73 @@ describe('translateOdeSystem refusals', () => {
   });
 });
 
+describe('what is decided before the engine is asked', () => {
+  const system = (equation: string) => {
+    const parsed = parseOdeSystem(equation);
+    if (!parsed) throw new Error(`not a system: ${equation}`);
+    return parsed;
+  };
+
+  it.each([
+    // Every one of these is decidable from the caller's text, and every one used
+    // to cost five engine round trips first — on a shared, single-threaded
+    // worker, for a request that was never going to be answered.
+    ["[y'=z, z'=-y, y(0)=1, w(0)=2]", /names w, which the system does not solve for/],
+    ["[y'=z, z'=-y, y(0)=1]", /a value for every function, or none/],
+    ["[y'=z, z'=-y, y(0)=1, z(1)=0]", /different points/],
+    ["[y'=z, z'=-y, y(0)=1, y(0)=2, z(0)=0]", /two different initial conditions/],
+    ["[y'=z, z'=-y, 7]", /not of the form y\(0\)=1/],
+    ["[y'=z, z'=-y, y(0)=10^100000, z(0)=0]", /implausible magnitude/],
+  ])('refuses %s without asking the engine at all', async (equation, expected) => {
+    let calls = 0;
+    const out = await translateOdeSystem(system(equation), 'x', {
+      evaluate: (): Promise<string> => {
+        calls += 1;
+        return Promise.resolve('[[[0,1],[-1,0]],[0,0],[0,0]]');
+      },
+    });
+    expect('error' in out && out.error).toMatch(expected);
+    expect(calls).toBe(0);
+  });
+
+  it.each([
+    // The engine's own text is not the caller's business: one names this
+    // service's internal worker recycling, the other a probe expression the
+    // caller never wrote.
+    [new Error('Giac worker exited (code 1)'), /^could not be analysed$/],
+    [
+      'GIAC_ERROR: Bad Argument Value grad(z,[y,z]) at line 1 col 7',
+      /^has coefficients that could not be read$/,
+    ],
+  ])('refuses without quoting the engine (%s)', async (reply, expected) => {
+    const out = await translateOdeSystem(system("[y'=z, z'=-y]"), 'x', {
+      evaluate: (): Promise<string> =>
+        reply instanceof Error ? Promise.reject(reply) : Promise.resolve(reply),
+    });
+    expect('error' in out && out.error).toMatch(expected);
+  });
+
+  it('sends the condition text once per call, not twice in one', async () => {
+    // Doubling it into a single command turned a 7,528-character request — inside
+    // the 8,192 input cap — into a ~15,000-character command, past the ~10,000
+    // where Giac traps fatally and takes the shared worker with it.
+    const sent: string[] = [];
+    await translateOdeSystem(system("[y'=z, z'=-y, y(0)=1, z(0)=0]"), 'x', {
+      evaluate: (expr: string): Promise<string> => {
+        sent.push(expr);
+        if (expr.startsWith('[max(')) return Promise.resolve('[0,0]');
+        if (expr.startsWith('size(lvar(')) return Promise.resolve('0');
+        if (expr.startsWith('exact(')) return Promise.resolve(expr.slice(6, -1));
+        return Promise.resolve('[[[0,1],[-1,0]],[0,0],[0,0]]');
+      },
+    });
+    for (const expr of sent) {
+      const copies = expr.split('y(0)=1').length - 1;
+      expect(copies).toBeLessThan(2);
+    }
+  });
+});
+
 describe('translateOdeSystem numeric domain', () => {
   const system = (equation: string) => {
     const parsed = parseOdeSystem(equation);
@@ -310,7 +377,9 @@ describe('translateOdeSystem numeric domain', () => {
     // pinned. Silently clearing this one turns off MAX_CONDITION_FLOAT_DEGREE.
     const out = await translateOdeSystem(system("[y'=z, z'=-y, y(0)=1, z(0)=0]"), 'x', {
       evaluate: (expr: string): Promise<string> => {
-        if (expr.startsWith('[exact(')) return Promise.reject(new Error('trap'));
+        // Two calls now, one copy of the condition text each — the single
+        // doubled command it used to send could cross Giac's trap threshold.
+        if (expr.startsWith('exact([y(0)')) return Promise.reject(new Error('trap'));
         if (expr.startsWith('[max(')) return Promise.resolve('[0,0]');
         if (expr.startsWith('size(lvar(')) return Promise.resolve('0');
         if (expr.startsWith('exact(')) return Promise.resolve(expr.slice(6, -1));
