@@ -28,6 +28,18 @@ describe('exactValueHandler — to_exact', () => {
     expect(r.isError).toBe(true);
     expect(allText(r)).toContain('"abc" is not a valid number');
   });
+
+  it('does not report a tiny non-zero value as exactly 0', async () => {
+    // The integer snap used to answer "Result: 0, Decimal: 4e-10"; with the
+    // snap refused, no bounded fraction or Giac form improves the literal,
+    // so the honest answer is the no-simpler-form fallback.
+    const r = await exactValueHandler({ operation: 'to_exact', value: '4e-10' });
+    expect(r.isError).toBe(false);
+    const text = allText(r);
+    expect(text).toContain('No simpler exact form found');
+    expect(text).toContain('Result: 4e-10');
+    expect(text).not.toMatch(/^Result: 0$/m);
+  });
 });
 
 describe('exactValueHandler — to_decimal', () => {

@@ -409,3 +409,62 @@ describe('quick_calc renders precision like to_decimal', () => {
     expect(text(without)).toMatch(/^Decimal: 0\.30000000000000004$/m);
   });
 });
+
+// A tiny non-zero value used to be snapped to `0` by the integer branch
+// (anything under 1e-19 rounds to 0 within the 1e-9 window), and once that
+// snap was refused, floatToFraction claimed the same value as 0/1. Both
+// degenerate exacts are refused now; the truth reaches the result line.
+describe('tiny non-zero results are not snapped to zero', () => {
+  beforeAll(async () => {
+    await giacEngine.initialize();
+  }, 60000);
+
+  function text(r: { content: { text: string }[] }): string {
+    return r.content.map((c) => c.text).join('\n');
+  }
+
+  it('a tiny literal renders as itself, not 0 and not 0/1', async () => {
+    const r = await quickCalcHandler({ expression: '4e-10' });
+    expect(r.isError).toBe(false);
+    const out = text(r);
+    expect(out).toMatch(/^Result: 4e-10$/m);
+    expect(out).not.toContain('0/1');
+    expect(out).not.toMatch(/^Result: 0$/m);
+  });
+
+  it('a tiny negative literal keeps its sign', async () => {
+    const r = await quickCalcHandler({ expression: '-4e-10' });
+    expect(text(r)).toMatch(/^Result: -4e-10$/m);
+  });
+
+  it('a tiny computed value shows the true magnitude, not zero', async () => {
+    // sech(23.4) ≈ 1.4e-10; the old snap answered "Result: 0". The exact form
+    // is Giac's evaluation of the expression.
+    const r = await quickCalcHandler({ expression: 'sech(23.4)' });
+    expect(r.isError).toBe(false);
+    const out = text(r);
+    expect(out).toMatch(/^Result: 1\.3757\d*e-10$/m);
+    expect(out).not.toMatch(/^Result: 0$/m);
+  });
+
+  it('a genuinely tiny rational gets its real fraction from Giac', async () => {
+    // floatToFraction caps denominators at 10000 and cannot express 1/2.5e9;
+    // Giac can, and does.
+    const r = await quickCalcHandler({ expression: '1/2500000000' });
+    const out = text(r);
+    expect(out).toMatch(/^Result: 1\/2500000000$/m);
+    expect(out).toMatch(/^Decimal: 4e-10$/m);
+  });
+
+  it('sin(pi) still answers 0 — now Giac-verified, with the float noise in Decimal', async () => {
+    const r = await quickCalcHandler({ expression: 'sin(pi)' });
+    const out = text(r);
+    expect(out).toMatch(/^Result: 0$/m);
+    expect(out).toMatch(/^Decimal: 1\.2246\d*e-16$/m);
+  });
+
+  it('an exact zero still snaps to 0', async () => {
+    const r = await quickCalcHandler({ expression: 'sin(0)' });
+    expect(text(r)).toMatch(/^Result: 0$/m);
+  });
+});

@@ -13,13 +13,21 @@ export async function tryExactResult(
 ): Promise<ExactResult | null> {
   if (!Number.isFinite(numericResult)) return null;
 
+  // Snapping is for float noise around a real integer — 0.9999999999999999 is
+  // 1. But a tiny non-zero value also rounds to 0 within the 1e-9 window, and
+  // claiming `0` for it is a wrong answer with the truth relegated to the
+  // decimal line (`sech(23.4)` answered "Result: 0"). Exactly-zero still snaps.
   const rounded = Math.round(numericResult);
-  if (Math.abs(numericResult - rounded) < 1e-9) {
+  if (Math.abs(numericResult - rounded) < 1e-9 && (rounded !== 0 || numericResult === 0)) {
     return { exact: String(rounded), decimal: numericResult };
   }
 
+  // With the snap refused, a tiny value reaches floatToFraction, whose best
+  // bounded-denominator approximation is 0/1 — the same wrong claim wearing a
+  // fraction bar ("Result: 0/1"). A zero numerator for a non-zero value is
+  // "no fraction", not "the fraction 0/1".
   const frac = floatToFraction(numericResult);
-  if (frac) {
+  if (frac && !(frac[0] === 0 && numericResult !== 0)) {
     const [num, den] = frac;
     const absNum = Math.abs(num);
     const sign = num < 0 ? '-' : '';
