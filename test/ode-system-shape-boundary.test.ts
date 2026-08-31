@@ -38,20 +38,29 @@ describe('the shape half evaluates nothing', () => {
   // it fails fast on the imports someone is most likely to reach for, but most of
   // the modules under src/server/tools that reach the CAS are not among them (the
   // count is in ode-system-shape.ts's docblock, kept in one place so there is one
-  // number to keep right), and a denylist cannot say "no path to the engine". An earlier version of this file pinned an allowlist with an ordered
+  // number to keep right), and a denylist cannot say "no path to the engine". An
+  // earlier version of this file pinned an allowlist with an ordered
   // `toEqual`, which was deleted for failing on import ORDER — a real complaint
   // with the wrong remedy, since sorting fixes ordering and deleting it removed
   // the only check that saw the graph at all.
   //
   // So: walk the value-import closure from each guarded file and assert the engine
-  // is not in it. This holds however deep the path is, for the specifier forms
-  // named below — static `import ... from`, `export ... from`, side-effect
-  // `import '...'`, and dynamic `import('...')`, in either quote style. `import
-  // type` is skipped deliberately: it is erased at compile time and reaches
-  // nothing. That list is closed on purpose, because the first version of this
-  // walk scanned only single-quoted static imports while claiming to hold
-  // regardless of spelling — and `await import('../giac/index.js')` passed it,
-  // passed oxlint, and passed tsc.
+  // is not in it. This holds however deep the path is, for these specifier forms:
+  // static `import ... from`, `export ... from` and `export * from`, side-effect
+  // `import '...'`, dynamic `import('...')`, and `import x = require('...')` — in
+  // single quotes, double quotes or backticks, whether or not the statement starts
+  // its line. `import type` is skipped deliberately: it is erased at compile time
+  // and reaches nothing.
+  //
+  // The list is closed on purpose, and it is closed because each round of widening
+  // it was written after something walked through. First the scan read only
+  // single-quoted static imports while the comment claimed it held regardless of
+  // spelling, and `await import('../giac/index.js')` passed the walk, oxlint and
+  // tsc. Then, with the comment claiming "either quote style", the backtick form
+  // `import(\`../giac/index.js\`)` passed all four gates including prettier. What
+  // this comment must not do is claim more than the three regexes below implement:
+  // a specifier built by concatenation is NOT covered, and neither is
+  // `createRequire(...)`.
   it.each([
     ['src/server/tools/ode-system-shape.ts'],
     ['src/server/tools/output-cleanup.ts'],
@@ -65,10 +74,17 @@ describe('the shape half evaluates nothing', () => {
       const text = readFileSync(file, 'utf8');
       const stripped = text.replaceAll(/\/\*[\s\S]*?\*\//g, '').replaceAll(/\/\/.*/g, '');
       const specs = [
+        // Anchored on a statement boundary, not a line start: `x = 1;export * from
+        // '...'` puts the second module item mid-line, where a `\n\s*` anchor cannot
+        // reach it. All three quote styles — a no-substitution template literal is
+        // a string by the time the loader sees it.
         ...stripped.matchAll(
-          /(?:^|\n)\s*(?:import|export)\s+(?!type\b)(?:[^;]*?from\s+)?['"]([^'"]+)['"]/g
+          /(?:^|[\n;}])\s*(?:import|export)\s*(?!type\b)(?:[^;]*?from\s*)?['"`]([^'"`]+)['"`]/g
         ),
-        ...stripped.matchAll(/\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g),
+        ...stripped.matchAll(/\bimport\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/g),
+        // import-equals. tsc accepts it under this tsconfig and emits a working
+        // createRequire shim, so it is a real path, not a dead form.
+        ...stripped.matchAll(/\bimport\s+\w+\s*=\s*require\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/g),
       ].map((m) => m[1]);
       for (const spec of specs) {
         if (!spec.startsWith('.')) continue;
