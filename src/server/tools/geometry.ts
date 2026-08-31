@@ -17,11 +17,17 @@ export async function geometryHandler(args: Record<string, unknown>) {
         const [[x1, y1], [x2, y2]] = points;
         const d = Math.hypot(x2 - x1, y2 - y1);
         const exactSquared = (x2 - x1) ** 2 + (y2 - y1) ** 2;
+        // The squared sum overflows above ~1e154 while hypot stays finite —
+        // a "d = √(Infinity)" derivation beside a finite answer contradicts
+        // itself, so that note switches to the form actually computed.
+        const derivation = Number.isFinite(exactSquared)
+          ? `d = √(${formatNumber(exactSquared)})`
+          : `d = hypot(${formatNumber(x2 - x1)}, ${formatNumber(y2 - y1)})`;
         return formatToolResponse({
           result: formatNumber(d),
           notes: [
             `Distance between (${x1},${y1}) and (${x2},${y2})`,
-            `d = √(${formatNumber(exactSquared)})`,
+            derivation,
           ],
         });
       }
