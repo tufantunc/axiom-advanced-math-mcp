@@ -2,7 +2,7 @@ import { isPrintedZero, splitTopLevel } from './output-cleanup.js';
 import { stripEnclosingBrackets } from './compute/arg-parsing.js';
 import type { GiacEngineLike } from './compute/hygiene.js';
 import { unicodeToAscii } from './unicode-normalize.js';
-import { MAX_ENGINE_DEPTH, nestingDepth } from './giac-eval.js';
+import { nestingDepth } from './giac-eval.js';
 
 /**
  * Translating a list-form ODE system into the form this CAS actually solves.
@@ -94,6 +94,20 @@ const MAX_COMMAND_CHARS = 800;
  * a number, rarely past thirty characters.
  */
 const MAX_CONDITION_CHARS = 400;
+
+/**
+ * Ceiling on how deeply a single initial condition may nest.
+ *
+ * Its own number for the same reason the one above is: MAX_ENGINE_DEPTH is
+ * measured for handing a RESULT back to `latex(...)`, and borrowing it here
+ * would be the mistake the length bound was just corrected for. Measured on
+ * `exact([y(0)=sqrt(1+…),z(0)=0])`, function nesting is refused gracefully at
+ * depth 100, burns the whole per-call budget at 200, and kills the worker at
+ * 400. Grouping parentheses are harmless past 600, so this refuses a little more
+ * than it must — one number cannot tell the two apart, and the conservative end
+ * is the one that does not take the worker down.
+ */
+const MAX_CONDITION_DEPTH = 100;
 
 /**
  * Ceiling on the degree of the forcing term in the independent variable.
@@ -284,6 +298,37 @@ export type SystemTranslation =
   | { error: string };
 
 /**
+ * How an engine rejection should be described to the caller, if at all.
+ *
+ * Three classes, because they are three different facts and only one is about
+ * the caller's mathematics. Dropping the error entirely told someone their
+ * system "could not be analysed" when the truth was that the engine never
+ * started; matching availability too broadly then told someone their input was
+ * an outage and invited them to retry it.
+ *
+ * A TIMEOUT is the caller's cost, not an outage: `Giac evaluation timed out`
+ * means this input wedged the shared worker for the whole per-call budget, and
+ * "retry" is advice that repeats the wedge and the recycle it causes.
+ *
+ * The engine's own wording is never returned — it named this service's worker
+ * recycling and probe expressions the caller never wrote.
+ */
+function engineFailureSuffix(failure: unknown): string {
+  const message = failure instanceof Error ? failure.message : String(failure);
+  if (
+    /worker (unavailable|exited|init (timed out|failed))|recycled repeatedly|host disposed/i.test(
+      message
+    )
+  ) {
+    return ': the CAS was unavailable — retry';
+  }
+  if (/timed out/i.test(message)) {
+    return ' in the time the CAS allows — simplify the system';
+  }
+  return '';
+}
+
+/**
  * Everything decidable from the text alone, before any engine call.
  *
  * Extracted so that "no caller text reaches the engine unchecked" is the call
@@ -455,7 +500,14 @@ function validateSystemShape(
   // argument about ordering: `y(0)=10^100000` refused with a clean, correct
   // message while having killed the shared worker in the scan that produced the
   // refusal, and the next unrelated call came back as "Giac worker exited (code
-  // 1)". It is a property of the call graph now rather than a claim.
+  // 1)".
+  //
+  // SIZE is bounded here — length, depth and magnitude — and that much is a
+  // property of the call graph rather than a claim. COST is not: a condition
+  // value is `(.+)`, so `y(0)=ifactor(2^257-1)` is twenty-one characters, depth
+  // one, and still wedges the shared worker for its whole budget. main does the
+  // same, so it is not a regression — but this channel is bounded, not closed,
+  // and saying otherwise is how the last four of these were missed.
   const parsedConditions: RegExpExecArray[] = [];
   for (const condition of system.conditions) {
     // Matched once, and the match is what the reading below consumes. Checking
@@ -483,14 +535,14 @@ function validateSystemShape(
       return {
         error:
           `gives an initial condition of ${condition.length} characters, above the ` +
-          `${MAX_CONDITION_CHARS} the CAS can be asked about`,
+          `${MAX_CONDITION_CHARS} this tool accepts`,
       };
     }
-    if (nestingDepth(condition) > MAX_ENGINE_DEPTH) {
+    if (nestingDepth(condition) > MAX_CONDITION_DEPTH) {
       return {
         error:
           `gives an initial condition nested ${nestingDepth(condition)} deep, above ` +
-          `the ${MAX_ENGINE_DEPTH} the CAS can parse`,
+          `the ${MAX_CONDITION_DEPTH} this tool accepts`,
       };
     }
     const oversized = implausibleMagnitude(condition);
@@ -593,17 +645,7 @@ export async function translateOdeSystem(
   } catch (failure) {
     // A trap or timeout in the probe is this operation's failure, not a raw
     // engine string for the caller to decipher.
-    // The engine's own text does not go to the caller — it named this service's
-    // worker recycling and a `grad(z,[y,z])` probe they never wrote. But the
-    // CLASS does: dropping the error entirely told a caller their system "could
-    // not be analysed", a statement about their mathematics, when the truth was
-    // that the CAS was unavailable. Those are different things and only one of
-    // them is their problem.
-    const message = failure instanceof Error ? failure.message : String(failure);
-    if (/timed out|unavailable|recycled|worker exited/i.test(message)) {
-      return { error: 'could not be analysed because the CAS was unavailable — retry' };
-    }
-    return { error: 'could not be analysed' };
+    return { error: `could not be analysed${engineFailureSuffix(failure)}` };
   }
   if (raw.includes('GIAC_ERROR')) {
     return {
@@ -793,11 +835,14 @@ export async function translateOdeSystem(
       ]);
       const flat = (text: string) => text.trim().replace(/\s+/g, '');
       floatInConditions = flat(asExact) !== flat(asWritten);
-    } catch {
+    } catch (failure) {
+      // Same classification as the probe's. An outage that lands here is not the
+      // caller's conditions being at fault, and a recycle caused by somebody
+      // else's request read as a verdict on theirs.
       return {
         error:
           'has initial conditions that could not be examined for decimals, so the ' +
-          'accuracy bound that depends on that could not be applied',
+          `accuracy bound that depends on that could not be applied${engineFailureSuffix(failure)}`,
       };
     }
   }

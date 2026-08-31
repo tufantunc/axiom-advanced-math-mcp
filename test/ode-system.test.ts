@@ -288,11 +288,16 @@ describe('what is decided before the engine is asked', () => {
     // The worker's lifecycle is not a verdict on the caller's mathematics: the
     // class is reported so an outage is distinguishable from a real refusal,
     // while the engine's own text still never reaches them.
-    [
-      new Error('Giac worker exited (code 1)'),
-      /^could not be analysed because the CAS was unavailable/,
-    ],
+    [new Error('Giac worker exited (code 1)'), /^could not be analysed: the CAS was unavailable/],
     [new Error('Bad Argument Value'), /^could not be analysed$/],
+    // A per-call timeout is the caller's cost, not an outage — this input wedged
+    // the shared worker for the whole budget. Classifying it as unavailable
+    // inverted the fix's purpose and advised a retry that repeats the wedge.
+    [new Error('Giac evaluation timed out'), /^could not be analysed in the time the CAS allows/],
+    // ...and the state where every caller would otherwise be told their
+    // mathematics is broken because the engine never came up.
+    [new Error('Giac worker init failed: WASM init timeout'), /the CAS was unavailable/],
+    [new Error('worker host disposed'), /the CAS was unavailable/],
     [
       'GIAC_ERROR: Bad Argument Value grad(z,[y,z]) at line 1 col 7',
       // ...and the function NAMES are the caller's own data — the one signal
@@ -363,6 +368,11 @@ describe('what is decided before the engine is asked', () => {
     let calls = 0;
     // Deep but SHORT — 203 characters, inside the length bound above, so this
     // exercises the depth axis rather than falling through to it.
+    // Grouping parentheses, because they are the only shape dense enough to pass
+    // 100 levels inside the 400-character bound above — two characters a level
+    // against four for the cheapest call. They are also harmless to the engine
+    // past 600, so this pins the GUARD rather than the hazard; the hazard is
+    // function nesting, which is graceful at 100 and fatal at 400.
     const deep = `${'('.repeat(101)}1${')'.repeat(101)}`;
     const out = await translateOdeSystem(system(`[y'=z, z'=-y, y(0)=${deep}, z(0)=0]`), 'x', {
       evaluate: (): Promise<string> => {
@@ -370,7 +380,7 @@ describe('what is decided before the engine is asked', () => {
         return Promise.resolve('[[[0,1],[-1,0]],[0,0],[0,0]]');
       },
     });
-    expect('error' in out && out.error).toMatch(/nested \d+ deep, above the \d+ the CAS can parse/);
+    expect('error' in out && out.error).toMatch(/nested \d+ deep, above the \d+ this tool accepts/);
     expect(calls).toBe(0);
   });
 
@@ -445,6 +455,26 @@ describe('translateOdeSystem numeric domain', () => {
       },
     });
     expect(seen.some((e) => e.startsWith('evalf('))).toBe(false);
+  });
+
+  it.each([
+    // An outage that lands in the CONDITIONS scan is still an outage. Only the
+    // probe's catch classified at first, so a recycle caused by somebody else's
+    // request read as a verdict on this caller's initial conditions.
+    [new Error('Giac worker exited (code 1)'), /the CAS was unavailable/],
+    [new Error('Giac evaluation timed out'), /in the time the CAS allows/],
+    [new Error('Bad Argument Value'), /could not be applied$/],
+  ])('classifies %s in the conditions scan too', async (thrown, expected) => {
+    const out = await translateOdeSystem(system("[y'=z, z'=-y, y(0)=1, z(0)=0]"), 'x', {
+      evaluate: (expr: string): Promise<string> => {
+        if (expr.startsWith('exact([y')) return Promise.reject(thrown);
+        if (expr.startsWith('[max(')) return Promise.resolve('[0,0,0]');
+        if (expr.startsWith('size(lvar(')) return Promise.resolve('0');
+        if (expr.startsWith('exact(')) return Promise.resolve(expr.slice(6, -1));
+        return Promise.resolve('[[[0,1],[-1,0]],[0,0],[0,0]]');
+      },
+    });
+    expect('error' in out && out.error).toMatch(expected);
   });
 
   it('refuses when the engine cannot examine the CONDITIONS for a decimal', async () => {
