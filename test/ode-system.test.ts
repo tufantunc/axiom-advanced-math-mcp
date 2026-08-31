@@ -308,6 +308,35 @@ describe('what is decided before the engine is asked', () => {
     expect('error' in out && out.error).toMatch(expected);
   });
 
+  it.each([
+    // The bound at its value, both ways. A real initial condition is a number —
+    // these are far past anything a caller writes, and the trapping shape is only
+    // a factor of two above the cap, so the number matters rather than just the
+    // direction.
+    // `y(0)=` is five of the characters the bound counts, so these are the
+    // 400th and 401st character of the condition itself.
+    ['at the limit', 395, 'accept'],
+    ['one over', 396, 'refuse'],
+  ])('reads a condition %s as %s', async (_label, valueLength, verdict) => {
+    let calls = 0;
+    const value = 'x'.repeat(valueLength);
+    const out = await translateOdeSystem(system(`[y'=z, z'=-y, y(0)=${value}, z(0)=0]`), 'x', {
+      evaluate: (expr: string): Promise<string> => {
+        calls += 1;
+        if (expr.startsWith('[max(')) return Promise.resolve('[0,0,0]');
+        if (expr.startsWith('size(lvar(')) return Promise.resolve('0');
+        if (expr.startsWith('exact(')) return Promise.resolve(expr.slice(6, -1));
+        return Promise.resolve('[[[0,1],[-1,0]],[0,0],[0,0]]');
+      },
+    });
+    if (verdict === 'refuse') {
+      expect('error' in out && out.error).toMatch(/401 characters, above the 400/);
+      expect(calls).toBe(0);
+    } else {
+      expect(calls).toBeGreaterThan(0);
+    }
+  });
+
   it('refuses an over-long condition before it reaches the engine', async () => {
     // Nothing else measured this channel: MAX_PROBE_CHARS bounds the probe and
     // MAX_COMMAND_CHARS the finished command, both later. A flat 7,441-character
@@ -315,7 +344,7 @@ describe('what is decided before the engine is asked', () => {
     // rather than trapping in WASM — which left the worker UP and corrupted, so
     // three unrelated callers got raw engine text before it crashed itself out.
     let calls = 0;
-    const long = `1${'*2'.repeat(3700)}`;
+    const long = `1${'*2'.repeat(700)}`;
     const out = await translateOdeSystem(system(`[y'=z, z'=-y, y(0)=${long}, z(0)=0]`), 'x', {
       evaluate: (): Promise<string> => {
         calls += 1;
@@ -332,9 +361,9 @@ describe('what is decided before the engine is asked', () => {
     // worker. Sending one copy per call raised that threshold; it did not remove
     // it.
     let calls = 0;
-    // Deep but SHORT — 601 characters, inside the length bound above, so this
+    // Deep but SHORT — 203 characters, inside the length bound above, so this
     // exercises the depth axis rather than falling through to it.
-    const deep = `${'('.repeat(150)}1${')*1'.repeat(150)}`;
+    const deep = `${'('.repeat(101)}1${')'.repeat(101)}`;
     const out = await translateOdeSystem(system(`[y'=z, z'=-y, y(0)=${deep}, z(0)=0]`), 'x', {
       evaluate: (): Promise<string> => {
         calls += 1;

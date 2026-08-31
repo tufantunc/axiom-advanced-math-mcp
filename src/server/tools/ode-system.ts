@@ -84,6 +84,18 @@ const MAX_PROBE_REPLY_CHARS = 4_000;
 const MAX_COMMAND_CHARS = 800;
 
 /**
+ * Ceiling on a single initial condition, as written by the caller.
+ *
+ * Its own number rather than MAX_COMMAND_CHARS, which is measured for the
+ * finished command and only happens to sit nearby: the two bound different text
+ * against different limits, and borrowing one for the other hides the
+ * measurement. `exact([y(0)=1*2*2*…,z(0)=0])` answers at 1,015 characters and
+ * traps at 1,415, so 400 keeps a factor of two — and a real initial condition is
+ * a number, rarely past thirty characters.
+ */
+const MAX_CONDITION_CHARS = 400;
+
+/**
  * Ceiling on the degree of the forcing term in the independent variable.
  *
  * The third axis, and the one no character count reaches: see the measurement
@@ -458,20 +470,20 @@ function validateSystemShape(
     parsedConditions.push(parsed);
     // Length AND depth, both bounded here because the conditions reach an engine
     // call with nothing else measuring them: MAX_PROBE_CHARS bounds the probe and
-    // MAX_COMMAND_CHARS the finished command, and both run later. A condition
-    // longer than the command bound could never have been accepted anyway, so
-    // refusing it up front costs nothing and closes the channel.
+    // MAX_COMMAND_CHARS the finished command, and both run later.
     //
-    // Two shapes, because they trap differently. A FLAT expression traps from
-    // about 6,000 characters — `exact([y(0)=1*2*2*…])` — and at ~7,400 it
-    // exhausts the JS stack instead, which left the worker up and corrupted
-    // rather than recycled. A NESTED one traps at 2,415 characters, inside every
-    // length bound there is, which is why depth is measured separately.
-    if (condition.length > MAX_COMMAND_CHARS) {
+    // Two shapes, because they trap differently and neither bound catches the
+    // other. Measured on `exact([y(0)=1*2*2*…,z(0)=0])`, a FLAT condition answers
+    // at 1,015 characters and traps at 1,415, killing the worker; further up it
+    // exhausts the JS stack instead, which left the worker running and corrupted
+    // rather than recycled. A NESTED one traps at 2,415 characters — inside any
+    // length bound that would allow the flat case — which is why depth is
+    // measured separately.
+    if (condition.length > MAX_CONDITION_CHARS) {
       return {
         error:
           `gives an initial condition of ${condition.length} characters, above the ` +
-          `${MAX_COMMAND_CHARS} the rewritten command allows`,
+          `${MAX_CONDITION_CHARS} the CAS can be asked about`,
       };
     }
     if (nestingDepth(condition) > MAX_ENGINE_DEPTH) {
