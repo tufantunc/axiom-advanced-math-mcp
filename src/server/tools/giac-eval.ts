@@ -1,12 +1,7 @@
 import { giacEngine } from '../giac/index.js';
 import { formatToolResponse, formatErrorResponse } from './response-formatter.js';
 import { evaluationCache, isCacheable } from '../giac/cache.js';
-import {
-  stripQuotes,
-  stripDisplayMode,
-  stripOrderTerm,
-  nestingDepth,
-} from './output-cleanup.js';
+import { stripQuotes, stripDisplayMode, stripOrderTerm, nestingDepth } from './output-cleanup.js';
 import type { VerificationResult } from './self-verify.js';
 import { unicodeToAscii } from './unicode-normalize.js';
 

@@ -12,10 +12,14 @@ import { unicodeToAscii } from './unicode-normalize.js';
  * equation right-hand sides went unguarded for a whole review round.
  *
  * The invariant is that nothing here EVALUATES anything, and it is checkable
- * rather than asserted: there is no `async` function and no `await` in this file,
- * and every module it imports is itself engine-free, so no path through the
- * module graph reaches the CAS. An oxlint no-restricted-imports rule on this path
- * holds the second half; the first is in ode-system-shape-boundary.test.ts.
+ * rather than asserted. Two halves, two mechanisms, and the prose is kept no
+ * broader than they cover: there is no `async` function and no `await` in this
+ * file, pinned in ode-system-shape-boundary.test.ts; and neither this file nor
+ * any of the three leaf modules it imports may import the CAS, pinned by an
+ * oxlint no-restricted-imports rule listing exactly those four files. Those three
+ * imports have no imports of their own today, so the set is the whole graph — but
+ * the rule is what keeps that true, and it covers the leaves precisely because a
+ * rule scoped to this file alone could not.
  */
 
 /**

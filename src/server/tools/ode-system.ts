@@ -103,18 +103,6 @@ const MAX_CONDITION_FLOAT_DEGREE = 14;
  * z'=-y]` emitted `desolve(Y'=[[0,Y],[-1,0]]*Y,x,Y)` and answered `[]` — the very
  * defect this module exists to remove — and `[y'=z+Y, z'=-y]` answered wrongly.
  */
-/**
- * Whitespace-free copy, for comparing two of the engine's own prints of the same
- * expression — `exact()` reformats spacing without changing the value, so a raw
- * string compare reports a difference that is not one.
- *
- * One copy: it was defined twice inside translateOdeSystem, in two adjacent try
- * blocks feeding the same comparison, so normalising a different whitespace class
- * in one would have moved the matrix verdict while leaving the conditions verdict
- * on the old rule.
- */
-const flat = (text: string) => text.trim().replaceAll(/\s+/g, '');
-
 function vectorSymbol(taken: string[]): string {
   const used = new Set(taken.flatMap((t) => t.match(/[A-Za-z_]\w*/g) ?? []));
   let name = 'Y';
@@ -171,33 +159,60 @@ function engineFailureSuffix(failure: unknown): string {
 }
 
 /**
+ * What the rewritten system holds numerically, as answered by readNumericDomain.
+ *
+ * Named because two functions take these facts and a third derives from them; as
+ * an anonymous shape it was written out twice and a fifth channel would have had
+ * to be added in three places.
+ */
+type NumericDomain = {
+  holdsExact: boolean;
+  floatInMatrix: boolean;
+  floatInForcing: boolean;
+  floatInConditions: boolean;
+};
+
+/**
  * The caps that only a forcing term can trip: polynomial degree, a pole in the
  * solve variable, and the tighter degree allowed once a decimal is in play.
  *
- * Extracted for the same reason as readNumericDomain — it is a self-contained
- * phase that takes four inputs and produces only refusals, and inlining it put
- * its caps a long way from the flags they read.
+ * Extracted for the same reason as readNumericDomain: a self-contained phase
+ * whose only output is a refusal. Taking the decimal flags as a parameter is the
+ * point — inlined, these caps read them out of the enclosing scope, so every flag
+ * translateOdeSystem happened to hold was in scope here whether or not this phase
+ * was meant to see it. Now the phase can only consult what it was handed.
  */
 async function checkForcingTerm(
   constantEntries: string[],
   variable: string,
-  decimals: { holdsFloat: boolean; floatInConditions: boolean },
+  domain: NumericDomain,
   evaluate: (command: string) => Promise<string>
 ): Promise<{ error: string } | undefined> {
-  const { holdsFloat, floatInConditions } = decimals;
-// A forcing term's cost to the matrix `desolve` is driven by its DEGREE, and
-// none of the three text bounds can see that: `[y'=z+(x+1)^300, z'=-y]` is 35
-// characters, builds a 229-character probe and a 46-character command — inside
-// every cap — and then trapped the engine fatally, after which the NEXT
-// unrelated caller got "Giac worker exited (code 1)". `grad` and `subst`
-// differentiate the term away rather than expanding it, so the probe never
-// grows, and `^300` is four characters in the command.
-//
-// Measured on `desolve(Y'=[[0,1],[-1,0]]*Y+[(x+1)^n,0],x,Y)`: n=60 answers in
-// 800ms, n=80 takes 4.1s of a 10s budget, and n=100 traps and kills the
-// worker. 60 is the last comfortable one. Only asked when there is a forcing
-// term to ask about, so the homogeneous systems that are the common case pay
-// nothing.
+  const { floatInMatrix, floatInForcing, floatInConditions } = domain;
+  // Wherever the decimal lives, the accuracy cost is the same. Measured worst
+  // relative residual over three points, matrix-float against forcing-float:
+  // degree 8 is 6.9e-12 / 4.4e-11, degree 10 is 1.2e-9 / 1.5e-9, degree 14 is
+  // 2.6e-5 / 5.3e-5 — within a factor of three at every degree, with no plateau
+  // and no cliff. A separate, looser threshold for the forcing term rested on a
+  // measurement that does not reproduce, and it shipped 5.3e-5 with a check mark
+  // while the other channel refused 2.5e-10 as unusable.
+  //
+  // Derived here rather than handed in, so it cannot disagree with the cap below
+  // that is its only reader.
+  const holdsFloat = floatInMatrix || floatInForcing;
+  // A forcing term's cost to the matrix `desolve` is driven by its DEGREE, and
+  // none of the three text bounds can see that: `[y'=z+(x+1)^300, z'=-y]` is 35
+  // characters, builds a 229-character probe and a 46-character command — inside
+  // every cap — and then trapped the engine fatally, after which the NEXT
+  // unrelated caller got "Giac worker exited (code 1)". `grad` and `subst`
+  // differentiate the term away rather than expanding it, so the probe never
+  // grows, and `^300` is four characters in the command.
+  //
+  // Measured on `desolve(Y'=[[0,1],[-1,0]]*Y+[(x+1)^n,0],x,Y)`: n=60 answers in
+  // 800ms, n=80 takes 4.1s of a 10s budget, and n=100 traps and kills the
+  // worker. 60 is the last comfortable one. Only asked when there is a forcing
+  // term to ask about, so the homogeneous systems that are the common case pay
+  // nothing.
   // numerator AND denominator. `degree` is the SIGNED polynomial degree, so it
   // reports 0 for `(x+1)^60/(x-1)^60` and -400 for `1/(x-1)^400` — both sail
   // past a `> MAX` test, and both are what the cap exists to stop: the first
@@ -271,8 +286,8 @@ async function checkForcingTerm(
   // that `[y'=z, z'=-y+tan(x)]` — 21 characters, exact — traps the engine and
   // takes a concurrent caller's unrelated call with it, where main answers.
   // Three names, not nine. Giac gives `cot`, `sec`, `csc`, `coth`, `sech` and
-  // `csch` a denominator that mentions the variable, so the rule above already
-  // refuses them and those six alternatives were unreachable — measured with
+  // `csch` a denominator that mentions the variable, so the has(denom(c),x) test
+  // already refuses them and those six were unreachable — measured with
   // `has(denom(f(x)),x)`, which is 1 for each of them and 0 for these three.
   // A shape list should hold only the shapes nothing else catches.
   //
@@ -310,116 +325,127 @@ async function checkForcingTerm(
   return undefined;
 }
 /**
+ * Whitespace-free copy, for comparing two of the engine's own prints of the same
+ * expression — `exact()` reformats spacing without changing the value, so a raw
+ * string compare reports a difference that is not one.
+ *
+ * One copy, and it sits with readNumericDomain because that is its only caller.
+ * It was defined twice inside translateOdeSystem, in two adjacent try blocks
+ * feeding the same comparison, so normalising a different whitespace class in one
+ * would have moved the matrix verdict while leaving the conditions verdict on the
+ * old rule.
+ */
+const flat = (text: string) => text.trim().replaceAll(/\s+/g, '');
+
+/**
  * What the rewritten system holds NUMERICALLY: an exact symbolic constant, and a
  * float in any of the three places one can hide.
  *
  * Extracted because translateOdeSystem held every phase of the translation in one
- * body, and these four facts were declared as mutable `let`s far from the branch
- * that reads them and further still from the caps that act on them. They are one
- * question asked in three places, so they are returned as one record.
+ * body. These four facts are one question asked in three places, so they come back
+ * as one record with a declared type, rather than four `let`s the rest of the
+ * function could read — or reassign — at any point after them. The `let`s survive
+ * inside here, where the try/catch that sets them is the next statement.
  */
 async function readNumericDomain(
   matrix: string,
   constants: string,
   conditions: string[],
   evaluate: (command: string) => Promise<string>
-): Promise<
-  | { holdsExact: boolean; floatInMatrix: boolean; floatInForcing: boolean; floatInConditions: boolean }
-  | { error: string }
-> {
-// Ask the ENGINE what the matrix holds, rather than reading how it printed it.
-//
-// This was a pair of character tests, and each one was a guess about Giac's
-// printer that turned out to be wrong. "Exact constant = contains a letter"
-// missed U+221A, the glyph Giac prints radicals with, so a float beside `√2`
-// was never normalised and `[y'=z, z'=-1.5*y+sqrt(3)*z]` returned a
-// complex-valued answer. Fixing that half moved the bug across the `&&`:
-// "float = contains a decimal point" missed `-3e+15`, and the same wrong
-// answer came back. `lvar` reports the non-numeric atoms and `DOM_FLOAT` the
-// float entries, both from the engine's own type tags — which also gets `E`
-// (a free identifier, not Euler's number) and `1.5*i` right, where the
-// character tests did not.
+): Promise<NumericDomain | { error: string }> {
+  // Ask the ENGINE what the matrix holds, rather than reading how it printed it.
+  //
+  // This was a pair of character tests, and each one was a guess about Giac's
+  // printer that turned out to be wrong. "Exact constant = contains a letter"
+  // missed U+221A, the glyph Giac prints radicals with, so a float beside `√2`
+  // was never normalised and `[y'=z, z'=-1.5*y+sqrt(3)*z]` returned a
+  // complex-valued answer. Fixing that half moved the bug across the `&&`:
+  // "float = contains a decimal point" missed `-3e+15`, and the same wrong
+  // answer came back. `lvar` reports the non-numeric atoms and `DOM_FLOAT` the
+  // float entries, both from the engine's own type tags — which also gets `E`
+  // (a free identifier, not Euler's number) and `1.5*i` right, where the
+  // character tests did not.
 
-// Two questions, both asked of the ENGINE rather than of how it printed: does
-// this hold an exact symbolic constant, and does it hold a float.
-//
-// `exact()` rewrites every float as a rational and leaves everything else
-// alone, so comparing its result with what came in answers the second question
-// — and it looks INSIDE an expression, which a type tag does not. Tagging was
-// the first attempt and `type(0.5*(x+1)^15)` is DOM_SYMBOLIC, not DOM_FLOAT, so
-// a float anywhere but at the top level was invisible. The comparison is
-// string-wise, which is only sound because both sides are the engine's own
-// print of the same expression: `matrix` and `constants` are probe output, and
-// `exact` reprints through the same writer.
-//
-// The forcing vector is asked about separately, not folded in with the matrix.
-// It was not asked about at all, and a float living only there skipped the
-// accuracy cap: `[y'=z, z'=-y+0.5*(x+1)^15]` shipped an answer whose relative
-// residual against its own system is 0.33. The two also degrade at very
-// different rates, so they cannot share a threshold.
-let holdsExact = false;
-let floatInMatrix = false;
-let floatInForcing = false;
-let floatInConditions = false;
-try {
-  const [atoms, exactMatrix, exactForcing] = await Promise.all([
-    evaluate(`size(lvar(${matrix}))`),
-    evaluate(`exact(${matrix})`),
-    evaluate(`exact(${constants})`),
-  ]);
-  holdsExact = Number(atoms.trim()) > 0;
-  floatInMatrix = flat(exactMatrix) !== flat(matrix);
-  floatInForcing = flat(exactForcing) !== flat(constants);
-} catch {
-  // A refusal, not a shrug. These flags gate the accuracy caps and the
-  // normalisation; clearing them lets the request continue with both guards
-  // silently off, and the measured consequence is an answer this module has
-  // already established is wrong — `[y'=z, z'=-1.5*y+z+(x+1)^20]` fails its own
-  // first equation by a factor of 13. "What happened before any of this
-  // existed" was also not true: before this module the input never took this
-  // path. Not knowing whether the answer is safe to produce is not the same as
-  // knowing that it is.
-  return {
-    error:
-      'could not be examined for decimal coefficients, so the accuracy bounds ' +
-      'that depend on that could not be applied',
-  };
-}
-// Asked separately, and only after validateSystemShape has bounded them. Folded into the
-// same `Promise.all`, a failure on this one — the only member built from caller
-// text — silently cleared the matrix and forcing flags too, reopening the
-// unscanned-float hole and skipping the normalisation that prevents the
-// mixed-domain wrong answer.
-if (conditions.length > 0) {
+  // Two questions, both asked of the ENGINE rather than of how it printed: does
+  // this hold an exact symbolic constant, and does it hold a float.
+  //
+  // `exact()` rewrites every float as a rational and leaves everything else
+  // alone, so comparing its result with what came in answers the second question
+  // — and it looks INSIDE an expression, which a type tag does not. Tagging was
+  // the first attempt and `type(0.5*(x+1)^15)` is DOM_SYMBOLIC, not DOM_FLOAT, so
+  // a float anywhere but at the top level was invisible. The comparison is
+  // string-wise, which is only sound because both sides are the engine's own
+  // print of the same expression: `matrix` and `constants` are probe output, and
+  // `exact` reprints through the same writer.
+  //
+  // The forcing vector is asked about separately, not folded in with the matrix.
+  // It was not asked about at all, and a float living only there skipped the
+  // accuracy cap: `[y'=z, z'=-y+0.5*(x+1)^15]` shipped an answer whose relative
+  // residual against its own system is 0.33. The two also degrade at very
+  // different rates, so they cannot share a threshold.
+  let holdsExact = false;
+  let floatInMatrix = false;
+  let floatInForcing = false;
+  let floatInConditions = false;
   try {
-    // Two calls, one copy of the text each. Asking both questions in one
-    // command doubled the caller's own text: the input cap is 8,192 characters
-    // and a long flat expression traps around 10,000, so a 7,528-character
-    // request — comfortably inside the cap — became a ~15,000-character command
-    // and killed the shared worker, where main answers it in 21ms.
-    //
-    // This RAISES the threshold; it does not remove it. The engine also traps on
-    // parse DEPTH, which no character count expresses: a condition nested 600
-    // deep is 2,415 characters and kills the worker in one copy. That is bounded
-    // in validateSystemShape, before either of these calls — saying otherwise
-    // here is what would stop the next reader from noticing.
-    const written = `[${conditions.join(',')}]`;
-    const [asExact, asWritten] = await Promise.all([
-      evaluate(`exact(${written})`),
-      evaluate(written),
+    const [atoms, exactMatrix, exactForcing] = await Promise.all([
+      evaluate(`size(lvar(${matrix}))`),
+      evaluate(`exact(${matrix})`),
+      evaluate(`exact(${constants})`),
     ]);
-    floatInConditions = flat(asExact) !== flat(asWritten);
-  } catch (failure) {
-    // Same classification as the probe's. An outage that lands here is not the
-    // caller's conditions being at fault, and a recycle caused by somebody
-    // else's request read as a verdict on theirs.
+    holdsExact = Number(atoms.trim()) > 0;
+    floatInMatrix = flat(exactMatrix) !== flat(matrix);
+    floatInForcing = flat(exactForcing) !== flat(constants);
+  } catch {
+    // A refusal, not a shrug. These flags gate the accuracy caps and the
+    // normalisation; clearing them lets the request continue with both guards
+    // silently off, and the measured consequence is an answer this module has
+    // already established is wrong — `[y'=z, z'=-1.5*y+z+(x+1)^20]` fails its own
+    // first equation by a factor of 13. "What happened before any of this
+    // existed" was also not true: before this module the input never took this
+    // path. Not knowing whether the answer is safe to produce is not the same as
+    // knowing that it is.
     return {
       error:
-        'has initial conditions that could not be examined for decimals, so the ' +
-        `accuracy bound that depends on that could not be applied${engineFailureSuffix(failure)}`,
+        'could not be examined for decimal coefficients, so the accuracy bounds ' +
+        'that depend on that could not be applied',
     };
   }
-}
+  // Asked separately, and only after validateSystemShape has bounded them. Folded into the
+  // same `Promise.all`, a failure on this one — the only member built from caller
+  // text — silently cleared the matrix and forcing flags too, reopening the
+  // unscanned-float hole and skipping the normalisation that prevents the
+  // mixed-domain wrong answer.
+  if (conditions.length > 0) {
+    try {
+      // Two calls, one copy of the text each. Asking both questions in one
+      // command doubled the caller's own text: the input cap is 8,192 characters
+      // and a long flat expression traps around 10,000, so a 7,528-character
+      // request — comfortably inside the cap — became a ~15,000-character command
+      // and killed the shared worker, where main answers it in 21ms.
+      //
+      // This RAISES the threshold; it does not remove it. The engine also traps on
+      // parse DEPTH, which no character count expresses: a condition nested 600
+      // deep is 2,415 characters and kills the worker in one copy. That is bounded
+      // in validateSystemShape, before either of these calls — saying otherwise
+      // here is what would stop the next reader from noticing.
+      const written = `[${conditions.join(',')}]`;
+      const [asExact, asWritten] = await Promise.all([
+        evaluate(`exact(${written})`),
+        evaluate(written),
+      ]);
+      floatInConditions = flat(asExact) !== flat(asWritten);
+    } catch (failure) {
+      // Same classification as the probe's. An outage that lands here is not the
+      // caller's conditions being at fault, and a recycle caused by somebody
+      // else's request read as a verdict on theirs.
+      return {
+        error:
+          'has initial conditions that could not be examined for decimals, so the ' +
+          `accuracy bound that depends on that could not be applied${engineFailureSuffix(failure)}`,
+      };
+    }
+  }
   return { holdsExact, floatInMatrix, floatInForcing, floatInConditions };
 }
 
@@ -616,7 +642,9 @@ export async function translateOdeSystem(
   const vector = vectorSymbol([variable, ...functions, matrix, constants, ...system.conditions]);
   const domain = await readNumericDomain(matrix, constants, system.conditions, evaluate);
   if ('error' in domain) return domain;
-  const { holdsExact, floatInMatrix, floatInForcing, floatInConditions } = domain;
+  // Only the two the normalisation below reads; the decimal caps take `domain`
+  // whole and unpack it themselves.
+  const { holdsExact, floatInMatrix } = domain;
 
   // Giac mishandles a matrix mixing a float with an exact irrational:
   // `[[0,1],[-1.5,ln(2)]]` came back as an ordinary-looking vector whose
@@ -626,14 +654,6 @@ export async function translateOdeSystem(
   // float matrix splits a repeated root, and an all-rational matrix with a
   // decimal only in its forcing term failed outright where `1/2` for `0.5`
   // solved it.
-  // Wherever the decimal lives, the accuracy cost is the same. Measured worst
-  // relative residual over three points, matrix-float against forcing-float:
-  // degree 8 is 6.9e-12 / 4.4e-11, degree 10 is 1.2e-9 / 1.5e-9, degree 14 is
-  // 2.6e-5 / 5.3e-5 — within a factor of three at every degree, with no plateau
-  // and no cliff. A separate, looser threshold for the forcing term rested on a
-  // measurement that does not reproduce, and it shipped 5.3e-5 with a check mark
-  // while the other channel refused 2.5e-10 as unusable.
-  const holdsFloat = floatInMatrix || floatInForcing;
 
   if (holdsExact && floatInMatrix) {
     try {
@@ -647,12 +667,7 @@ export async function translateOdeSystem(
   const constantEntries = splitTopLevel(stripEnclosingBrackets(constants), ',');
   const homogeneous = constantEntries.every(isPrintedZero);
   if (!homogeneous) {
-    const refusal = await checkForcingTerm(
-      constantEntries,
-      variable,
-      { holdsFloat, floatInConditions },
-      evaluate
-    );
+    const refusal = await checkForcingTerm(constantEntries, variable, domain, evaluate);
     if (refusal) return refusal;
   }
   // Cosmetic, and only for the Command line the caller sees: Giac answers

@@ -33,22 +33,30 @@ describe('the shape half evaluates nothing', () => {
     expect(code).not.toMatch(/giacEngine|GiacEngineLike|\.evaluate\(/);
   });
 
-  // The split invalidated five comments at once, every one of them a distance or
-  // proximity claim that was literally true while this was a single 1210-line
-  // file: "only happens to sit nearby", "139 lines ahead of the conditions scan",
-  // "300 lines downstream", "the checking above". A comment that locates something
-  // by counting lines cannot survive the file being split, so neither half may do
-  // it — name the module instead.
-  it.each([
-    ['src/server/tools/ode-system-shape.ts'],
-    ['src/server/tools/ode-system.ts'],
-  ])('locates nothing in %s by distance', (path) => {
-    const comments = readFileSync(path, 'utf8')
-      .split('\n')
-      .filter((l) => l.trimStart().startsWith('//') || l.trimStart().startsWith('*'))
-      .join('\n');
-    expect(comments).not.toMatch(/\d+\s+lines\b/);
-    expect(comments).not.toMatch(/\blines (?:ahead|downstream|away|below|above)\b/);
-    expect(comments).not.toMatch(/\bsits? nearby\b/);
-  });
+  // The split invalidated all five comments in the original file that located
+  // something by distance, each true while it was one 1210-line file: "only
+  // happens to sit nearby", "139 lines ahead of the conditions scan", "300 lines
+  // downstream", "a second refusal eleven lines away", "the checking above". The
+  // extractions that followed then added two more of the same kind in new
+  // docblocks — "a long way from", "far from ... further still from" — which is
+  // why the last two rows exist: the first three assertions caught none of them.
+  //
+  // Every string quoted above is covered by an assertion below; if a phrasing is
+  // named here it must fail, or this comment is doing what it was written to stop.
+  it.each([['src/server/tools/ode-system-shape.ts'], ['src/server/tools/ode-system.ts']])(
+    'locates nothing in %s by distance',
+    (path) => {
+      const comments = readFileSync(path, 'utf8')
+        .split('\n')
+        .filter((l) => l.trimStart().startsWith('//') || l.trimStart().startsWith('*'))
+        .join('\n');
+      expect(comments).not.toMatch(/\d+\s+lines\b/);
+      expect(comments).not.toMatch(/\b(?:\w+ )?lines (?:ahead|downstream|away|below|above)\b/);
+      expect(comments).not.toMatch(/\bsits? nearby\b/);
+      expect(comments).not.toMatch(
+        /\bthe (?:checking|check|scan|rule|code|block) (?:above|below)\b/
+      );
+      expect(comments).not.toMatch(/\b(?:far|a long way|further still)\s+from\b/);
+    }
+  );
 });

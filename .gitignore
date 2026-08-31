@@ -157,3 +157,7 @@ docs/business/
 # SonarQube — local-only analysis config and scanner state
 sonar-project.properties
 .scannerwork/
+
+# Scratch A/B harnesses written into the repo root by review subagents.
+# Seven of these were swept into a commit by `git add -A`.
+.rp-*.mjs
