@@ -25,9 +25,11 @@ export async function quickCalcHandler(args: Record<string, unknown>) {
     if (numericResult !== null) {
       const exact = await tryExactResult(rawExpr, numericResult);
       if (exact) {
+        // With `precision` every rendered decimal is the worker's formatting —
+        // the same rule as to_decimal, so the two tools cannot disagree.
         return formatToolResponse({
           result: exact.exact,
-          decimal: String(numericResult),
+          decimal: opts.precision !== undefined ? result.formatted : String(numericResult),
           latex: exact.latex,
         });
       }
@@ -37,7 +39,7 @@ export async function quickCalcHandler(args: Record<string, unknown>) {
     // worker rather than from `typeof result.result === 'number'`, which is false
     // for every container — `[1, 1/0]` and `1/0 m` carried no caveat at all.
     return formatToolResponse({
-      result: String(result.result),
+      result: opts.precision !== undefined ? result.formatted : String(result.result),
       latex: result.latex,
       ...(result.nonFinite ? { notes: [NON_FINITE_NOTE] } : {}),
     });

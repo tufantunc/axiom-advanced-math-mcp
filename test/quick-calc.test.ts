@@ -370,3 +370,42 @@ describe('degree expressions', () => {
     expect(exact?.exact).toBe('√3/2');
   });
 });
+
+// quick_calc must render `precision` exactly like to_decimal: the worker's
+// verbatim formatting, not a Number() round-trip of it.
+describe('quick_calc renders precision like to_decimal', () => {
+  beforeAll(async () => {
+    await giacEngine.initialize();
+  }, 60000);
+
+  function text(r: { content: { text: string }[] }): string {
+    return r.content.map((c) => c.text).join('\n');
+  }
+
+  it('the exact-form Decimal line honours precision', async () => {
+    const r = await quickCalcHandler({ expression: '2/3', precision: 3 });
+    expect(r.isError).toBe(false);
+    const out = text(r);
+    expect(out).toContain('Result: 2/3');
+    expect(out).toMatch(/^Decimal: 0\.667$/m);
+    expect(out).not.toContain('0.6666666666666666');
+  });
+
+  it('an exponent rendering survives on the Decimal line', async () => {
+    // Pre-change this fixture rendered Decimal: 0.000001234 — the Number()
+    // round-trip collapse the parity fix removes. mathjs formats 1.234e-6
+    // at precision 3 as "1.23e-6".
+    const r = await quickCalcHandler({ expression: '0.000001234', precision: 3 });
+    expect(r.isError).toBe(false);
+    const out = text(r);
+    expect(out).toMatch(/^Decimal: 1\.23e-6$/m);
+    expect(out).not.toContain('Decimal: 0.000001234');
+  });
+
+  it('truncates a repeating sum and keeps the full double without precision', async () => {
+    const withP = await quickCalcHandler({ expression: '0.1+0.2', precision: 5 });
+    expect(text(withP)).toMatch(/^Decimal: 0\.3$/m);
+    const without = await quickCalcHandler({ expression: '0.1+0.2' });
+    expect(text(without)).toMatch(/^Decimal: 0\.30000000000000004$/m);
+  });
+});
