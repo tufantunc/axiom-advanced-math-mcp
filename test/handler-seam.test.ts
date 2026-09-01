@@ -289,6 +289,77 @@ describe('spellings the router has to tell apart', () => {
     expect(text(r)).toMatch(/^Result: c_0\*exp\(x\)$/m);
   });
 
+  it('folds conditions into a bracketed system instead of appending after it', async () => {
+    // calculus.ts decides "is this a system" by handing `equation` to
+    // parseOdeSystem, and `[y'=z, z'=-y] and y(0)=1` does not parse as one. The
+    // first version of the fold appended, which pushed the request off the
+    // Y' = A*Y + b path entirely — no matrix rewrite, no components note, and no
+    // `[]` guard, because that guard runs only when `functions` came back. It
+    // answered `[]` with isError:false, which is worse than the bug being fixed.
+    const r = await computeHandler({ problem: "desolve([y'=z, z'=-y], y(0)=1, z(0)=0, x)" });
+    expect(r.isError, text(r)).toBe(false);
+    expect(text(r)).toMatch(/^Result: \[\[cos\(x\),-sin\(x\)\]\]$/m);
+    // Same answer as writing the conditions inside the brackets, which is the
+    // spelling this now builds.
+    const bracketed = await computeHandler({
+      problem: "desolve([y'=z, z'=-y, y(0)=1, z(0)=0], x)",
+    });
+    expect(text(bracketed)).toMatch(/^Result: \[\[cos\(x\),-sin\(x\)\]\]$/m);
+    // The system path really was taken: this note only exists on it.
+    expect(text(r)).toMatch(/Components are in the order: y, z/);
+  });
+
+  it.each([
+    ["desolve(y'=y, y(x))", /^Result: c_0\*exp\(x\)$/m],
+    ["desolve(y'=y, x, y(x))", /^Result: c_0\*exp\(x\)$/m],
+    ["desolve(y'=y, y(0)=1, x, y(x))", /^Result: exp\(x\)$/m],
+  ])('accepts the applied-function spelling %s', async (problem, expected) => {
+    // `y(x)` is the canonical unknown-function spelling in the dialects whose
+    // verbs this router advertises, and it worked on main by accident: the old
+    // filter dropped it and inference recovered the same name from the equation.
+    // Classifying it as unrecognised turned a correct answer into a refusal.
+    //
+    // These rows pin that refusal, not the classification: recognising `y(x)` and
+    // silently dropping it both produce this same answer, because inference
+    // reaches the same function name either way. No input separates them that is
+    // worth a row, so the distinction is recorded here instead of asserted.
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(false);
+    expect(text(r)).toMatch(expected);
+  });
+
+  it('refuses a third identifier rather than discarding it', async () => {
+    // Only the first two identifiers are read. `zzz` was classified and then
+    // dropped — the same silent drop this change exists to remove, one bucket
+    // over, while a comment claimed every argument was accounted for.
+    const r = await computeHandler({ problem: "desolve(y'=y, y(0)=1, x, y, zzz)" });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/does not understand the argument "zzz"/);
+  });
+
+  it.each([
+    ["desolve(y'=y, y(0)=1, y(1)=2, x, y)"],
+    ["desolve(y'=y, y(0)=1, y(0)=2, x, y)"],
+    ["desolve(y'=y, z(0)=1, x, y)"],
+  ])('refuses %s rather than answering []', async (problem) => {
+    // Newly reachable: while conditions were being dropped, Giac was never asked
+    // an unsatisfiable question. The single-equation path had no guard at all —
+    // the `[]`/`undef` one runs only for a rewritten system — so `Result: []`
+    // went out with isError:false.
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).not.toMatch(/^Result: \[\]$/m);
+  });
+
+  it('refuses a two-argument point instead of folding it', async () => {
+    // The condition's point group was `\([^)]*\)`, which accepted `y(0,1)=1`;
+    // Giac then answered as though the caller had written `y(0)=1` — a confident
+    // answer to a different problem.
+    const r = await computeHandler({ problem: "desolve(y'=y, y(0,1)=1, x, y)" });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/does not understand the argument/);
+  });
+
   it.each([['ifactor(2^257-1)'], ['42']])(
     'refuses the unrecognised argument %s instead of discarding it',
     async (extra) => {

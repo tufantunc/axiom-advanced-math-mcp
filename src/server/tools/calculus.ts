@@ -266,6 +266,33 @@ export async function calculusHandler(args: Record<string, unknown>) {
         );
       }
     }
+    // The single-equation path has no solution VECTOR to check, but it can still
+    // be handed something that is visibly not an answer, and it had no guard at
+    // all: `desolve(y'=y, y(0)=1, y(1)=2, x, y)` — over-determined — shipped
+    // `Result: []` as the answer with isError:false, and so did a condition on a
+    // function the equation never mentions.
+    //
+    // Only reachable since conditions written as separate arguments stopped being
+    // dropped. Dropping them meant Giac was never asked an unsatisfiable
+    // question, so fixing that drop is what made this path able to produce `[]`.
+    //
+    // Same delegation as the solution-vector guard, and the same synthesized
+    // `Result:` line
+    // for the same reason: the `Command:` line echoes the caller's own text, so
+    // scanning the whole response would refuse an equation for a coefficient's
+    // name.
+    if (!functions && operation === 'solve_ode') {
+      const line = /^Result:\s*(.*)$/m.exec(response.content.map((c) => c.text).join('\n'));
+      const failure = detectFailure(`Result: ${line?.[1]?.trim() ?? ''}`);
+      if (failure !== null) {
+        const why =
+          failure === 'empty result'
+            ? 'the CAS returned no solution, which for an initial-value problem ' +
+              'usually means the conditions cannot all be satisfied'
+            : `the CAS returned ${failure}`;
+        return formatErrorResponse(`solve_ode cannot solve this equation — ${why}`);
+      }
+    }
     return response;
   } catch (error) {
     return formatErrorResponse(error instanceof Error ? error.message : String(error));

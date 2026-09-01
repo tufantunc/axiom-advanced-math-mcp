@@ -262,10 +262,27 @@ export function extractTaylor(problem: string): RouteResult {
  *
  * Requiring the `=` is what keeps a bare call — `ifactor(2^257-1)` — from being
  * read as a condition and folded into the command.
+ *
+ * The point is a single argument: `\(\s*[^),]*\s*\)`, not `\([^)]*\)`. The looser
+ * group accepted `y(0,1)=1`, folded it, and Giac answered as though the caller
+ * had written `y(0)=1` — a confident answer to a different problem.
  */
-const SINGLE_ODE_CONDITION = /^[A-Za-z_]\w*'*\s*\([^)]*\)\s*=\s*.+$/;
+const SINGLE_ODE_CONDITION = /^[A-Za-z_]\w*'*\s*\(\s*[^),]*\s*\)\s*=\s*.+$/;
 
 const BARE_IDENTIFIER = /^[A-Za-z]\w*$/;
+
+/**
+ * The unknown function written applied: `y(x)`.
+ *
+ * The canonical spelling in the dialects whose verbs this router advertises —
+ * `dsolve` is Maple's and SymPy's — and already caller idiom in this repo, whose
+ * own fixtures use `diff(y(x),x)`. Dropping it used to work by accident:
+ * inference recovered the same function name from the equation. Classifying it
+ * as unsupported turned `desolve(y'=y, y(x))`, correct on main, into a refusal.
+ *
+ * Both identifiers are bare, so `ifactor(2^257-1)` stays out.
+ */
+const APPLIED_FUNCTION = /^([A-Za-z]\w*)\s*\(\s*[A-Za-z]\w*\s*\)$/;
 
 export function extractOde(problem: string): RouteResult {
   if (/^(desolve|dsolve|odesolve|solve_ode)\s*\(/i.test(problem.trim())) {
@@ -285,8 +302,8 @@ export function extractOde(problem: string): RouteResult {
     // as the function broke the other spelling just as quietly: `desolve(y'=2*x,
     // x)` became `[1/2]`. The equation settles it — the unknown function is the
     // one that appears differentiated.
-    // Every trailing argument is accounted for. They used to be filtered down to
-    // the bare identifiers and the rest discarded, so `desolve(y'=y, y(0)=1)`
+    // Every trailing argument is used or refused. They used to be filtered down
+    // to the bare identifiers and the rest discarded, so `desolve(y'=y, y(0)=1)`
     // emitted `desolve(y'=y,x,y)` and answered `c_0*exp(x)` — the general
     // solution — with isError:false. The correct answer is exp(x). The condition
     // the caller wrote never reached the engine, and nothing said so.
@@ -294,14 +311,29 @@ export function extractOde(problem: string): RouteResult {
       .slice(1)
       .map((part) => part.trim())
       .filter((part) => part.length > 0);
-    const named = rest.filter((part) => BARE_IDENTIFIER.test(part));
+    // `y(x)` names the function by its identifier, so it joins the identifiers
+    // rather than forming a fourth category.
+    const named = rest
+      .filter((part) => BARE_IDENTIFIER.test(part) || APPLIED_FUNCTION.test(part))
+      .map((part) => APPLIED_FUNCTION.exec(part)?.[1] ?? part);
     const conditions = rest.filter((part) => SINGLE_ODE_CONDITION.test(part));
-    // Disjoint by construction: a bare identifier has no parentheses and no `=`,
-    // so the two tests cannot both pass. Whatever matches neither is neither
-    // folded nor dropped — see unsupported below.
-    const unsupported = rest.filter(
-      (part) => !BARE_IDENTIFIER.test(part) && !SINGLE_ODE_CONDITION.test(part)
-    );
+    // The three tests are mutually exclusive: a bare identifier has neither `(`
+    // nor `=`, a condition has both, and an applied function has `(` without `=`.
+    // So this is their exact complement.
+    //
+    // `named.slice(2)` is in here because only the first two are ever read. An
+    // earlier version of this comment claimed every argument was accounted for
+    // while `desolve(y'=y, y(0)=1, x, y, zzz)` still discarded `zzz` — the same
+    // silent drop this change exists to remove, one bucket over.
+    const unsupported = [
+      ...rest.filter(
+        (part) =>
+          !BARE_IDENTIFIER.test(part) &&
+          !APPLIED_FUNCTION.test(part) &&
+          !SINGLE_ODE_CONDITION.test(part)
+      ),
+      ...named.slice(2),
+    ];
     const differentiated = differentiatedName(equation);
     let variable: string;
     let function_name: string;
@@ -317,17 +349,45 @@ export function extractOde(problem: string): RouteResult {
         : (only ?? independentVariable(equation, function_name));
     }
 
-    // Joined with `and`, which is Giac's own spelling for an IVP and already the
-    // path `desolve(y'=y and y(0)=1, x, y)` took successfully — so this reuses a
-    // working route rather than adding one. Inference above reads the ORIGINAL
-    // equation, not this, so a condition's text cannot be mistaken for the
-    // unknown function or the independent variable.
+    // Two shapes, because the equation has two and only one of them survives an
+    // ` and ` suffix.
     //
-    // No new length bound: every part here is a substring of `problem`, which
-    // schema.ts caps at MAX_EXPRESSION_LENGTH, and the joined result is that
-    // same text plus ` and ` separators.
+    // A bracketed list is a SYSTEM, and calculus.ts decides that by handing
+    // `equation` to parseOdeSystem. `[y'=z, z'=-y] and y(0)=1` does not parse as
+    // one, so appending pushed the whole request off the Y' = A*Y + b path: no
+    // matrix rewrite, no components note, no verifyOdeSystem — and because
+    // `functions` came back undefined it also skipped the guard that refuses
+    // `[]`. `desolve([y'=z, z'=-y], y(0)=1, z(0)=0, x)` answered `[]` with
+    // isError:false, where main at least returned a verified solution family.
+    // Folding into the list is the shape parseOdeSystem already reads, and it
+    // answers [[cos(x),-sin(x)]] verified.
+    //
+    // A single equation joins with `and`, Giac's own IVP spelling and already a
+    // working route — `desolve(y'=y and y(0)=1, x, y)` answered exp(x) before
+    // this change. Each side is parenthesised because this code, not the caller,
+    // is building a boolean expression: `and` and `or` are the same precedence
+    // and left-associative in Giac, so an unparenthesised splice lets a
+    // condition's own boolean escape its side of the join.
+    //
+    // Inference above reads the ORIGINAL equation, not either of these, so a
+    // condition's text cannot be mistaken for the unknown function or the
+    // independent variable.
+    //
+    // No new length bound, and not because MAX_EXPRESSION_LENGTH is adequate —
+    // it is 8192 and ode-system-shape.ts records conditions trapping the engine
+    // at 1,415 characters, which is why that channel bounds itself at 280. The
+    // reason is parity: this exact text already reaches this exact `desolve`
+    // through the equation argument, which no bound measures on main either.
+    // Bounded, not closed, same as the note at ode-system-shape.ts on the
+    // conditions channel.
+    const trimmedEquation = equation.trim();
+    const isSystemList = trimmedEquation.startsWith('[') && trimmedEquation.endsWith(']');
     const withConditions =
-      conditions.length > 0 ? `${equation} and ${conditions.join(' and ')}` : equation;
+      conditions.length === 0
+        ? equation
+        : isSystemList
+          ? `${trimmedEquation.slice(0, -1)}, ${conditions.join(', ')}]`
+          : `(${equation}) and (${conditions.join(') and (')})`;
 
     return {
       handler: 'calculus',
