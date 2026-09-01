@@ -48,10 +48,22 @@ export async function tryExactResult(
         giacExpr = giacExpr.replaceAll(/(\d+(?:\.\d*)?)\s*°/g, '($1*pi/180)');
       }
       const giacResult = await giacEngine.evaluate(giacExpr);
+      // An exact form is symbolic or an integer — a float is not exact. A bare
+      // non-integer float from Giac is either the same value re-rendered
+      // ('2e-9' -> '2e-09') or a ~12-digit computation passing itself off as
+      // exact while the true double waits on the decimal line; a symbolic form
+      // carrying a float literal is an echo of an input Giac declined to
+      // evaluate ('nthRoot(1.2345678e-05,3)').
+      const trimmed = giacResult.trim();
+      const bareNumber = /^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/.test(trimmed);
+      const bareInteger = /^[+-]?\d+$/.test(trimmed);
+      const carriesFloat = /\d\.\d|\d[eE][+-]?\d/.test(trimmed);
+      const isExactForm = bareNumber ? bareInteger : !carriesFloat;
       if (
         giacResult &&
         giacResult !== 'undef' &&
         !giacResult.startsWith('Error') &&
+        isExactForm &&
         giacResult !== String(numericResult) &&
         giacResult !== numericResult.toFixed(15)
       ) {

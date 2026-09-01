@@ -29,6 +29,17 @@ describe('exactValueHandler — to_exact', () => {
     expect(allText(r)).toContain('"abc" is not a valid number');
   });
 
+  it('does not accept a reformatted float echo as an exact form', async () => {
+    // Giac answers '2e-09' for '2e-9' — the same value, re-exponented. That
+    // is not an improvement, so the honest answer is the no-simpler-form note.
+    const r = await exactValueHandler({ operation: 'to_exact', value: '2e-9' });
+    expect(r.isError).toBe(false);
+    const text = allText(r);
+    expect(text).toContain('No simpler exact form found');
+    expect(text).toContain('Result: 2e-9');
+    expect(text).not.toContain('2e-09');
+  });
+
   it('does not report a tiny non-zero value as exactly 0', async () => {
     // The integer snap used to answer "Result: 0, Decimal: 4e-10"; with the
     // snap refused, no bounded fraction or Giac form improves the literal,
