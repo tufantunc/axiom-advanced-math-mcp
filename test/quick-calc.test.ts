@@ -488,9 +488,10 @@ describe('the Giac exact form must be symbolic or integral', () => {
 
   it('accepts a bare integer Giac result', async () => {
     expect((await tryExactResult('sin(pi)', Math.sin(Math.PI)))?.exact).toBe('0');
-    expect((await tryExactResult('20!', 2.43290200817664e18))?.exact).toBe(
-      '2432902008176640000'
-    );
+    // cos(3*pi/2) is snap-refused noise (-1.8e-16) that Giac resolves to the
+    // integer 0 — unlike 20!, which the integer snap answers before the Giac
+    // branch ever runs, making its pin a wrong-reason pass for this policy.
+    expect((await tryExactResult('cos(3*pi/2)', Math.cos((3 * Math.PI) / 2)))?.exact).toBe('0');
   });
 
   it('accepts float-free symbolic forms', async () => {
