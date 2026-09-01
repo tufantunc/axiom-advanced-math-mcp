@@ -141,34 +141,58 @@ export function createJsComputeHost(opts: JsComputeHostOptions = {}) {
         //     admission timer fired anyway — so `2+2`, alone on an idle worker,
         //     was refused with "busy with other computations". There were none.
         //
-        // `runningEntry() === undefined` is what makes the refusal below true by
-        // construction: the host sends every task to the child immediately, so a
-        // call is behind somebody else exactly when another entry is `running`.
+        // `runningEntry() === undefined` is a sufficient test for "nobody else
+        // holds the worker", not an exact one: a peer that already has the
+        // message in the child but has not acked yet is still `queued` in the
+        // host's view. That case is the one this exemption exists for, so the
+        // looseness runs in the safe direction — it extends where it might have
+        // blamed, never the reverse.
         //
-        // Unbounded, like the cold-start extension it joins: the ceiling on both
-        // is the child's own liveness, and a child that dies is caught by the
-        // exit handler, which fails everything pending. A child that stays alive
-        // and never acks would wait forever — true before this change too, for
-        // one that never reports ready.
+        // Unbounded, like the cold-start extension it joins. The ceiling is
+        // MAX_REDISPATCHES, not the exit handler: a child that dies re-queues
+        // this call (recycleAndRedispatch fails only the RUNNING entry, and
+        // there is none here), and the third death fails it with
+        // `worker_failed`. Only dispose() fails everything pending. A child that
+        // stays alive past `ready` and never acks is the one case with no
+        // ceiling — it now waits forever and holds the event loop open with it,
+        // where before it was refused as busy. No caller input reaches that
+        // state: an unknown task returns a result error, a throwing resolveTask
+        // is caught in worker.ts and returned as a result, and a child blocked
+        // in a synchronous task has an entry in `running` so this exemption does
+        // not apply. It takes a replaced worker binary to produce.
         cur.timer = null;
         armAdmission(id);
         return;
       }
-      // Reachability, stated because it is not obvious and was not checked
-      // before: this needs another call to hold the worker for longer than THIS
-      // call's admission budget, and both budgets are the same timeoutMs. The
-      // running call's execution timer is armed at its `start`, never later than
-      // this call was enqueued, so it fires first and recycleAndRedispatch
-      // re-sends this one instead. I could not construct an input that reaches
-      // this settle, and a probe that queues a call behind a genuine hog gets
-      // redispatched, not refused. Left in place rather than deleted: it is the
-      // honest response if the two budgets are ever separated, and the timer
-      // itself is load-bearing regardless — it is the event-loop ref that keeps
-      // the process alive while a call is outstanding.
+      // Reachable, and it refuses the wrong caller. An earlier version of this
+      // comment argued the opposite; the ordering is the reverse of what it
+      // claimed. A running call's execution timer is armed at its `start` ACK,
+      // which is LATER than the enqueue of anything issued in the same tick, so
+      // the queued call's admission fires FIRST — not second:
       //
-      // Overload shedding does NOT depend on this: that is maxQueueDepth in
-      // run(), which rejects synchronously and says "is busy", and a call caught
-      // behind repeated faults is failed by MAX_REDISPATCHES.
+      //   warm, then in one tick, timeoutMs 400:
+      //     A = run('stirling_first', { n: 20000, k: 48 })   // ~2.9s
+      //     B = run('mathjs_evaluate', { expression: '2+2' })
+      //   B @609ms busy: the compute worker was busy with other computations
+      //   A @610ms timeout: the computation exceeded its time budget
+      //
+      // So a trivial call is blamed and told to retry one millisecond before the
+      // actual offender is killed, and because B is settled here its entry is
+      // gone by the time recycleAndRedispatch runs — which is exactly the
+      // collateral that function's own docblock says the design prevents. Any
+      // two calls issued within one ack latency of each other hit it.
+      //
+      // NOT introduced by the extension above: this reproduces identically on
+      // main, verified. Left as-is because fixing it is a behaviour change
+      // beyond the refusal-message defect this commit exists to fix. The fix
+      // would be to start a queued call's admission clock no earlier than the
+      // peer's execution clock, by re-arming queued timers when a peer
+      // transitions to `running`.
+      //
+      // Overload shedding does NOT depend on this branch: that is maxQueueDepth
+      // in run(), which rejects synchronously and says "is busy". The timer is
+      // load-bearing regardless — it is the event-loop ref that keeps the
+      // process alive while a call is outstanding.
       settle(
         id,
         cur,
