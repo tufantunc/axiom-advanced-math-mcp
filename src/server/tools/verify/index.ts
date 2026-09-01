@@ -288,8 +288,7 @@ function parseVariableList(giacOutput: string): string[] {
     return [];
   }
   // Parse [x, y, z] or list(x, y, z)
-  const inner =
-    /^\[(.+)\]$/.exec(giacOutput)?.[1] || /^list\((.+)\)$/.exec(giacOutput)?.[1] || '';
+  const inner = /^\[(.+)\]$/.exec(giacOutput)?.[1] || /^list\((.+)\)$/.exec(giacOutput)?.[1] || '';
   return (
     inner
       .split(',')
@@ -385,7 +384,9 @@ function findMainEquals(expr: string): number {
 export async function verifyHandler(
   args: Record<string, unknown>
 ): Promise<{ content: { type: 'text'; text: string }[]; isError: boolean }> {
-  const claim = rewriteCombinatorics(unicodeToAscii(typeof args.claim === 'string' ? args.claim : ''));
+  const claim = rewriteCombinatorics(
+    unicodeToAscii(typeof args.claim === 'string' ? args.claim : '')
+  );
   const method = (args.method as string) || 'both';
   const format = args.format === 'json' ? 'json' : 'text';
 
