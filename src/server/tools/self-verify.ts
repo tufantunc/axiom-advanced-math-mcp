@@ -273,9 +273,22 @@ export async function verifyOdeSystem(
  * before the token, so `y'=y and(y(0)=1)` — Giac's own syntax, which it answers
  * correctly — was accused the same way.
  */
-const BOOLEAN_JOIN = /^(?:and|or)(?![A-Za-z0-9_])/;
+/**
+ * A conjunction, which is Giac's IVP spelling: the first term is the equation.
+ *
+ * `&&` is Giac's too, and case does not matter to it — `desolve(y'=y && y(0)=1,x,y)`
+ * and the `AND` spelling both answer exp(x). Knowing only `and` was the second
+ * version of this bug: the join stayed in the equation, so a correct answer was
+ * refused AND a non-solution was certified, depending on whether the leftover
+ * boolean survived normalisation or collapsed to a truth value.
+ *
+ * `or` is deliberately NOT here. It is a disjunction, so the first term is not
+ * "the equation" — refuting an answer to the second branch would be wrong — and
+ * Giac refuses `or` inside desolve anyway. It is declined below instead of cut.
+ */
+const CONJUNCTION = /^(?:and(?![A-Za-z0-9_])|&&)/i;
 
-function beforeTopLevelJoin(text: string): string {
+function beforeTopLevelConjunction(text: string): string {
   let depth = 0;
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
@@ -284,7 +297,7 @@ function beforeTopLevelJoin(text: string): string {
     else if (
       depth === 0 &&
       !/[A-Za-z0-9_]/.test(text[i - 1] ?? ' ') &&
-      BOOLEAN_JOIN.test(text.slice(i))
+      CONJUNCTION.test(text.slice(i))
     ) {
       return text.slice(0, i);
     }
@@ -292,9 +305,43 @@ function beforeTopLevelJoin(text: string): string {
   return text;
 }
 
-/** Whether a boolean join survives at depth 0 — the cut above did not reach it. */
-function hasTopLevelJoin(text: string): boolean {
-  return beforeTopLevelJoin(text) !== text;
+/**
+ * Whether the text is one bare equation, and therefore safe to substitute into.
+ *
+ * INDEPENDENT of the cut above, deliberately. The previous version of this check
+ * was `beforeTopLevelJoin(text) !== text` — the cut's own predicate with a `!==`
+ * — so it recognised exactly the spellings the cut already recognised and was
+ * inert against the failure its comment claimed to cover. `&&` and `AND` walked
+ * straight through both.
+ *
+ * Exactly one top-level `=` is the invariant that does not depend on knowing any
+ * join spelling: toZeroForm splits at the first `=`, so a second one means the
+ * rest is not part of the equation and whatever is left of it lands in the
+ * right-hand side. That alone refuses `y'=y && y(0)=1` without knowing what `&&`
+ * is. The keyword scan is kept as well, for a join that carries no second `=`.
+ *
+ * Measured: the `=` count is redundant against every spelling currently known —
+ * remove it and no test fails, because the later guards decline those inputs for
+ * other reasons. It is kept because it is the only part of this that a new join
+ * spelling cannot walk past, which is exactly the failure that has now happened
+ * twice. That is a deliberate choice and not a claim of coverage.
+ */
+function isOneBareEquation(text: string): boolean {
+  if (splitTopLevel(text, '=').length !== 2) return false;
+  let depth = 0;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '(' || ch === '[' || ch === '{') depth++;
+    else if (ch === ')' || ch === ']' || ch === '}') depth--;
+    else if (
+      depth === 0 &&
+      !/[A-Za-z0-9_]/.test(text[i - 1] ?? ' ') &&
+      /^(?:and(?![A-Za-z0-9_])|or(?![A-Za-z0-9_])|&&|\|\|)/i.test(text.slice(i))
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /**
@@ -354,12 +401,14 @@ export async function verifyOdeSolution(
   // can satisfy the ODE and miss the condition — and it is the system path's
   // verifyOdeSystem that covers that for its own shape.
   const firstMember = splitTopLevel(stripEnclosingBrackets(equation.trim()), ',')[0] ?? '';
-  const equationOnly = stripEnclosingBrackets(beforeTopLevelJoin(firstMember).trim()).trim();
-  // Belt and braces, because the cut above is itself a spelling prediction and has
-  // been wrong twice. If a join survives it, this is not a bare equation and
-  // nothing substituted into it can be trusted — decline rather than risk a third
-  // manufactured disproof.
-  if (equationOnly.length === 0 || hasTopLevelJoin(equationOnly)) return undefined;
+  const equationOnly = stripEnclosingBrackets(beforeTopLevelConjunction(firstMember).trim()).trim();
+  // The cut is a spelling prediction and has now been wrong twice, so what follows
+  // it does not ask whether the cut worked — it asks whether the result is one bare
+  // equation, which is checkable without knowing any join spelling. Anything else
+  // is declined rather than risked: substituting into a leftover boolean refused
+  // correct answers AND certified a non-solution, depending on whether the boolean
+  // survived normalisation or collapsed to a truth value.
+  if (equationOnly.length === 0 || !isOneBareEquation(equationOnly)) return undefined;
 
   const fn = functionName.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
   const v = variable.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
@@ -370,8 +419,14 @@ export async function verifyOdeSolution(
   // the three. Unanchored it ate the prime and left `(x)` applied to the substituted
   // expression, which Giac reads as multiplication — a residual mentioning no `y`, so
   // the guard below could not catch it, and a correct `c_0*exp(x)` was refuted for
-  // `y'(x)=y(x)`. Anything outside the three is now left intact BY CONSTRUCTION, so
-  // the residual still names the function and the guard declines.
+  // `y'(x)=y(x)`.
+  //
+  // Two lookaheads, because one was not enough: `('+)` backtracks, so a single
+  // `(?!\s*\()` let `y''(x)` give up a prime and match anyway, and the bare-`y`
+  // fallback then substituted the `y` of `y'(x)` because `'` is not `(`. With both,
+  // anything outside the three spellings is left intact and the residual still names
+  // the function, which is what makes the decline below sound rather than lucky —
+  // before this it was the numeric stage returning NaN that happened to save it.
   const substituted = equationOnly
     .replaceAll(
       new RegExp(
@@ -389,22 +444,29 @@ export async function verifyOdeSolution(
     )
     .replaceAll(new RegExp(`\\bd${fn}\\s*/\\s*d${v}\\b`, 'g'), `diff(${sub},${variable})`)
     .replaceAll(
-      new RegExp(`\\b${fn}('+)(?!\\s*\\()`, 'g'),
+      new RegExp(`\\b${fn}('+)(?!['\\s]*\\()`, 'g'),
       (_m, primes: string) => `diff(${sub},${variable},${primes.length})`
     )
     .replaceAll(new RegExp(`\\b${fn}\\s*\\(\\s*${v}\\s*\\)`, 'g'), sub)
-    .replaceAll(new RegExp(`\\b${fn}\\b(?!\\s*\\()`, 'g'), sub);
+    .replaceAll(new RegExp(`\\b${fn}\\b(?!\\s*\\()(?!')`, 'g'), sub);
   // Nothing was substituted, so there is nothing to check — an equation this does
   // not understand must not become an accusation.
   if (substituted === equationOnly) return undefined;
+  // ALL of it, or none. A surviving mention of the function means a spelling was
+  // not substituted, and what Giac then does with it is not predictable: it drops
+  // `y''(x)` silently, so the residual for `y''(x)=-y(x)` came back as the whole
+  // answer and a correct `cos(x)` was refuted. Checking the substituted TEXT rather
+  // than the residual is what makes this independent of the engine — a leftover the
+  // engine erases cannot be seen downstream, only here.
+  if (new RegExp(`\\b${fn}\\b`).test(substituted)) return undefined;
 
   try {
     const residual = (await evaluate(`normal(${toZeroForm(substituted)})`)).trim();
     if (isPrintedZero(residual) || allZero(residual)) {
       return { verified: true, method, detail: `substitutes back into ${equationOnly} exactly` };
     }
-    // A residual still naming the function means a spelling went unsubstituted,
-    // which is this function's gap and not the answer's fault.
+    // Kept as a second net: the engine can introduce the name itself, e.g. as
+    // `(function_diff(y))(x)`, where nothing was left unsubstituted going in.
     if (new RegExp(`\\b${fn}\\b`).test(residual)) return undefined;
     // The free constants have to go too, or nothing with a `c_0` in it can ever be
     // disproved. `desolve(y''=-y, y'(x)=0)` answers a disguised `c_1/sin(x)`,

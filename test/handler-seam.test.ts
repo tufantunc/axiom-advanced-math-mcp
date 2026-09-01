@@ -539,6 +539,9 @@ describe('spellings the router has to tell apart', () => {
     ["desolve(y'=y and(y(0)=1), x, y)", /^Result: exp\(x\)$/m],
     ["desolve((y'=y)and(y(0)=1), x, y)", /^Result: exp\(x\)$/m],
     ["desolve(y''=-y and(y(0)=1) and (y'(0)=0), x, y)", /^Result: cos\(x\)$/m],
+    // `&&` and `AND` are Giac's too, and it answers all three identically.
+    ["desolve(y'=y && y(0)=1, x, y)", /^Result: exp\(x\)$/m],
+    ["desolve(y'=y AND y(0)=1, x, y)", /^Result: exp\(x\)$/m],
   ])('%s is answered, not accused by the residual check', async (problem, expected) => {
     // Giac's own IVP syntax without a space. The residual check cuts the equation
     // at the first top-level `and` before substituting, and its detector required
@@ -561,6 +564,10 @@ describe('spellings the router has to tell apart', () => {
     // same non-solutions shipped that `desolve(...)` refused.
     ["y'=y and y(x)=5"],
     ["y'=y and y(0)=x^2"],
+    // Certified as correct before the join spellings were widened — the check
+    // affirming the family it exists to refuse.
+    ["desolve(y'=y && y(x)=5, x, y)"],
+    ["desolve(y'=y AND y(x)=5, x, y)"],
   ])('%s is refused by the residual check', async (problem) => {
     // A condition written INSIDE the equation walks past the argument guard, which
     // only scans the trailing arguments. These are the families the residual check

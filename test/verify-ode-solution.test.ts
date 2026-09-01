@@ -36,11 +36,13 @@ describe('verifyOdeSolution', () => {
     // and it evaluates to -7.1e-15.
     ["y'=y", 'sqrt(2)*exp(x)'],
     ["y'=y", '2^(1/3)*exp(x)'],
-    // `or` is cut like `and`: the first top-level term is the equation either way,
-    // and exp(x) does satisfy `y'=y`. The cut is what the belt-and-braces check
-    // below relies on — if a join ever survives it, the verifier declines instead
-    // of substituting into a boolean.
-    ["y'=y or y(0)=1", 'exp(x)'],
+    // Every conjunction spelling Giac accepts. Knowing only `and` refused correct
+    // answers on `&&`/`AND` and — worse — CERTIFIED a non-solution on them, because
+    // the leftover boolean sometimes collapses to a truth value instead of
+    // surviving normalisation.
+    ["y'=y && y(0)=1", 'exp(x)'],
+    ["y'=y AND y(0)=1", 'exp(x)'],
+    ["y'=y and(y(0)=1)", 'exp(x)'],
   ])('verifies %s satisfied by %s', async (equation, answer) => {
     const out = await verifyOdeSolution(equation, 'y', 'x', answer, evaluate);
     expect(out, `${equation} / ${answer}`).toMatchObject({ verified: true });
@@ -52,6 +54,12 @@ describe('verifyOdeSolution', () => {
     // The value family, found one probe into a residual audit after two rounds
     // of widening a syntactic guard on the point.
     ["y'=y", 'x^2*exp(x)'],
+    // The same non-solution under every conjunction spelling. `&&` and `AND` used
+    // to come back verified:true here, which is the worst outcome available: the
+    // check certifying the family it exists to catch.
+    ["y'=y && y(x)=5", '5/exp(x)*exp(x)'],
+    ["y'=y AND y(x)=5", '5/exp(x)*exp(x)'],
+    ["y'=y and y(x)=5", '5/exp(x)*exp(x)'],
     ["y'=2*x", 'x^2+x^2'],
     ["y''=-y", 'x^2*sin(x)'],
     ["y'=y*x", 'x^2*exp(x^2/2)'],
@@ -88,11 +96,30 @@ describe('verifyOdeSolution', () => {
     ['z_1=w_2', 'exp(x)'],
     // A branch set — which branch the caller meant is a different question.
     ["y'=y^2", '[1/(1-x),2/(1-x)]'],
-    // `y'(x)` is not one of the three spellings. Unanchored, the prime rule ate the
-    // prime and left `(x)` applied to the substituted expression, which Giac reads
-    // as multiplication — so the residual mentioned no `y`, the fn-mention guard
-    // could not fire, and a correct answer was refuted.
+    // `y'(x)` is not one of the three spellings, and neither is `y''(x)`. Both were
+    // partially substituted: the prime rule backtracked, the bare-`y` rule mopped up
+    // the rest, and Giac then DROPPED the leftover `y''(x)` silently — so the
+    // residual for `y''(x)=-y(x)` came back as the whole answer and refuted a
+    // correct `cos(x)`. The substituted TEXT is now checked for a surviving mention
+    // before the engine sees it, because a leftover the engine erases cannot be
+    // seen downstream.
     ["y'(x)=y(x)", 'c_0*exp(x)'],
+    ["y' (x)=y(x)", 'c_0*exp(x)'],
+    ["y''(x)=-y(x)", 'cos(x)'],
+    ["y''(x)+y(x)=0", 'cos(x)'],
+    // A disjunction is not cut — the first term is not "the equation", so refuting
+    // an answer to the second branch would be wrong. Giac refuses `or` in desolve
+    // anyway, so this cannot arise from the compute route.
+    ["y'=y or y(0)=1", 'exp(x)'],
+    ["y'=y || y(0)=1", 'exp(x)'],
+    // Two top-level `=` is not one equation. This row pins the OUTCOME, not the
+    // line that produces it: removing the `=` count leaves it green, because the
+    // later guards decline these anyway. The count is the half of the check that
+    // does not depend on knowing a join spelling, so it is redundant against every
+    // spelling currently known and is kept for one that is not — recorded here
+    // rather than implied, since a row that passes either way proves nothing about
+    // the line it appears to test.
+    ["y'=y=1", 'exp(x)'],
     // Stripping the brackets can EXPOSE a join the cut could not see: inside the
     // member's own parentheses it is not top-level, and once they come off it is.
     // The assertion after the cut is what catches that; without it this would be
