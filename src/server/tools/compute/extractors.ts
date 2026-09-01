@@ -486,8 +486,10 @@ export function extractOde(problem: string): RouteResult {
         : (only ?? independentVariable(equation, function_name));
     }
 
-    // A condition's POINT must be a point, and this is the only test that can
-    // tell one from the independent variable. `[^),]*` matches `x` as happily as
+    // A condition's POINT must not mention the independent variable. That is a
+    // syntactic proxy for what Giac will read as an equation, not a proof of it —
+    // and the second attempt at it: testing whether the point EQUALS the variable
+    // closed one spelling and left 41 calls shipping non-solutions. `[^),]*` matches `x` as happily as
     // `0`, so `y(x)=5` and `y'(x)=0` were folded as conditions — and Giac reads
     // them as EQUATIONS. `desolve(y'=y, y(x)=5)` answered `5/exp(x)*exp(x)`, whose
     // residual in the caller's own equation is -5, with isError:false; 25 measured
@@ -505,7 +507,21 @@ export function extractOde(problem: string): RouteResult {
     const effectiveRoles = roles.map((role, i) => {
       if (role.kind !== 'condition') return role;
       const point = CONDITION_POINT.exec(rest[i])?.[1]?.trim();
-      return point === variable ? ({ kind: 'unsupported' } as const) : role;
+      // MENTIONS the variable, not equals it. Equality closed the reported input
+      // and nothing else: `y(x+0)=5` is the same request one character longer, and
+      // it folded and answered `5/exp(x)*exp(x)` with residual -5, along with
+      // `y(2*x)`, `y(x-1)`, `y(x/2)`, `y(-x)` and `y(x^2)` — 41 measured calls.
+      // Giac reads a condition whose point mentions the integration variable as an
+      // equation; being that variable was never the property that mattered.
+      //
+      // Word-bounded, so `x_0` and `x0` are still points, and the variable is
+      // escaped because it is caller text.
+      const mentionsVariable =
+        point !== undefined &&
+        new RegExp(`\\b${variable.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`)}\\b`).test(
+          point
+        );
+      return mentionsVariable ? ({ kind: 'unsupported' } as const) : role;
     });
     const conditions = rest.filter((_, i) => effectiveRoles[i].kind === 'condition');
     // Only the first two identifiers are read on the single-equation path, so a

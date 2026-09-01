@@ -450,6 +450,19 @@ describe('spellings the router has to tell apart', () => {
     ["desolve(y'=2*x, y'(x)=y(x))"],
     ["desolve(y'=y, z'(x)=-y(x))"],
     ['desolve(diff(y(t),t)=y(t), y(t)=5, t, y)'],
+    // The point does not have to BE the variable — it only has to mention it.
+    // Testing equality closed the reported input and nothing else: `y(x+0)=5` is
+    // the same request one character longer and answered `5/exp(x)*exp(x)` with
+    // residual -5, as did `y(2*x)`, `y(x-1)`, `y(x/2)`, `y(-x)` and `y(x^2)` — 41
+    // measured calls that a round specifically looking for this family still
+    // shipped.
+    ["desolve(y'=y, y(x+0)=5)"],
+    ["desolve(y'=y, y(2*x)=5)"],
+    ["desolve(y'=y, y(x-1)=5)"],
+    ["desolve(y'=y, y(x/2)=5)"],
+    ["desolve(y'=2*x, y(-x)=5)"],
+    ["desolve(y'=y*x, y(x^2)=5)"],
+    ["desolve(y'=y, y((x))=5)"],
   ])('%s is refused, not answered with a non-solution', async (problem) => {
     // The condition shape's point group matches the independent VARIABLE as
     // happily as a number, so these were folded in as conditions — and Giac reads
@@ -470,7 +483,37 @@ describe('spellings the router has to tell apart', () => {
     ["desolve(y''+y=0, y(pi)=0, x, y)", /c_1\*sin\(x\)/],
     ["desolve(y''+y=0, y(L)=0, x, y)", /tan\(L\/2\)/],
     ["desolve(y'=y, y(a)=1, x, y)", /exp\(a\)/],
+    // Word-bounded, so a name that merely CONTAINS the variable is still a point.
+    ["desolve(y'=y, y(x_0)=5, x, y)", /exp\(x_0\)/],
+    ["desolve(y'=y, y(x0)=5, x, y)", /exp\(x0\)/],
+    ["desolve(y'=y, y(X)=5, x, y)", /exp\(X\)/],
   ])('%s keeps working — a symbolic endpoint is still a point', async (problem, expected) => {
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(false);
+    expect(text(r)).toMatch(expected);
+  });
+
+  it.each([
+    ["desolve(y''=-y, y(pi/2)=1, y'(0)=0)"],
+    ["desolve(y''+y=0, y(pi/2)=2, y'(0)=0)"],
+    ["desolve(y''=-4*y, y(pi/4)=1, y'(0)=0)"],
+  ])('%s refuses rather than shipping infinity as the answer', async (problem) => {
+    // Ordinary-looking BVPs that are in fact unsatisfiable — y'(0)=0 forces the
+    // sine term out and cos vanishes at the stated endpoint — so Giac answers
+    // `infinity`. detectFailure matches capitalised `Inf` and deliberately lets
+    // lowercase `infinity` through, because integrate legitimately diverges. The
+    // solution-vector guard has had this arm all along; the single-equation path
+    // did not, and it became reachable when conditions written as separate
+    // arguments stopped being dropped.
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).not.toMatch(/^Result: infinity$/m);
+  });
+
+  it.each([
+    ["desolve(y''=-y, y(pi/4)=1, y'(0)=0)", /cos\(x\)/],
+    ["desolve(y''=-y, y(0)=0, y(pi)=0, x, y)", /c_1\*sin\(x\)/],
+  ])('%s still answers — the infinity guard is not a BVP ban', async (problem, expected) => {
     const r = await computeHandler({ problem });
     expect(r.isError, text(r)).toBe(false);
     expect(text(r)).toMatch(expected);

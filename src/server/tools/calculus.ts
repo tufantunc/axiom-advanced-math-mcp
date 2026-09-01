@@ -283,7 +283,20 @@ export async function calculusHandler(args: Record<string, unknown>) {
     // name.
     if (!functions && operation === 'solve_ode') {
       const line = /^Result:\s*(.*)$/m.exec(response.content.map((c) => c.text).join('\n'));
-      const failure = detectFailure(`Result: ${line?.[1]?.trim() ?? ''}`);
+      const resultText = line?.[1]?.trim() ?? '';
+      // `infinity` is checked here and not in detectFailure because it is not a
+      // failure in general — `integrate(1/x^2, x, 0, 1)` correctly diverges — but
+      // no SOLUTION of an ODE is infinity. The solution-vector guard has had this
+      // arm all along; the single-equation path did not, so an inconsistent BVP
+      // shipped "infinity" as the answer at isError:false:
+      // `desolve(y''=-y, y(pi/2)=1, y'(0)=0)`, which looks ordinary and is in fact
+      // unsatisfiable. Newly reachable, because conditions written as separate
+      // arguments used to be dropped.
+      const failure =
+        detectFailure(`Result: ${resultText}`) ??
+        (/(^|[^A-Za-z_0-9])infinity([^A-Za-z_0-9]|$)/.test(resultText)
+          ? 'non-finite result'
+          : null);
       if (failure !== null) {
         const why =
           failure === 'empty result'

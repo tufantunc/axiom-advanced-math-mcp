@@ -235,8 +235,10 @@ export function differentiatedFunction(equation: string): string | undefined {
  * spellings, and the fold changed the parsed equation set on none of them.
  *
  * What it cannot do is predict GIAC. `y'(x)=0` is a condition to classify() and
- * an equation to Giac; that gap is closed in the extractor, by requiring a
- * condition's point not to be the independent variable.
+ * an equation to Giac. The extractor narrows that gap by refusing a condition
+ * whose point MENTIONS the independent variable — a syntactic proxy for Giac's
+ * reading, not a proof of it. Endpoints that do not mention the variable, symbolic
+ * ones included, still fold.
  *
  * `y'(0)=0` is a condition and must stay one: derivativeTarget is anchored, so
  * `y'(0)` is not a derivative target while `y'` is. That is the whole distinction,
