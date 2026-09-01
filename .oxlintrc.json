@@ -2,12 +2,15 @@
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "plugins": ["typescript", "unicorn"],
   "rules": {
-    "no-unused-vars": ["warn", {
-      "args": "after-used",
-      "argsIgnorePattern": "^_",
-      "varsIgnorePattern": "^_",
-      "ignoreRestSiblings": true
-    }],
+    "no-unused-vars": [
+      "warn",
+      {
+        "args": "after-used",
+        "argsIgnorePattern": "^_",
+        "varsIgnorePattern": "^_",
+        "ignoreRestSiblings": true
+      }
+    ],
     "typescript/explicit-function-return-type": "off",
     "typescript/no-explicit-any": "warn",
     "typescript/no-non-null-assertion": "warn",
@@ -15,5 +18,30 @@
     "unicorn/prefer-string-replace-all": "warn",
     "unicorn/prefer-string-raw": "warn"
   },
+  "overrides": [
+    {
+      "files": [
+        "src/server/tools/ode-system-shape.ts",
+        "src/server/tools/output-cleanup.ts",
+        "src/server/tools/unicode-normalize.ts",
+        "src/server/tools/compute/arg-parsing.ts"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              "**/giac/*",
+              "**/giac-eval.js",
+              "**/self-verify.js",
+              "**/calculus.js",
+              "**/compute/index.js",
+              "./index.js"
+            ]
+          }
+        ]
+      }
+    }
+  ],
   "ignorePatterns": ["dist/", "node_modules/", "src/server/giac/giac.wasm.js"]
 }

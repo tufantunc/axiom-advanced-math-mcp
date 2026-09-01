@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { parseOdeSystem, translateOdeSystem } from '../src/server/tools/ode-system.js';
+import { parseOdeSystem } from '../src/server/tools/ode-system-shape.js';
+import { translateOdeSystem } from '../src/server/tools/ode-system.js';
 
 /**
  * Unit tests for the ODE-system rewrite.

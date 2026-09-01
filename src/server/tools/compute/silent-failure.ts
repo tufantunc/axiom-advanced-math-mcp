@@ -16,9 +16,18 @@ export function detectFailure(displayText: string): string | null {
   if (/GIAC_ERROR/.test(t)) {
     return 'Giac error';
   }
-  // Match \b(NaN|Inf|-Inf|undef)\b as standalone tokens, not substrings.
-  // -Inf needs special handling because '-' isn't a word boundary on the left.
-  if (/(?:^|[^A-Za-z])-?Inf(?![A-Za-z])/.test(t)) return 'non-finite result';
+  // Match (NaN|Inf|-Inf|undef) as standalone tokens, not substrings.
+  //
+  // The boundary excludes _ and digits on BOTH sides, matching the NaN/undef rule
+  // below. It used to be [^A-Za-z] on the left and (?![A-Za-z]) on the right, which
+  // admitted _ and digits as boundaries: `T_Inf` — free-stream notation, not a
+  // contrived name — read as a non-finite result, so a solved and self-verified ODE
+  // system was refused with a message blaming the CAS.
+  //
+  // `-Inf` needs no `-?` of its own: the left class admits `-`, so the sign is
+  // consumed as the boundary. It carried one for a while, justified by '-' not
+  // being a word boundary — true of the `\b` matching this line no longer does.
+  if (/(^|[^A-Za-z_0-9])Inf([^A-Za-z_0-9]|$)/.test(t)) return 'non-finite result';
   if (/\b(NaN|undef)\b(?!\w)/.test(t)) return 'non-finite result';
   return null;
 }

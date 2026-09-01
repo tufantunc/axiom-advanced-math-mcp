@@ -380,7 +380,8 @@ export async function numericalMethodsHandler(args: Record<string, unknown>) {
     // the last line found `f(root) = 3.154474e-11`, and the `Root|Result` regex
     // is case-sensitive so lowercase `f(root)` fell through to the raw line —
     // so `bisection(x^2-2, 1, 2)` answered 3.15e-11 for a root of 1.4142136.
-    const labelled = lines.find((l) => l.startsWith('Root:')) ?? lines.find((l) => l.startsWith('Result'));
+    const labelled =
+      lines.find((l) => l.startsWith('Root:')) ?? lines.find((l) => l.startsWith('Result'));
     // Strip the label only from a line that has one. Applying the strip to the
     // raw last line is what turned `Last x = 0` into a bare `0`.
     const mainResult = labelled

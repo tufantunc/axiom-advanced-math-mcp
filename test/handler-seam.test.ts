@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { giacEngine } from '../src/server/giac/index.js';
 import { computeHandler } from '../src/server/tools/compute/index.js';
+import { detectFailure } from '../src/server/tools/compute/silent-failure.js';
 import { exactValueHandler } from '../src/server/tools/exact-value.js';
 
 beforeAll(async () => {
@@ -603,6 +604,37 @@ describe('spellings the router has to tell apart', () => {
       const r = await computeHandler({ problem: "desolve([y'=k_undefined*z, z'=-y], x)" });
       expect(r.isError).toBe(false);
       expect(text(r)).toMatch(/k_undefined/);
+    });
+
+    it.each([['T_Inf'], ['V_Inf'], ['Inf_k'], ['a1Inf']])(
+      'does not refuse a coefficient whose NAME contains Inf (%s)',
+      async (name) => {
+        // Same defect as the row above, on a different token, and reintroduced by
+        // sharing detectFailure: its `Inf` rule bounded the token with [^A-Za-z] and
+        // (?![A-Za-z]), so _ and digits counted as boundaries. `T_Inf` is free-stream
+        // notation. Giac solves these and the substitution check verifies them, and
+        // they were being refused with a message blaming the CAS.
+        const r = await computeHandler({ problem: `desolve([y'=${name}*z, z'=-y], x)` });
+        expect(r.isError).toBe(false);
+        // The Result line specifically. Matching anywhere also matches the
+        // `Command:` echo of the caller's own text, which cannot fail independently
+        // of the assertion above.
+        const result = /^Result:\s*(.*)$/m.exec(text(r))?.[1] ?? '';
+        expect(result).toContain(name);
+      }
+    );
+
+    it('refuses an infinite solution component', async () => {
+      // The `infinity` arm, which a comment here once called unreachable. No other
+      // arm fires on this: detectFailure passes `infinity` (correct divergence, as
+      // in integrate(1/x^2,x,0,1)) and there is no poly1[ or ilaplace(. The pole
+      // rule cannot refuse it either — denom(x^x) does not mention x.
+      const r = await computeHandler({ problem: "desolve([y'=z, z'=-y+x^x], x)" });
+      expect(r.isError).toBe(true);
+      // The message too, not just isError: `disproved` and the pole rule also
+      // refuse, with different wording, so isError alone would stay green if this
+      // input started being refused for some other reason and the arm rotted.
+      expect(text(r)).toMatch(/the CAS could not finish it/);
     });
 
     // One row per arm of the unfinished-answer guard that CAN be discriminated,
@@ -1263,6 +1295,40 @@ describe('spellings the router has to tell apart', () => {
     ])('still solves %s, which has no pole in x', async (problem) => {
       const r = await computeHandler({ problem });
       expect(r.isError).toBe(false);
+    });
+
+    it.each([
+      // The three checks the shared detector owns are delegated to it rather than
+      // re-derived here. The copy had already drifted: `detectFailure`
+      // token-matches `NaN`, `Inf` and `-Inf`, and the local version did not, so a
+      // non-finite component would have gone out as a solution.
+      ['Result: [[-Inf,0]]'],
+      ['Result: [[Inf,1]]'],
+      ['Result: [[NaN,0]]'],
+      ['Result: []'],
+      ['Result: [[undef]]'],
+      ['Result: GIAC_ERROR: bad'],
+    ])('the shared detector calls %s a failure', (displayText) => {
+      expect(detectFailure(displayText)).not.toBeNull();
+    });
+
+    it.each([
+      // ...and `infinity` stays a LOCAL check, because it is not a failure in
+      // general: these three correctly diverge, and the shared detector is right
+      // to pass them. Only a component of a solution vector being infinite is a
+      // defect, which is why the ODE path keeps its own arm.
+      ['integrate(1/x^2, x, 0, 1)'],
+      ['sum(1/n, n, 1, infinity)'],
+      ['limit(1/x, x, 0)'],
+    ])('still answers %s, whose infinity is the answer', async (problem) => {
+      const r = await computeHandler({ problem });
+      expect(r.isError).toBe(false);
+      expect(text(r)).toMatch(/infinity|\\infty/);
+    });
+
+    it('refuses an ODE whose component is infinite, which is not a solution', async () => {
+      const r = await computeHandler({ problem: "desolve([y'=z+exp(x)/x, z'=-y], x)" });
+      expect(r.isError).toBe(true);
     });
 
     it('leaves an all-exact system exact', async () => {
