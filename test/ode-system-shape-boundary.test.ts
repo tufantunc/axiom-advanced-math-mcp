@@ -78,8 +78,15 @@ describe('the shape half evaluates nothing', () => {
         // '...'` puts the second module item mid-line, where a `\n\s*` anchor cannot
         // reach it. All three quote styles — a no-substitution template literal is
         // a string by the time the loader sees it.
+        //
+        // `(?!\s*type\b)` consumes the space itself. With `\s*` before the keyword
+        // and a bare `(?!type\b)`, the lookahead is evaluated at the SPACE, where
+        // `type` does not match, so it always succeeded and the exclusion below was
+        // dead — `import type { G } from '../giac/interface.js'` was walked as a
+        // value edge. It fails red rather than silent, but on a type-only import
+        // that reaches nothing at runtime.
         ...stripped.matchAll(
-          /(?:^|[\n;}])\s*(?:import|export)\s*(?!type\b)(?:[^;]*?from\s*)?['"`]([^'"`]+)['"`]/g
+          /(?:^|[\n;}])\s*(?:import|export)\s*(?!\s*type\b)(?:[^;]*?from\s*)?['"`]([^'"`]+)['"`]/g
         ),
         ...stripped.matchAll(/\bimport\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/g),
         // import-equals. tsc accepts it under this tsconfig and emits a working
