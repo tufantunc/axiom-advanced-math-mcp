@@ -261,6 +261,9 @@ export function extractTaylor(problem: string): RouteResult {
  */
 const SINGLE_ODE_CONDITION = /^[A-Za-z_]\w*'*\s*\(\s*[^),]*\s*\)\s*=\s*(.+)$/;
 
+/** The point a condition is stated at, for the variable test after inference. */
+const CONDITION_POINT = /^[A-Za-z_]\w*'*\s*\(\s*([^),]*)\s*\)\s*=/;
+
 /**
  * A condition's right-hand side must be a VALUE, not a proposition.
  *
@@ -369,17 +372,19 @@ export function extractOde(problem: string): RouteResult {
     // comma after stripping, rather than the punctuation that happened to be
     // outermost.
     //
-    // The list form is not optional for a list: `and` cannot carry one, so
-    // `([y''=-y, y(0)=1]) and (y'(0)=0)` puts a bare comma inside parentheses.
+    // The reason is parseOdeSystem, not Giac. calculus.ts decides whether to take
+    // the Y' = A*Y + b path by parsing this text, and it only reads conditions
+    // that are MEMBERS of the list. `[y'=z, z'=-y] and y(0)=1` parses as no system
+    // at all, which is how appending once cost the matrix rewrite, the components
+    // note and the verification, and answered `[]`.
     //
-    // An earlier version of this comment justified the split by claiming Giac
-    // drops a derivative condition in list form. It does not — measured through
-    // giacEngine, `desolve([y''=-y, y(0)=1, y'(0)=0],x,y)` and the `and` spelling
-    // both answer cos(x). The cos(x)+c_1*sin(x) I attributed to the list form is
-    // what the command MISSING that condition answers, which was main's
-    // dropped-argument bug mis-read as a property of the CAS. The one spelling
-    // Giac really does drop is `diff(y(x),x)(0)=0`, which this never folds
-    // because SINGLE_ODE_CONDITION rejects its inner comma.
+    // Not a Giac constraint: measured through giacEngine, `and` carries a list
+    // perfectly well — `desolve(([y''=-y, y(0)=1]) and (y'(0)=0),x,y)` answers
+    // cos(x), the same as the list spelling. Two earlier versions of this comment
+    // claimed otherwise, first that Giac drops a derivative condition in list form
+    // and then that `and` cannot hold a comma; both were measured false. The one
+    // spelling Giac really does drop is `diff(y(x),x)(0)=0`, and this never folds
+    // it because SINGLE_ODE_CONDITION rejects its inner comma.
     const isMemberList = splitArgs(strippedEquation).length > 1;
     const fold = (members: string[]): string =>
       isMemberList
@@ -458,24 +463,6 @@ export function extractOde(problem: string): RouteResult {
     const appliedNames = roles.flatMap((r) => (r.kind === 'function' ? [r.name] : []));
     const bareNames = roles.flatMap((r) => (r.kind === 'identifier' ? [r.name] : []));
     const named = [...bareNames, ...appliedNames];
-    const conditions = rest.filter((_, i) => roles[i].kind === 'condition');
-    // Only the first two identifiers are read on the single-equation path, so a
-    // later one is neither used nor refused unless it is collected here — the
-    // same silent drop this change exists to remove, one bucket over. A SYSTEM is
-    // different: parseOdeSystem ignores function_name entirely, so
-    // `desolve([y'=z, z'=-y], x, y, z)` names its unknowns redundantly and was
-    // answered, and verified, on main.
-    let identifiersSeen = 0;
-    const unsupported: string[] = rest.filter((_, i) => {
-      const role = roles[i];
-      if (role.kind === 'unsupported') return true;
-      if (isSystem) return false;
-      if (role.kind === 'identifier' || role.kind === 'function') {
-        identifiersSeen += 1;
-        return identifiersSeen > 2;
-      }
-      return false;
-    });
     let variable: string;
     let function_name: string;
     if (appliedNames.length > 0) {
@@ -498,6 +485,46 @@ export function extractOde(problem: string): RouteResult {
         ? independentVariable(equation, function_name)
         : (only ?? independentVariable(equation, function_name));
     }
+
+    // A condition's POINT must be a point, and this is the only test that can
+    // tell one from the independent variable. `[^),]*` matches `x` as happily as
+    // `0`, so `y(x)=5` and `y'(x)=0` were folded as conditions — and Giac reads
+    // them as EQUATIONS. `desolve(y'=y, y(x)=5)` answered `5/exp(x)*exp(x)`, whose
+    // residual in the caller's own equation is -5, with isError:false; 25 measured
+    // calls answered a non-solution that way.
+    //
+    // isDerivativeEquation cannot catch these and neither could the invariant it
+    // replaced: parseOdeSystem also classifies `y'(x)=0` as a condition, so the
+    // extractor and the parser agree. They agree and are both wrong about what
+    // Giac will do, which is why this test is about the caller's variable rather
+    // than about the parser.
+    //
+    // It runs here, after inference, because that is the first point at which the
+    // independent variable is known. A symbolic endpoint is still a point:
+    // `y(L)=0` and `y(pi)=0` fold and answer correctly, and must.
+    const effectiveRoles = roles.map((role, i) => {
+      if (role.kind !== 'condition') return role;
+      const point = CONDITION_POINT.exec(rest[i])?.[1]?.trim();
+      return point === variable ? ({ kind: 'unsupported' } as const) : role;
+    });
+    const conditions = rest.filter((_, i) => effectiveRoles[i].kind === 'condition');
+    // Only the first two identifiers are read on the single-equation path, so a
+    // later one is neither used nor refused unless it is collected here — the
+    // same silent drop this change exists to remove, one bucket over. A SYSTEM is
+    // different: parseOdeSystem ignores function_name entirely, so
+    // `desolve([y'=z, z'=-y], x, y, z)` names its unknowns redundantly and was
+    // answered, and verified, on main.
+    let identifiersSeen = 0;
+    const unsupported: string[] = rest.filter((_, i) => {
+      const role = effectiveRoles[i];
+      if (role.kind === 'unsupported') return true;
+      if (isSystem) return false;
+      if (role.kind === 'identifier' || role.kind === 'function') {
+        identifiersSeen += 1;
+        return identifiersSeen > 2;
+      }
+      return false;
+    });
 
     // Two shapes, because the equation has two and only one of them survives an
     // ` and ` suffix.

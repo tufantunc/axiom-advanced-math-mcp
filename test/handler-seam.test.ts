@@ -423,12 +423,11 @@ describe('spellings the router has to tell apart', () => {
     // `[[y'=z, z'=-y]]`, a level above the members. Both then parsed as
     // non-systems downstream and were refused, where main answered them verified.
     //
-    // A single-member list is a lone equation, so it takes the `and` form. An
-    // earlier version of this comment said that was because Giac drops a
-    // derivative condition in list form; it does not — both spellings answer
-    // cos(x), measured through giacEngine. The real reason is the other
-    // direction: `and` cannot carry a comma-separated list, so a genuine list
-    // must stay one.
+    // A single-member list is a lone equation, so it takes the `and` form. The
+    // reason a real list must stay a list is parseOdeSystem, not Giac: it only
+    // reads conditions that are members, so an `and`-appended system parses as no
+    // system. Giac itself accepts either spelling — two earlier versions of this
+    // comment claimed a CAS constraint here and both measured false.
     const r = await computeHandler({ problem });
     expect(r.isError, text(r)).toBe(false);
     expect(text(r)).toMatch(expectedCommand);
@@ -443,6 +442,49 @@ describe('spellings the router has to tell apart', () => {
     const r = await computeHandler({ problem });
     expect(r.isError, text(r)).toBe(false);
     expect(text(r)).toMatch(/^Result: \[\[cos\(x\),-sin\(x\)\]\]$/m);
+  });
+
+  it.each([
+    ["desolve(y'=y, y(x)=5)"],
+    ["desolve(y''=-y, y'(x)=0)"],
+    ["desolve(y'=2*x, y'(x)=y(x))"],
+    ["desolve(y'=y, z'(x)=-y(x))"],
+    ['desolve(diff(y(t),t)=y(t), y(t)=5, t, y)'],
+  ])('%s is refused, not answered with a non-solution', async (problem) => {
+    // The condition shape's point group matches the independent VARIABLE as
+    // happily as a number, so these were folded in as conditions — and Giac reads
+    // them as equations. `desolve(y'=y, y(x)=5)` answered `5/exp(x)*exp(x)`, whose
+    // residual in the caller's own equation is -5, with isError:false. 25 measured
+    // calls shipped a non-solution that way.
+    //
+    // Neither isDerivativeEquation nor the invariant it replaced could catch this:
+    // parseOdeSystem also calls `y'(x)=0` a condition, so the extractor and the
+    // parser agree and are both wrong about what Giac will do. The test has to be
+    // about the caller's variable, which is why it runs after inference.
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/does not understand the argument/);
+  });
+
+  it.each([
+    ["desolve(y''+y=0, y(pi)=0, x, y)", /c_1\*sin\(x\)/],
+    ["desolve(y''+y=0, y(L)=0, x, y)", /tan\(L\/2\)/],
+    ["desolve(y'=y, y(a)=1, x, y)", /exp\(a\)/],
+  ])('%s keeps working — a symbolic endpoint is still a point', async (problem, expected) => {
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(false);
+    expect(text(r)).toMatch(expected);
+  });
+
+  it.each([['derive'], ['deriver']])('refuses %s(z)=5 by name, like diff', async (operator) => {
+    // derivativeOnRight already recorded that these are Giac's own aliases for
+    // diff; isBareDiffCall listed only `diff`, so replacing the extractor's own
+    // operator list with the shared predicate silently dropped them and 57
+    // arguments went from a precise refusal to "your conditions cannot all be
+    // satisfied". One list now.
+    const r = await computeHandler({ problem: `desolve(y'=y, ${operator}(z)=5, x, y)` });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/does not understand the argument/);
   });
 
   it.each([["desolve([y'=z, z'=-y], diff(w)=5, x)"], ["desolve([y'=y], diff(z)=5, x, y)"]])(
