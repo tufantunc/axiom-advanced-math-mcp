@@ -461,6 +461,32 @@ describe('mathjs evaluation is bounded outside the server process', () => {
     expect(text(r).length).toBeLessThan(500);
   });
 
+  it('does not blame other computations when nothing else is running', async () => {
+    // The worker acked `start` only AFTER resolving the task, and resolving the
+    // first mathjs task on a fresh worker runs an `import` that worker.ts prices
+    // at ~170ms. That import was therefore charged to the host's ADMISSION
+    // budget, which is sized by timeoutMs — so `2+2`, on an idle machine, with
+    // nothing queued behind anything, was refused with "the compute worker was
+    // busy with other computations". There were no other computations.
+    //
+    // Measured: ready at +27ms, start ack at +205ms on an idle machine; +40ms
+    // and +340ms under a loaded one. That is why this surfaced as a flake in
+    // `a runaway expression is refused` (400ms budget) only during a parallel
+    // suite run. 100ms here is under the import cost either way, which makes it
+    // deterministic instead of load-dependent.
+    const host = createJsComputeHost({ timeoutMs: 100 });
+    try {
+      const outcome = await host.run('mathjs_evaluate', { expression: '2+2' }).then(
+        (v) => v,
+        (e: Error) => e.message
+      );
+      // Whatever the verdict is, it must not blame a caller that is alone.
+      expect(outcome).not.toMatch(/busy with other computations/);
+    } finally {
+      await host.dispose();
+    }
+  });
+
   it('a runaway expression is refused on time or memory, not answered', async () => {
     const host = createJsComputeHost({ timeoutMs: 400, heapMb: 64 });
     try {
@@ -668,9 +694,9 @@ describe('a non-answer is an error, not an answer', () => {
   );
 
   it('refuses a plot whose expression never evaluates', async () => {
-    await expect(
-      plotToSvg({ expression: 'notafunction(x)', xMin: -10, xMax: 10 })
-    ).rejects.toThrow(/Undefined function/);
+    await expect(plotToSvg({ expression: 'notafunction(x)', xMin: -10, xMax: 10 })).rejects.toThrow(
+      /Undefined function/
+    );
   });
 });
 
@@ -698,7 +724,7 @@ describe('precision is honoured, and only when asked for', () => {
     }
   });
 
-  it('does not leak `precision` into the caller\'s expression namespace', async () => {
+  it("does not leak `precision` into the caller's expression namespace", async () => {
     // It was passed as mathjs's SCOPE, so `precision+1` answered 11.
     const r = await computeHandler({ problem: 'precision+1' });
     expect(r.isError, text(r)).toBe(true);

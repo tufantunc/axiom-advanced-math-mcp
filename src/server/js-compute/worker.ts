@@ -53,6 +53,10 @@ process.on('message', (msg: TaskMessage) => {
       }
       // Acked before the synchronous body runs, so the host charges the per-call
       // clock to execution rather than to time spent queued behind another call.
+      // Resolving the task first is deliberate: a first-use mathjs import is
+      // worker setup, not this caller's compute, so it must land before the ack
+      // and outside the execution clock. host.ts is what keeps it from being
+      // charged to the admission budget instead.
       send({ type: 'start', id: msg.id });
       send({ type: 'result', id: msg.id, value: run(msg.args as never) });
     } catch (e) {

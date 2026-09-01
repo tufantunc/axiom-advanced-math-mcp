@@ -130,12 +130,45 @@ export function createJsComputeHost(opts: JsComputeHostOptions = {}) {
     p.timer = setTimeout(() => {
       const cur = pending.get(id);
       if (!cur || cur.phase !== 'queued') return;
-      if (!childReady()) {
-        // Still cold: extend rather than blame the caller.
+      if (!childReady() || runningEntry() === undefined) {
+        // The worker's own setup, not another caller's computation, so extend
+        // rather than blame this one. Two kinds of setup reach here:
+        //
+        //   - the fork plus the tsx loader, before `ready`; and
+        //   - resolving the task in the child, which for the first mathjs task
+        //     runs an import that worker.ts prices at ~170ms. That one was
+        //     missed: `ready` had arrived, nothing else was running, and the
+        //     admission timer fired anyway — so `2+2`, alone on an idle worker,
+        //     was refused with "busy with other computations". There were none.
+        //
+        // `runningEntry() === undefined` is what makes the refusal below true by
+        // construction: the host sends every task to the child immediately, so a
+        // call is behind somebody else exactly when another entry is `running`.
+        //
+        // Unbounded, like the cold-start extension it joins: the ceiling on both
+        // is the child's own liveness, and a child that dies is caught by the
+        // exit handler, which fails everything pending. A child that stays alive
+        // and never acks would wait forever — true before this change too, for
+        // one that never reports ready.
         cur.timer = null;
         armAdmission(id);
         return;
       }
+      // Reachability, stated because it is not obvious and was not checked
+      // before: this needs another call to hold the worker for longer than THIS
+      // call's admission budget, and both budgets are the same timeoutMs. The
+      // running call's execution timer is armed at its `start`, never later than
+      // this call was enqueued, so it fires first and recycleAndRedispatch
+      // re-sends this one instead. I could not construct an input that reaches
+      // this settle, and a probe that queues a call behind a genuine hog gets
+      // redispatched, not refused. Left in place rather than deleted: it is the
+      // honest response if the two budgets are ever separated, and the timer
+      // itself is load-bearing regardless — it is the event-loop ref that keeps
+      // the process alive while a call is outstanding.
+      //
+      // Overload shedding does NOT depend on this: that is maxQueueDepth in
+      // run(), which rejects synchronously and says "is busy", and a call caught
+      // behind repeated faults is failed by MAX_REDISPATCHES.
       settle(
         id,
         cur,
