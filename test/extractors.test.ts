@@ -21,6 +21,8 @@ import {
   extractNumericalMethods,
   extractSequenceIdentify,
 } from '../src/server/tools/compute/extractors.js';
+import { parseOdeSystem } from '../src/server/tools/ode-system-shape.js';
+import { extractFnArgs, splitArgs } from '../src/server/tools/compute/arg-parsing.js';
 
 describe('Extractors', () => {
   describe('extractDiff', () => {
@@ -88,6 +90,44 @@ describe('Extractors', () => {
   });
 
   describe('extractOde', () => {
+    // The property the row-per-spelling tests can only sample.
+    //
+    // extractOde decides whether the equation is a system, on the caller's text,
+    // to choose what the trailing arguments mean. calculus.ts decides it again on
+    // the FOLDED text, to choose the matrix rewrite. When the two disagree, a
+    // caller's single ODE is answered as a system it never wrote — carrying a
+    // verification check mark, because the mark is honest about the rewritten
+    // system and the rewritten system is the wrong one. It happened:
+    // `desolve([y'=y], diff(z)=5, x, y)` answered [[c_0*exp(x),c_1+5*x]].
+    //
+    // Folding conditions must therefore never change what the equation IS. This
+    // asserts that directly, so a new fold target or a new accepted condition
+    // shape cannot reintroduce the class without failing here.
+    it.each([
+      ["desolve(y'=y, y(0)=1)"],
+      ["desolve(y'=y, y(0)=1, x, y)"],
+      ["desolve(y''=-y, y(0)=1, y'(0)=0, x, y)"],
+      ["desolve([y'=y], y(0)=1, x, y)"],
+      ["desolve([y'=y, y(0)=1], x, y)"],
+      ["desolve([y'=z, z'=-y], y(0)=1, z(0)=0, x)"],
+      ["desolve([y'=z, z'=-y, y(0)=1, z(0)=0], x)"],
+      ["desolve((y'=z, z'=-y), y(0)=1, z(0)=0, x)"],
+      ["desolve(((y'=z, z'=-y)), y(0)=1, z(0)=0, x)"],
+      ["desolve([[y'=z, z'=-y]], y(0)=1, z(0)=0, x)"],
+      ["desolve([y'=z, z'=-y], x, [y,z])"],
+      ["desolve(y'=y+1, y(2)=3, x, y)"],
+      ["desolve(y'=y, y(a)=1, x, y)"],
+      ['desolve(diff(y(x),x)=y(x), y(x))'],
+      ["desolve([y'=y], diff(z)=5, x, y)"],
+      ["desolve(y'=y, x, y)"],
+    ])('folding conditions does not change whether %s is a system', (problem) => {
+      const before = splitArgs(extractFnArgs(problem))[0] ?? '';
+      const after = extractOde(problem).args.equation as string;
+      expect(parseOdeSystem(after) !== null, `${problem} -> ${after}`).toBe(
+        parseOdeSystem(before) !== null
+      );
+    });
+
     it('should extract desolve format', () => {
       const result = extractOde("desolve(y'=2*x, x, y)");
       expect(result.args.operation).toBe('solve_ode');

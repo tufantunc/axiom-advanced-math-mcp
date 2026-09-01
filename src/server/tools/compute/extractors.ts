@@ -281,7 +281,23 @@ const SINGLE_ODE_CONDITION = /^[A-Za-z_]\w*'*\s*\(\s*[^),]*\s*\)\s*=\s*(.+)$/;
  */
 const CONDITION_VALUE_IS_A_PROPOSITION = /\b(and|or)\b|[=<>!]=|[<>]/;
 
+/**
+ * A derivative operator wearing a condition's shape.
+ *
+ * `diff(z)=5` satisfies SINGLE_ODE_CONDITION — identifier, one argument, `=`,
+ * value — and it is an EQUATION. Folded in as a member it turned `[y'=y]` into a
+ * two-equation system answering [[c_0*exp(x),c_1+5*x]] with a verification check
+ * mark, for a caller who wrote one ODE. The invariant check below is the general
+ * net for that class; this names the one spelling that reaches it so the refusal
+ * says which argument is wrong instead of blaming the CAS.
+ *
+ * A shape list, and honestly a short one: `y'(0)=0` is a condition and carries a
+ * prime, so the prime cannot be the discriminator — the operator's NAME is.
+ */
+const DERIVATIVE_OPERATOR = /^(diff|derive|Derive|D)\s*\(/;
+
 function isCondition(part: string): boolean {
+  if (DERIVATIVE_OPERATOR.test(part)) return false;
   const rhs = SINGLE_ODE_CONDITION.exec(part)?.[1];
   return rhs !== undefined && !CONDITION_VALUE_IS_A_PROPOSITION.test(rhs);
 }
@@ -356,11 +372,22 @@ export function extractOde(problem: string): RouteResult {
     // A bracketed equation is a SYSTEM, and the two paths have different rules
     // about the trailing arguments, so this has to be known before they are
     // classified.
-    // Where the conditions GO is a question about syntax: a bracketed list takes
-    // them as further members, whether or not it holds two equations. Which
-    // trailing-argument rules apply is a different question, answered by isSystem
-    // below. Conflating the two put `([y'=y]) and (y(0)=1)` into the command.
-    const isBracketedList = trimmedEquation.startsWith('[') && trimmedEquation.endsWith(']');
+    // The MEMBERS parseOdeSystem will read, not the caller's outer punctuation.
+    // stripEnclosingBrackets peels `(` and `[` alike, and repeatedly, so the list
+    // it reaches is not always the one the outer brackets name: keying the fold
+    // off `startsWith('[')` appended ` and …` after `(y'=z, z'=-y)` — a real
+    // system — and inserted inside the outer bracket of `[[y'=z, z'=-y]]`, one
+    // level above the members. Both then parsed as non-systems downstream and
+    // were refused, where main answered and verified them.
+    const strippedEquation = stripEnclosingBrackets(trimmedEquation);
+    // A member LIST takes conditions as further members; a lone equation joins
+    // them with `and`. This is the syntax question asked correctly — a top-level
+    // comma after stripping, rather than the punctuation that happened to be
+    // outermost. It matters beyond tidiness: Giac DROPS a derivative condition in
+    // the bracket form (`[y''=-y, y(0)=1, y'(0)=0]` answers cos(x)+c_1*sin(x))
+    // and honours it in the `and` form (cos(x)), so a second-order IVP must not be
+    // folded into a list.
+    const isMemberList = splitArgs(strippedEquation).length > 1;
     // `y(x)` names the FUNCTION — it cannot be an independent variable — so that
     // fact is carried rather than re-derived below.
     const differentiated = differentiatedName(equation);
@@ -387,7 +414,12 @@ export function extractOde(problem: string): RouteResult {
         // refused for the same system. Membership is the right test, and a name
         // that is not an unknown of the system is still refused.
         if (isSystem) {
-          return systemFunctions.has(applied)
+          // A system that differentiates the same function twice is refused
+          // downstream by name ("differentiates the same function twice: y, y").
+          // The Set collapses the duplicate, so refusing here preempted that with
+          // a message about the wrong thing.
+          const duplicated = systemFunctions.size !== parsedSystem.equations.length;
+          return systemFunctions.has(applied) || duplicated
             ? ({ kind: 'unknowns' } as const)
             : ({ kind: 'unsupported' } as const);
         }
@@ -401,11 +433,25 @@ export function extractOde(problem: string): RouteResult {
       }
       if (BARE_IDENTIFIER.test(part)) return { kind: 'identifier', name: part } as const;
       if (isCondition(part)) return { kind: 'condition' } as const;
-      // Ignorable on either path, so recognised on both. Gating it on the system
-      // made `desolve(y'=y, [y])` — answered on main — a refusal while
+      // Recognised on both paths — gating it on the system made
+      // `desolve(y'=y, [y])`, answered on main, a refusal while
       // `desolve([y'=y], [y])` was accepted: same mathematics, opposite outcomes
       // decided by whether the caller bracketed the equation.
-      if (UNKNOWNS_LIST.test(part)) return { kind: 'unknowns' } as const;
+      //
+      // Checked for membership like the applied case, and for the same reason:
+      // without it `q(x)` was refused while `[q]` was accepted and ignored — the
+      // same claim spelled two ways getting opposite verdicts, which is the defect
+      // the applied rule was added to remove. `[y,z,w]` on a two-equation system
+      // states an arity the system does not have, so the sets must match.
+      if (UNKNOWNS_LIST.test(part)) {
+        const names = splitArgs(stripEnclosingBrackets(part)).map(
+          (n) => APPLIED_FUNCTION.exec(n.trim())?.[1] ?? n.trim()
+        );
+        const matches = isSystem
+          ? names.length === systemFunctions.size && names.every((n) => systemFunctions.has(n))
+          : differentiated === undefined || (names.length === 1 && names[0] === differentiated);
+        return matches ? ({ kind: 'unknowns' } as const) : ({ kind: 'unsupported' } as const);
+      }
       return { kind: 'unsupported' } as const;
     });
     const appliedNames = roles.flatMap((r) => (r.kind === 'function' ? [r.name] : []));
@@ -419,7 +465,7 @@ export function extractOde(problem: string): RouteResult {
     // `desolve([y'=z, z'=-y], x, y, z)` names its unknowns redundantly and was
     // answered, and verified, on main.
     let identifiersSeen = 0;
-    const unsupported = rest.filter((_, i) => {
+    const unsupported: string[] = rest.filter((_, i) => {
       const role = roles[i];
       if (role.kind === 'unsupported') return true;
       if (isSystem) return false;
@@ -488,12 +534,33 @@ export function extractOde(problem: string): RouteResult {
     // An empty equation is refused by validateParams, and folding onto it built a
     // non-empty string that slipped past that check — `desolve(, y(0)=1)` reached
     // the worker and came back blaming the CAS.
+    const fold = (members: string[]): string =>
+      isMemberList
+        ? `[${strippedEquation}, ${members.join(', ')}]`
+        : `(${strippedEquation}) and (${members.join(') and (')})`;
+    // Folding must not change WHAT THE EQUATION IS, and that is checkable rather
+    // than arguable. The extractor decides systemhood on the caller's text and
+    // calculus.ts decides it again on the folded text; when those disagree, a
+    // caller's single ODE is answered as a system it never wrote — with a
+    // verification check mark, because the mark is honest about the rewritten
+    // system and the rewritten system is the wrong one.
+    //
+    // `desolve([y'=y], diff(z)=5, x, y)` did exactly that: `diff(z)=5` satisfies
+    // the condition shape, and adding it as a member turned a one-equation list
+    // into a two-equation system answering [[c_0*exp(x),c_1+5*x]]. Rather than
+    // enumerate the shapes that can do this, each condition is admitted only if
+    // it leaves the verdict alone; one that does not is not a condition, and is
+    // reported as the unrecognised argument it is.
+    const keptConditions: string[] = [];
+    const foldRejected: string[] = [];
+    for (const condition of conditions) {
+      const trial = fold([...keptConditions, condition]);
+      if ((parseOdeSystem(trial) !== null) === isSystem) keptConditions.push(condition);
+      else foldRejected.push(condition);
+    }
+    if (foldRejected.length > 0) unsupported.push(...foldRejected);
     const withConditions =
-      conditions.length === 0 || trimmedEquation.length === 0
-        ? equation
-        : isBracketedList
-          ? `${trimmedEquation.slice(0, -1)}, ${conditions.join(', ')}]`
-          : `(${equation}) and (${conditions.join(') and (')})`;
+      keptConditions.length === 0 || trimmedEquation.length === 0 ? equation : fold(keptConditions);
 
     return {
       handler: 'calculus',

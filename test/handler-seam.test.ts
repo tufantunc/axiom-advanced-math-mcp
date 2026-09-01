@@ -357,8 +357,8 @@ describe('spellings the router has to tell apart', () => {
     // A SYSTEM ignores function_name entirely — parseOdeSystem derives the
     // function list from the equations — so naming the unknowns is redundant, not
     // wrong, and prompts/index.ts steers callers at exactly this spelling. The
-    // strict single-equation rule refused five calls that main answered AND
-    // self-verified.
+    // strict single-equation rule refused four calls that main answered AND
+    // self-verified — the four rows here.
     const r = await computeHandler({ problem });
     expect(r.isError, text(r)).toBe(false);
     expect(text(r)).toMatch(expected);
@@ -412,15 +412,60 @@ describe('spellings the router has to tell apart', () => {
     }
   );
 
-  it('folds into a bracketed single equation, not after it', async () => {
-    // Where the conditions go is a question about syntax, not about systemhood: a
-    // bracketed list takes them as further members. Keying the fold off the system
-    // predicate instead would put `([y'=y]) and (y(0)=1)` into the command.
-    const r = await computeHandler({ problem: "desolve([y'=y], y(0)=1, x, y)" });
+  it.each([
+    ["desolve([y'=y], y(0)=1, x, y)", /Command: desolve\(\(y'=y\) and \(y\(0\)=1\)/],
+    ["desolve((y'=z, z'=-y), y(0)=1, z(0)=0, x)", /Command: desolve\(\[Y'=/],
+  ])('%s folds onto the members, not the outer punctuation', async (problem, expectedCommand) => {
+    // stripEnclosingBrackets peels `(` and `[` alike and repeatedly, so the member
+    // list parseOdeSystem reads is not always the one the outer punctuation names.
+    // Keying the fold off `startsWith('[')` appended ` and …` after
+    // `(y'=z, z'=-y)` — a real system — and inserted inside the outer bracket of
+    // `[[y'=z, z'=-y]]`, a level above the members. Both then parsed as
+    // non-systems downstream and were refused, where main answered them verified.
+    //
+    // A single-member list is a lone equation, so it takes the `and` form rather
+    // than becoming a list: Giac DROPS a derivative condition in list form
+    // (`[y''=-y, y(0)=1, y'(0)=0]` answers cos(x)+c_1*sin(x)) and honours it in
+    // the `and` form (cos(x)).
+    const r = await computeHandler({ problem });
     expect(r.isError, text(r)).toBe(false);
-    expect(text(r)).toMatch(/^Result: exp\(x\)$/m);
-    expect(text(r)).toMatch(/Command: desolve\(\[y'=y, y\(0\)=1\]/);
+    expect(text(r)).toMatch(expectedCommand);
   });
+
+  it.each([
+    ["desolve((y'=z, z'=-y), y(0)=1, z(0)=0, x)"],
+    ["desolve((y'=z, z'=-y), x, y(0)=1, z(0)=0)"],
+    ["desolve(((y'=z, z'=-y)), y(0)=1, z(0)=0, x)"],
+    ["desolve([[y'=z, z'=-y]], y(0)=1, z(0)=0, x)"],
+  ])('%s reaches the system path despite its wrapping', async (problem) => {
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(false);
+    expect(text(r)).toMatch(/^Result: \[\[cos\(x\),-sin\(x\)\]\]$/m);
+  });
+
+  it('refuses a condition-shaped argument that is really an equation', async () => {
+    // `diff(z)=5` satisfies the condition shape and IS an equation. Folded in as a
+    // member it turned `[y'=y]` into a two-equation system answering
+    // [[c_0*exp(x),c_1+5*x]] — with a verification check mark, because the mark is
+    // honest about the rewritten system and the rewritten system is not the one
+    // the caller wrote. main answered c_0*exp(x), the correct general solution.
+    const r = await computeHandler({ problem: "desolve([y'=y], diff(z)=5, x, y)" });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/does not understand the argument "diff\(z\)=5"/);
+  });
+
+  it.each([["desolve([y'=z, z'=-y], x, [q])"], ["desolve([y'=z, z'=-y], x, [y,z,w])"]])(
+    '%s refuses an unknowns list that does not match the system',
+    async (problem) => {
+      // `q(x)` was refused while `[q]` was accepted and ignored — the same claim
+      // spelled two ways getting opposite verdicts, which is what the applied-name
+      // membership rule was added to remove. `[y,z,w]` states an arity the system
+      // does not have.
+      const r = await computeHandler({ problem });
+      expect(r.isError, text(r)).toBe(true);
+      expect(text(r)).toMatch(/does not understand the argument/);
+    }
+  );
 
   it.each([["desolve(y'=y, y(0)=1 or y(0)=2, x, y)"], ["desolve(y'=y, y(0)=1==1, x, y)"]])(
     'refuses %s rather than folding a proposition',
