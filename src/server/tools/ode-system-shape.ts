@@ -177,6 +177,60 @@ function classify(member: string): Member {
   };
 }
 
+/**
+ * The function a SINGLE equation differentiates, for every spelling the router
+ * accepts — `y'`, `dy/dx`, and `diff(y(x),x)`.
+ *
+ * Exported so the extractor and this file cannot disagree about it. They did:
+ * the extractor had its own reader that knew two of the three, so for the
+ * `diff(y(x),x)` spelling prompts/index.ts advertises it returned undefined, and
+ * every rule keyed on "the equation differentiates something else" silently
+ * stopped applying — an unknowns list naming functions the equation never
+ * mentions was accepted and dropped, which is the defect those rules exist to
+ * prevent.
+ *
+ * derivativeTarget alone is not enough: it is anchored, so it reads `y''` but not
+ * the `y''+y` of `y''+y=0`. The unanchored scans are the fallback for that, and
+ * they run on the whole equation because a normalised left side is not
+ * guaranteed here.
+ */
+export function differentiatedFunction(equation: string): string | undefined {
+  const eq = unicodeToAscii(equation).trim();
+  const sides = splitTopLevel(eq, '=');
+  const target = derivativeTarget((sides[0] ?? eq).trim());
+  if (target) return target.fn;
+  const lagrange = /\b([A-Za-z_]\w*)'/.exec(eq);
+  if (lagrange) return lagrange[1];
+  const leibniz = /\bd([A-Za-z_]\w*)\s*\/\s*d[A-Za-z_]/.exec(eq);
+  if (leibniz) return leibniz[1];
+  return /\bdiff\s*\(\s*([A-Za-z_]\w*)/.exec(eq)?.[1];
+}
+
+/**
+ * Whether a bracketed member is an EQUATION rather than a condition.
+ *
+ * The same test classify() applies — derivativeTarget on the left side — so the
+ * extractor and this file cannot disagree about which members are equations.
+ *
+ * This replaced two weaker mechanisms in the extractor. One was a list of
+ * derivative-operator NAMES (`diff|derive|D`), which is a shape list that has to
+ * be kept in step with derivativeTarget by hand. The other compared the parsed
+ * equation set before and after folding, per condition; that could not see a
+ * CUMULATIVE flip — `[y(0)=1, z(0)=2]` plus `diff(w)=5` plus `diff(v)=7` passes
+ * one at a time, because the system gate needs two equations and each addition
+ * alone reaches only one. Asking "is this member an equation" is per-argument,
+ * order-independent, and knows all three derivative spellings for free.
+ *
+ * `y'(0)=0` is a condition and must stay one: derivativeTarget is anchored, so
+ * `y'(0)` is not a derivative target while `y'` is. That is the whole distinction,
+ * and it is why the prime cannot be the discriminator.
+ */
+export function isDerivativeEquation(member: string): boolean {
+  const sides = splitTopLevel(unicodeToAscii(member).trim(), '=');
+  if (sides.length < 2) return false;
+  return derivativeTarget((sides[0] ?? '').trim()) !== undefined;
+}
+
 export interface OdeSystem {
   equations: { fn: string; rhs: string; order: number; wrt?: string }[];
   conditions: string[];

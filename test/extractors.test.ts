@@ -120,12 +120,23 @@ describe('Extractors', () => {
       ['desolve(diff(y(x),x)=y(x), y(x))'],
       ["desolve([y'=y], diff(z)=5, x, y)"],
       ["desolve(y'=y, x, y)"],
-    ])('folding conditions does not change whether %s is a system', (problem) => {
+      ["desolve([y'=z, z'=-y], diff(w)=5, x)"],
+      ['desolve([y(0)=1, z(0)=2], diff(w)=5, diff(v)=7, x, y)'],
+    ])('folding conditions does not change what %s IS', (problem) => {
+      // The equation SET, not merely whether it parses as a system. Systemhood
+      // alone was the first form of this assertion and it could not fail in the
+      // direction that matters: adding an equation to a system leaves it a
+      // system, so a smuggled `diff(w)=5` produced a three-component answer with
+      // systemhood preserved from start to finish.
+      const shape = (text: string): string => {
+        const parsed = parseOdeSystem(text);
+        return parsed === null
+          ? 'not-a-system'
+          : JSON.stringify(parsed.equations.map((e) => `${e.fn}|${e.order}|${e.rhs}`).sort());
+      };
       const before = splitArgs(extractFnArgs(problem))[0] ?? '';
       const after = extractOde(problem).args.equation as string;
-      expect(parseOdeSystem(after) !== null, `${problem} -> ${after}`).toBe(
-        parseOdeSystem(before) !== null
-      );
+      expect(shape(after), `${problem} -> ${after}`).toBe(shape(before));
     });
 
     it('should extract desolve format', () => {

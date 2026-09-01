@@ -1,5 +1,9 @@
 import type { RouteResult } from './types.js';
-import { parseOdeSystem } from '../ode-system-shape.js';
+import {
+  parseOdeSystem,
+  differentiatedFunction,
+  isDerivativeEquation,
+} from '../ode-system-shape.js';
 import { coerceTestData } from '../hypothesis-testing.js';
 import {
   extractFnArgs,
@@ -32,19 +36,6 @@ function guessVariable(expr: string): string {
     if (!constants.has(v)) return v;
   }
   return 'x';
-}
-
-/**
- * The unknown function in an ODE: the name that appears differentiated.
- *
- * Matches Lagrange notation (`y'`, `f''`) and Leibniz notation (`dy/dx`), which
- * are the two spellings looksLikeOde already recognises in the router.
- */
-function differentiatedName(equation: string): string | undefined {
-  const lagrange = /\b([A-Za-z]\w*)'/.exec(equation);
-  if (lagrange) return lagrange[1];
-  const leibniz = /\bd([A-Za-z]\w*)\s*\/\s*d[A-Za-z]/.exec(equation);
-  return leibniz?.[1];
 }
 
 /**
@@ -281,23 +272,14 @@ const SINGLE_ODE_CONDITION = /^[A-Za-z_]\w*'*\s*\(\s*[^),]*\s*\)\s*=\s*(.+)$/;
  */
 const CONDITION_VALUE_IS_A_PROPOSITION = /\b(and|or)\b|[=<>!]=|[<>]/;
 
-/**
- * A derivative operator wearing a condition's shape.
- *
- * `diff(z)=5` satisfies SINGLE_ODE_CONDITION — identifier, one argument, `=`,
- * value — and it is an EQUATION. Folded in as a member it turned `[y'=y]` into a
- * two-equation system answering [[c_0*exp(x),c_1+5*x]] with a verification check
- * mark, for a caller who wrote one ODE. The invariant check below is the general
- * net for that class; this names the one spelling that reaches it so the refusal
- * says which argument is wrong instead of blaming the CAS.
- *
- * A shape list, and honestly a short one: `y'(0)=0` is a condition and carries a
- * prime, so the prime cannot be the discriminator — the operator's NAME is.
- */
-const DERIVATIVE_OPERATOR = /^(diff|derive|Derive|D)\s*\(/;
-
 function isCondition(part: string): boolean {
-  if (DERIVATIVE_OPERATOR.test(part)) return false;
+  // An equation is not a condition, and the test is the one parseOdeSystem uses,
+  // so a spelling it reads as a derivative cannot be folded in as a condition.
+  // `diff(z)=5` satisfies the shape below — identifier, one argument, `=`, value
+  // — and folding it turned `[y'=y]` into a two-equation system and
+  // `[y'=z, z'=-y]` into a three-component one, answers to systems the caller
+  // never wrote, carrying verification marks honest about the wrong system.
+  if (isDerivativeEquation(part)) return false;
   const rhs = SINGLE_ODE_CONDITION.exec(part)?.[1];
   return rhs !== undefined && !CONDITION_VALUE_IS_A_PROPOSITION.test(rhs);
 }
@@ -306,10 +288,12 @@ function isCondition(part: string): boolean {
  * The unknowns of a SYSTEM, named as Giac's own third argument: `[y,z]`, or
  * `[y(x),z(x)]`.
  *
- * Legitimate and ignorable, on either path. For a real system parseOdeSystem
- * derives the function list from the equations and `function_name` is never read,
- * so naming the unknowns is redundant rather than wrong; for a single equation
- * inference reaches the same name anyway. Refusing it took previously-correct,
+ * Ignorable when it MATCHES, refused when it does not — the membership rule is
+ * at the use site. For a real system parseOdeSystem derives the function list
+ * from the equations and `function_name` is never read, so naming the unknowns
+ * correctly is redundant rather than wrong; naming different ones states an arity
+ * or a set the system does not have, and `[q]` must reach the same verdict as
+ * `q(x)` or the same claim spelled two ways gets opposite answers. Refusing it took previously-correct,
  * self-verified calls to a hard error — four rows below cover them.
  *
  * What this does NOT restore is the spelling prompts/index.ts advertises,
@@ -383,14 +367,30 @@ export function extractOde(problem: string): RouteResult {
     // A member LIST takes conditions as further members; a lone equation joins
     // them with `and`. This is the syntax question asked correctly — a top-level
     // comma after stripping, rather than the punctuation that happened to be
-    // outermost. It matters beyond tidiness: Giac DROPS a derivative condition in
-    // the bracket form (`[y''=-y, y(0)=1, y'(0)=0]` answers cos(x)+c_1*sin(x))
-    // and honours it in the `and` form (cos(x)), so a second-order IVP must not be
-    // folded into a list.
+    // outermost.
+    //
+    // The list form is not optional for a list: `and` cannot carry one, so
+    // `([y''=-y, y(0)=1]) and (y'(0)=0)` puts a bare comma inside parentheses.
+    //
+    // An earlier version of this comment justified the split by claiming Giac
+    // drops a derivative condition in list form. It does not — measured through
+    // giacEngine, `desolve([y''=-y, y(0)=1, y'(0)=0],x,y)` and the `and` spelling
+    // both answer cos(x). The cos(x)+c_1*sin(x) I attributed to the list form is
+    // what the command MISSING that condition answers, which was main's
+    // dropped-argument bug mis-read as a property of the CAS. The one spelling
+    // Giac really does drop is `diff(y(x),x)(0)=0`, which this never folds
+    // because SINGLE_ODE_CONDITION rejects its inner comma.
     const isMemberList = splitArgs(strippedEquation).length > 1;
+    const fold = (members: string[]): string =>
+      isMemberList
+        ? `[${strippedEquation}, ${members.join(', ')}]`
+        : `(${strippedEquation}) and (${members.join(') and (')})`;
     // `y(x)` names the FUNCTION — it cannot be an independent variable — so that
     // fact is carried rather than re-derived below.
-    const differentiated = differentiatedName(equation);
+    // The system parser's reader, not a second one. Two readers that knew
+    // different spellings is why the `diff(y(x),x)` form fell through every rule
+    // keyed on "the equation differentiates something else".
+    const differentiated = differentiatedFunction(equation);
     // The SAME predicate calculus.ts uses, not the punctuation. The rules used to
     // key off the brackets, and parseOdeSystem needs two
     // derivative members — its own docblock says `[y'=2*x, y(0)=1]` is a single
@@ -400,6 +400,7 @@ export function extractOde(problem: string): RouteResult {
     // remove, while the unbracketed same request was refused.
     const parsedSystem = parseOdeSystem(trimmedEquation);
     const isSystem = parsedSystem !== null;
+
     const systemFunctions = new Set(parsedSystem?.equations.map((e) => e.fn) ?? []);
     // Classified by POSITION, so the argument reported back is the first one the
     // caller wrote rather than the first some filter reached.
@@ -534,33 +535,12 @@ export function extractOde(problem: string): RouteResult {
     // An empty equation is refused by validateParams, and folding onto it built a
     // non-empty string that slipped past that check — `desolve(, y(0)=1)` reached
     // the worker and came back blaming the CAS.
-    const fold = (members: string[]): string =>
-      isMemberList
-        ? `[${strippedEquation}, ${members.join(', ')}]`
-        : `(${strippedEquation}) and (${members.join(') and (')})`;
-    // Folding must not change WHAT THE EQUATION IS, and that is checkable rather
-    // than arguable. The extractor decides systemhood on the caller's text and
-    // calculus.ts decides it again on the folded text; when those disagree, a
-    // caller's single ODE is answered as a system it never wrote — with a
-    // verification check mark, because the mark is honest about the rewritten
-    // system and the rewritten system is the wrong one.
-    //
-    // `desolve([y'=y], diff(z)=5, x, y)` did exactly that: `diff(z)=5` satisfies
-    // the condition shape, and adding it as a member turned a one-equation list
-    // into a two-equation system answering [[c_0*exp(x),c_1+5*x]]. Rather than
-    // enumerate the shapes that can do this, each condition is admitted only if
-    // it leaves the verdict alone; one that does not is not a condition, and is
-    // reported as the unrecognised argument it is.
-    const keptConditions: string[] = [];
-    const foldRejected: string[] = [];
-    for (const condition of conditions) {
-      const trial = fold([...keptConditions, condition]);
-      if ((parseOdeSystem(trial) !== null) === isSystem) keptConditions.push(condition);
-      else foldRejected.push(condition);
-    }
-    if (foldRejected.length > 0) unsupported.push(...foldRejected);
+    // A condition that would change the equation's shape was already classified
+    // 'unsupported' in the roles pass, positionally, so it is reported in the
+    // caller's own order. It used to be rejected in a loop here and appended after
+    // every positional entry, which broke that guarantee by construction.
     const withConditions =
-      keptConditions.length === 0 || trimmedEquation.length === 0 ? equation : fold(keptConditions);
+      conditions.length === 0 || trimmedEquation.length === 0 ? equation : fold(conditions);
 
     return {
       handler: 'calculus',

@@ -423,10 +423,12 @@ describe('spellings the router has to tell apart', () => {
     // `[[y'=z, z'=-y]]`, a level above the members. Both then parsed as
     // non-systems downstream and were refused, where main answered them verified.
     //
-    // A single-member list is a lone equation, so it takes the `and` form rather
-    // than becoming a list: Giac DROPS a derivative condition in list form
-    // (`[y''=-y, y(0)=1, y'(0)=0]` answers cos(x)+c_1*sin(x)) and honours it in
-    // the `and` form (cos(x)).
+    // A single-member list is a lone equation, so it takes the `and` form. An
+    // earlier version of this comment said that was because Giac drops a
+    // derivative condition in list form; it does not — both spellings answer
+    // cos(x), measured through giacEngine. The real reason is the other
+    // direction: `and` cannot carry a comma-separated list, so a genuine list
+    // must stay one.
     const r = await computeHandler({ problem });
     expect(r.isError, text(r)).toBe(false);
     expect(text(r)).toMatch(expectedCommand);
@@ -441,6 +443,35 @@ describe('spellings the router has to tell apart', () => {
     const r = await computeHandler({ problem });
     expect(r.isError, text(r)).toBe(false);
     expect(text(r)).toMatch(/^Result: \[\[cos\(x\),-sin\(x\)\]\]$/m);
+  });
+
+  it.each([["desolve([y'=z, z'=-y], diff(w)=5, x)"], ["desolve([y'=y], diff(z)=5, x, y)"]])(
+    '%s refuses an argument that would add an equation',
+    async (problem) => {
+      // The system direction is the one a systemhood-only check cannot see: adding
+      // an equation to a system leaves it a system, so `[y'=z, z'=-y]` plus
+      // `diff(w)=5` came back as a THREE-component answer for a two-equation
+      // system. Comparing the equation SET catches both directions.
+      const r = await computeHandler({ problem });
+      expect(r.isError, text(r)).toBe(true);
+      expect(text(r)).toMatch(/does not understand the argument "diff\(/);
+    }
+  );
+
+  it.each([
+    ['desolve(diff(y(x),x)=y(x), [q])'],
+    ['desolve(diff(y(x),x)=y(x), [y,z,w])'],
+    ['desolve(diff(y(x),x)=y(x), q(x))'],
+  ])('%s applies the membership rule to the diff spelling too', async (problem) => {
+    // The extractor had its own reader for "which function is differentiated"
+    // that knew `y'` and `dy/dx` but not `diff(y(x),x)`, so for the spelling
+    // prompts/index.ts advertises it returned undefined and every rule keyed on
+    // it silently stopped applying: `desolve(y'=y, [q])` was refused while
+    // `desolve(diff(y(x),x)=y(x), [q])` was accepted and the list dropped. Both
+    // readers are now one, exported from ode-system-shape.ts.
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/does not understand the argument/);
   });
 
   it('refuses a condition-shaped argument that is really an equation', async () => {
