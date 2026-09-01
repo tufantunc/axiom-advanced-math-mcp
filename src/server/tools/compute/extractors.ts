@@ -261,9 +261,6 @@ export function extractTaylor(problem: string): RouteResult {
  */
 const SINGLE_ODE_CONDITION = /^[A-Za-z_]\w*'*\s*\(\s*[^),]*\s*\)\s*=\s*(.+)$/;
 
-/** The point a condition is stated at, for the variable test after inference. */
-const CONDITION_POINT = /^[A-Za-z_]\w*'*\s*\(\s*([^),]*)\s*\)\s*=/;
-
 /**
  * A condition's right-hand side must be a VALUE, not a proposition.
  *
@@ -506,21 +503,29 @@ export function extractOde(problem: string): RouteResult {
     // `y(L)=0` and `y(pi)=0` fold and answer correctly, and must.
     const effectiveRoles = roles.map((role, i) => {
       if (role.kind !== 'condition') return role;
-      const point = CONDITION_POINT.exec(rest[i])?.[1]?.trim();
-      // MENTIONS the variable, not equals it. Equality closed the reported input
-      // and nothing else: `y(x+0)=5` is the same request one character longer, and
-      // it folded and answered `5/exp(x)*exp(x)` with residual -5, along with
-      // `y(2*x)`, `y(x-1)`, `y(x/2)`, `y(-x)` and `y(x^2)` — 41 measured calls.
-      // Giac reads a condition whose point mentions the integration variable as an
-      // equation; being that variable was never the property that mattered.
+      // The WHOLE argument, point and value alike. Giac reads a folded condition
+      // that mentions the integration variable anywhere as a second EQUATION, and
+      // this guard has now been narrowed-then-widened twice for want of saying so:
+      // first it tested whether the point EQUALS the variable, which left
+      // `y(x+0)=5` shipping `5/exp(x)*exp(x)` (residual -5, 41 calls); then it
+      // scanned the point for a mention, which left `y(0)=x^2` shipping
+      // `x^2*exp(x)` (residual 2*x*exp(x), 55 calls) — worse than main, which
+      // dropped the condition and returned a correct general solution.
       //
-      // Word-bounded, so `x_0` and `x0` are still points, and the variable is
-      // escaped because it is caller text.
-      const mentionsVariable =
-        point !== undefined &&
-        new RegExp(`\\b${variable.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`)}\\b`).test(
-          point
-        );
+      // Scanning the argument is also simpler than extracting the point first, so
+      // there is nothing traded for the wider cover.
+      //
+      // Word-bounded, so `x_0`, `x0`, `xx` and `X` are still points. The variable
+      // is escaped defensively only: every source of it is BARE_IDENTIFIER or a
+      // single letter from independentVariable, so no metacharacter can reach the
+      // constructor today.
+      //
+      // Syntactic, and therefore a proxy rather than a proof. What actually decides
+      // correctness is whether the answer satisfies the caller's equation, which
+      // only a residual check can ask; the system path has one in verifyOdeSystem
+      // and this path does not.
+      const escaped = variable.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+      const mentionsVariable = new RegExp(`\\b${escaped}\\b`).test(rest[i]);
       return mentionsVariable ? ({ kind: 'unsupported' } as const) : role;
     });
     const conditions = rest.filter((_, i) => effectiveRoles[i].kind === 'condition');

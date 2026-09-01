@@ -463,6 +463,18 @@ describe('spellings the router has to tell apart', () => {
     ["desolve(y'=2*x, y(-x)=5)"],
     ["desolve(y'=y*x, y(x^2)=5)"],
     ["desolve(y'=y, y((x))=5)"],
+    // The VALUE field, found one probe into a residual audit after two rounds of
+    // widening the POINT check. `y(0)=x^2` answered `x^2*exp(x)` with residual
+    // 2*x*exp(x) — 55 of 60 calls, and worse than main, which dropped the
+    // condition and returned a correct general solution. Giac reads a folded
+    // condition mentioning the integration variable ANYWHERE as a second equation.
+    ["desolve(y'=y, y(0)=x^2, x, y)"],
+    ["desolve(y'=y, y(0)=x, x, y)"],
+    ["desolve(y'=y, y(0)=1+x^2, x, y)"],
+    ["desolve(y'=2*x, y(0)=x^2, x, y)"],
+    ["desolve(y'=y*x, y(0)=x^2, x, y)"],
+    ["desolve(y''=-y, y(0)=0, y'(0)=x^2, x, y)"],
+    ['desolve(diff(y(t),t)=y(t), y(0)=t^2, t, y)'],
   ])('%s is refused, not answered with a non-solution', async (problem) => {
     // The condition shape's point group matches the independent VARIABLE as
     // happily as a number, so these were folded in as conditions — and Giac reads
@@ -487,6 +499,10 @@ describe('spellings the router has to tell apart', () => {
     ["desolve(y'=y, y(x_0)=5, x, y)", /exp\(x_0\)/],
     ["desolve(y'=y, y(x0)=5, x, y)", /exp\(x0\)/],
     ["desolve(y'=y, y(X)=5, x, y)", /exp\(X\)/],
+    ["desolve(y'=y, y(xx)=5, x, y)", /exp\(xx\)/],
+    // A VALUE that does not mention the variable is still a value.
+    ["desolve(y'=y, y(0)=a, x, y)", /a\*exp\(x\)/],
+    ["desolve(y'=y, y(0)=L^2, x, y)", /L\^2\*exp\(x\)/],
   ])('%s keeps working — a symbolic endpoint is still a point', async (problem, expected) => {
     const r = await computeHandler({ problem });
     expect(r.isError, text(r)).toBe(false);
