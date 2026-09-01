@@ -595,6 +595,10 @@ export function extractOde(problem: string): RouteResult {
       args: {
         operation: 'solve_ode',
         equation: withConditions,
+        // The caller's equation before any condition was folded in, so the
+        // residual check substitutes into what they actually wrote rather than
+        // into the command this built. Extractor-written; not caller-settable.
+        original_equation: equation,
         variable,
         function_name,
         ...(unsupported.length > 0 ? { unsupported_argument: unsupported[0] } : {}),

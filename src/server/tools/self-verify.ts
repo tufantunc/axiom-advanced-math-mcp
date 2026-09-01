@@ -262,3 +262,155 @@ export async function verifyOdeSystem(
     return undefined;
   }
 }
+
+/**
+ * The text before the first top-level `and`.
+ *
+ * splitTopLevel takes a single CHARACTER, so it cannot do this — passing it
+ * 'and' silently split on nothing and left the conditions in the equation, which
+ * is how the first version of the residual check accused `y'=y and y(0)=1` of not
+ * satisfying itself.
+ */
+function beforeTopLevelAnd(text: string): string {
+  let depth = 0;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '(' || ch === '[' || ch === '{') depth++;
+    else if (ch === ')' || ch === ']' || ch === '}') depth--;
+    else if (depth === 0 && /\s/.test(ch) && /^\s+and\s/.test(text.slice(i))) {
+      return text.slice(0, i);
+    }
+  }
+  return text;
+}
+
+/**
+ * Substitutes a candidate solution into a SINGLE ODE and reports whether it
+ * satisfies it.
+ *
+ * This is the check the single-equation path never had. verifyOdeSystem has done
+ * this for rewritten systems all along, and every silent wrong answer the
+ * separate-argument condition work produced landed on the path without one: an
+ * argument Giac reads as a second equation rather than a condition —
+ * `y(x)=5`, `y(x+0)=5`, `y(0)=x^2` — folds in and the answer solves a problem the
+ * caller did not pose. Three rounds of syntactic guards each closed the reported
+ * spelling and left the field next door, because a syntactic guard has to predict
+ * what Giac will read. This does not predict anything: it asks whether the thing
+ * about to be shipped solves the equation that was actually written.
+ *
+ * Verdicts follow verifyOdeSystem's rules exactly, and for its reasons:
+ *
+ *   - ✓ only where the residual is exactly zero. `normal` is not a zero test, so
+ *     a nonzero print is not yet evidence.
+ *   - ✗ only where a nonzero residual SURVIVES numeric evaluation. That is what
+ *     separates a dropped term (O(1)) from the `exp(ln(2)/3)-2^(1/3)` spelling
+ *     artifact (~1e-15) that made an earlier version refuse correct answers.
+ *   - no verdict otherwise, including when the answer is too large to hand back
+ *     to the engine. "I did not check" is not evidence against an answer.
+ */
+export async function verifyOdeSolution(
+  equation: string,
+  functionName: string,
+  variable: string,
+  result: string,
+  evaluate: (expr: string) => Promise<string>
+): Promise<VerificationResult | undefined> {
+  const method = 'substitution';
+  const raw = result.trim();
+  if (raw.length === 0 || raw.length > MAX_VERIFIABLE_RESULT) return undefined;
+  if (nestingDepth(raw) > MAX_ENGINE_DEPTH || nestingDepth(equation) > MAX_ENGINE_DEPTH) {
+    return undefined;
+  }
+  // A one-element list is Giac's spelling for a single implicit solution
+  // (`y'=y^2` answers `[1/(1/5-x)]`); more than one is a branch set, and which
+  // branch the caller meant is not this function's question.
+  const inner = /^\[(.*)\]$/.exec(raw)?.[1];
+  const answer = inner !== undefined && !inner.includes(',') ? inner : raw;
+  if (answer.startsWith('[')) return undefined;
+
+  // The DIFFERENTIAL EQUATION only. The text handed in is the caller's whole
+  // equation argument, which may already carry conditions — they write
+  // `y'=y and y(0)=1` themselves, and the bracketed `[y'=y, y(0)=1]` too.
+  // Substituting into those produced `(exp(x))(0)=1`, a residual of nonsense, and
+  // a confident accusation against a correct answer: `desolve(y'=y and y(0)=1, x,
+  // y)` went from exp(x) to a hard error the first time this check ran. A
+  // verifier that can invent a disproof is worse than no verifier.
+  //
+  // The first top-level member is the equation; conditions follow it in both
+  // spellings. Conditions are not checked here, which is a real gap — an answer
+  // can satisfy the ODE and miss the condition — and it is the system path's
+  // verifyOdeSystem that covers that for its own shape.
+  const firstMember = splitTopLevel(stripEnclosingBrackets(equation.trim()), ',')[0] ?? '';
+  const equationOnly = beforeTopLevelAnd(firstMember).trim();
+  if (equationOnly.length === 0) return undefined;
+
+  const fn = functionName.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+  const v = variable.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+  const sub = `(${answer})`;
+  // Longest spelling first, so `diff(y(x),x,2)` is not eaten by the `y(x)` rule.
+  // These are the same three spellings derivativeTarget reads; a fourth would
+  // simply not be substituted, and an unsubstituted `y'` leaves a residual that
+  // mentions the function, which the guard below turns into no verdict rather
+  // than a false accusation.
+  const substituted = equationOnly
+    .replaceAll(
+      new RegExp(
+        `\\b(?:diff|derive|deriver)\\s*\\(\\s*${fn}\\s*\\(\\s*${v}\\s*\\)\\s*,\\s*${v}\\s*,\\s*(\\d+)\\s*\\)`,
+        'g'
+      ),
+      `diff(${sub},${variable},$1)`
+    )
+    .replaceAll(
+      new RegExp(
+        `\\b(?:diff|derive|deriver)\\s*\\(\\s*${fn}\\s*\\(\\s*${v}\\s*\\)\\s*,\\s*${v}\\s*\\)`,
+        'g'
+      ),
+      `diff(${sub},${variable})`
+    )
+    .replaceAll(new RegExp(`\\bd${fn}\\s*/\\s*d${v}\\b`, 'g'), `diff(${sub},${variable})`)
+    .replaceAll(
+      new RegExp(`\\b${fn}('+)`, 'g'),
+      (_m, primes: string) => `diff(${sub},${variable},${primes.length})`
+    )
+    .replaceAll(new RegExp(`\\b${fn}\\s*\\(\\s*${v}\\s*\\)`, 'g'), sub)
+    .replaceAll(new RegExp(`\\b${fn}\\b(?!\\s*\\()`, 'g'), sub);
+  // Nothing was substituted, so there is nothing to check — an equation this does
+  // not understand must not become an accusation.
+  if (substituted === equationOnly) return undefined;
+
+  try {
+    const residual = (await evaluate(`normal(${toZeroForm(substituted)})`)).trim();
+    if (isPrintedZero(residual) || allZero(residual)) {
+      return { verified: true, method, detail: `substitutes back into ${equationOnly} exactly` };
+    }
+    // A residual still naming the function means a spelling went unsubstituted,
+    // which is this function's gap and not the answer's fault.
+    if (new RegExp(`\\b${fn}\\b`).test(residual)) return undefined;
+    // The free constants have to go too, or nothing with a `c_0` in it can ever be
+    // disproved. `desolve(y''=-y, y'(x)=0)` answers a disguised `c_1/sin(x)`,
+    // which is not a solution; its residual is plainly nonzero but still mentions
+    // c_1, so evaluating at a point alone gave NaN and the check declined. A
+    // solution FAMILY has to satisfy the equation for every constant, so any
+    // assignment that leaves a residual is a disproof — two are used only because
+    // one unlucky assignment could cancel a term that does not cancel in general.
+    const assignments = [(k: number) => 2 + k, (k: number) => 1 - 2 * k];
+    let magnitude = 0;
+    for (const value of assignments) {
+      const constants = [...new Set(residual.match(/\bc_\d+\b/g) ?? [])]
+        .map((name, k) => `${name}=${value(k)}`)
+        .join(',');
+      const substs = [`${variable}=13/10`, ...(constants ? [constants] : [])].join(',');
+      const settled = await evaluate(`evalf(subst(${residual},${substs}))`);
+      const at = Math.abs(Number(settled.trim()));
+      if (Number.isFinite(at)) magnitude = Math.max(magnitude, at);
+    }
+    if (magnitude < 1e-6) return undefined;
+    return {
+      verified: false,
+      method,
+      detail: `does not satisfy ${equationOnly}; residual ${residual}`,
+    };
+  } catch {
+    return undefined;
+  }
+}

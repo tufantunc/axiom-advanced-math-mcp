@@ -3,7 +3,7 @@ import { validateExpression } from './expression-validator.js';
 import { evalWithLatex } from './giac-eval.js';
 import { detectFailure } from './compute/silent-failure.js';
 import { giacEngine } from '../giac/index.js';
-import { verifyIntegrate, verifyOdeSystem } from './self-verify.js';
+import { verifyIntegrate, verifyOdeSystem, verifyOdeSolution } from './self-verify.js';
 import { parseOdeSystem } from './ode-system-shape.js';
 import { translateOdeSystem } from './ode-system.js';
 
@@ -304,6 +304,48 @@ export async function calculusHandler(args: Record<string, unknown>) {
               'usually means the conditions cannot all be satisfied'
             : `the CAS returned ${failure}`;
         return formatErrorResponse(`solve_ode cannot solve this equation — ${why}`);
+      }
+      // The residual check, and the reason the guards above are not the defence.
+      // Each of them scans the ANSWER's shape for a sentinel, so each has to
+      // predict what a wrong answer looks like. Three rounds of syntactic guards
+      // on the condition arguments closed the reported spelling and left the field
+      // next door — `y(x)=5`, then `y(x+0)=5`, then `y(0)=x^2` — because an
+      // argument Giac reads as a second equation produces an answer that looks
+      // entirely ordinary. This asks the only question that settles it: does the
+      // thing about to be shipped solve the equation the caller wrote.
+      //
+      // Refuses on a DISPROOF only. verifyOdeSolution returns no verdict when it
+      // cannot substitute, when the answer is too large to hand back, or when a
+      // nonzero residual does not survive numeric evaluation — and "I did not
+      // check" must not become an accusation.
+      //
+      // No input reaches this refusal today, and that is the point rather than a
+      // gap: the argument guard in extractOde refuses every family currently
+      // known, before any engine call and with a message naming the offending
+      // argument. Disabling this call fails no test. It is here for the family
+      // that is not known yet — three rounds of syntactic guards each closed the
+      // reported spelling and left the field next door, and each time the next
+      // family was found by substituting the answer back rather than by guessing
+      // a spelling. Its logic is pinned by verify-ode-solution.test.ts; only its
+      // reachability is not, and cannot be.
+      //
+      // The argument guard is kept in front of it deliberately, not redundantly:
+      // it costs no round-trip and it can say which argument is wrong, which a
+      // residual cannot.
+      const original = args.original_equation;
+      if (typeof original === 'string' && original.length > 0) {
+        const verdict = await verifyOdeSolution(
+          original,
+          (args.function_name as string) ?? 'y',
+          (args.variable as string) ?? 'x',
+          resultText,
+          (expr) => giacEngine.evaluate(expr).then((r) => String(r))
+        );
+        if (verdict?.verified === false) {
+          return formatErrorResponse(
+            `solve_ode cannot solve this equation — the CAS returned an answer that ${verdict.detail}`
+          );
+        }
       }
     }
     return response;
