@@ -250,6 +250,23 @@ export function extractTaylor(problem: string): RouteResult {
   };
 }
 
+/**
+ * An initial or boundary condition as a caller writes it beside the equation:
+ * `y(0)=1`, `y'(0)=0`, `y''(1)=3`.
+ *
+ * Primes are part of the shape, unlike CONDITION_FORM in ode-system-shape.ts.
+ * That one guards the system path, which rewrites to Y' = A*Y + b and is
+ * first-order by construction, so `y'(0)` cannot arise there; a single equation
+ * can be any order. Sharing one regex would have to loosen that path to suit
+ * this one.
+ *
+ * Requiring the `=` is what keeps a bare call — `ifactor(2^257-1)` — from being
+ * read as a condition and folded into the command.
+ */
+const SINGLE_ODE_CONDITION = /^[A-Za-z_]\w*'*\s*\([^)]*\)\s*=\s*.+$/;
+
+const BARE_IDENTIFIER = /^[A-Za-z]\w*$/;
+
 export function extractOde(problem: string): RouteResult {
   if (/^(desolve|dsolve|odesolve|solve_ode)\s*\(/i.test(problem.trim())) {
     const inner = extractFnArgs(problem);
@@ -268,7 +285,23 @@ export function extractOde(problem: string): RouteResult {
     // as the function broke the other spelling just as quietly: `desolve(y'=2*x,
     // x)` became `[1/2]`. The equation settles it — the unknown function is the
     // one that appears differentiated.
-    const named = parts.slice(1).filter((part) => /^[A-Za-z]\w*$/.test(part.trim()));
+    // Every trailing argument is accounted for. They used to be filtered down to
+    // the bare identifiers and the rest discarded, so `desolve(y'=y, y(0)=1)`
+    // emitted `desolve(y'=y,x,y)` and answered `c_0*exp(x)` — the general
+    // solution — with isError:false. The correct answer is exp(x). The condition
+    // the caller wrote never reached the engine, and nothing said so.
+    const rest = parts
+      .slice(1)
+      .map((part) => part.trim())
+      .filter((part) => part.length > 0);
+    const named = rest.filter((part) => BARE_IDENTIFIER.test(part));
+    const conditions = rest.filter((part) => SINGLE_ODE_CONDITION.test(part));
+    // Disjoint by construction: a bare identifier has no parentheses and no `=`,
+    // so the two tests cannot both pass. Whatever matches neither is neither
+    // folded nor dropped — see unsupported below.
+    const unsupported = rest.filter(
+      (part) => !BARE_IDENTIFIER.test(part) && !SINGLE_ODE_CONDITION.test(part)
+    );
     const differentiated = differentiatedName(equation);
     let variable: string;
     let function_name: string;
@@ -284,9 +317,27 @@ export function extractOde(problem: string): RouteResult {
         : (only ?? independentVariable(equation, function_name));
     }
 
+    // Joined with `and`, which is Giac's own spelling for an IVP and already the
+    // path `desolve(y'=y and y(0)=1, x, y)` took successfully — so this reuses a
+    // working route rather than adding one. Inference above reads the ORIGINAL
+    // equation, not this, so a condition's text cannot be mistaken for the
+    // unknown function or the independent variable.
+    //
+    // No new length bound: every part here is a substring of `problem`, which
+    // schema.ts caps at MAX_EXPRESSION_LENGTH, and the joined result is that
+    // same text plus ` and ` separators.
+    const withConditions =
+      conditions.length > 0 ? `${equation} and ${conditions.join(' and ')}` : equation;
+
     return {
       handler: 'calculus',
-      args: { operation: 'solve_ode', equation, variable, function_name },
+      args: {
+        operation: 'solve_ode',
+        equation: withConditions,
+        variable,
+        function_name,
+        ...(unsupported.length > 0 ? { unsupported_argument: unsupported[0] } : {}),
+      },
     };
   }
   // Implicit ODE: contains y', y'', dy/dx

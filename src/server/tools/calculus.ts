@@ -125,9 +125,23 @@ function validateParams(operation: string, args: Record<string, unknown>): strin
       if (!args.expression) return "'expression' is required for taylor";
       if (!args.variable) return "'variable' is required for taylor";
       return null;
-    case 'solve_ode':
+    case 'solve_ode': {
       if (!args.equation) return "'equation' is required for solve_ode";
+      // Refused, not ignored. The extractor folds the arguments it recognises —
+      // identifiers name the variable and the function, `y(0)=1` shapes are
+      // conditions — and reports the first it does not, because dropping one is
+      // how `desolve(y'=y, y(0)=1)` came to answer the general solution as if it
+      // satisfied the condition.
+      const unsupported = args.unsupported_argument;
+      if (typeof unsupported === 'string') {
+        return (
+          `solve_ode does not understand the argument "${unsupported.slice(0, 60)}" — ` +
+          'give the equation, then any conditions as y(0)=1, then the variable ' +
+          "and the function, as in desolve(y'=y, y(0)=1, x, y)"
+        );
+      }
       return null;
+    }
     default:
       return `Unknown operation: ${operation}`;
   }

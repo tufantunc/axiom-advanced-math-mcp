@@ -256,6 +256,55 @@ describe('spellings the router has to tell apart', () => {
     expect(text(r)).toMatch(expected);
   });
 
+  // A condition written as its own argument was filtered out with everything
+  // that was not a bare identifier, so the general solution shipped as the
+  // answer to an IVP with isError:false. `desolve(y'=y, y(0)=1)` answered
+  // `c_0*exp(x)`; the answer is exp(x). The whole suite passed before this fix,
+  // which is why the rows below assert the ABSENCE of the constant rather than
+  // just a successful call — a general solution matches "contains exp(x)" too.
+  it.each([
+    ["desolve(y'=y, y(0)=1)", /^Result: exp\(x\)$/m],
+    ["desolve(y'=y, y(0)=1, x, y)", /^Result: exp\(x\)$/m],
+    ["odesolve(y'=y, y(0)=1)", /^Result: exp\(x\)$/m],
+    ["desolve(y'=2*x, y(0)=5, x, y)", /^Result: 5\+x\^2$/m],
+    // Second order, and the derivative condition `y'(0)=0` is why this shape
+    // needs its own regex rather than the system path's CONDITION_FORM.
+    ["desolve(y''=-y, y(0)=1, y'(0)=0, x, y)", /^Result: cos\(x\)$/m],
+    ["desolve(y''+y=0, y(0)=1, y'(0)=0, x, y)", /^Result: cos\(x\)$/m],
+    // A condition at a point other than 0.
+    ["desolve(y'=y+1, y(2)=3, x, y)", /^Result: 4\/exp\(2\)\*exp\(x\)-1$/m],
+  ])('%s applies the condition instead of dropping it', async (problem, expected) => {
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(false);
+    expect(text(r)).toMatch(expected);
+    // No arbitrary constant survives a fully determined IVP.
+    expect(text(r)).not.toMatch(/c_0/);
+  });
+
+  it('still answers the general solution when no condition is given', async () => {
+    // The other direction of the same change: folding must not invent a
+    // condition where the caller gave none.
+    const r = await computeHandler({ problem: "desolve(y'=y, x, y)" });
+    expect(r.isError, text(r)).toBe(false);
+    expect(text(r)).toMatch(/^Result: c_0\*exp\(x\)$/m);
+  });
+
+  it.each([['ifactor(2^257-1)'], ['42']])(
+    'refuses the unrecognised argument %s instead of discarding it',
+    async (extra) => {
+      // Dropping was the bug; this is the same class. `ifactor(2^257-1)` also
+      // must not be FOLDED — it would be evaluated on the shared worker for the
+      // full budget. Requiring `=` in the condition shape is what excludes it,
+      // so this refusal is immediate.
+      const started = Date.now();
+      const r = await computeHandler({ problem: `desolve(y'=y, ${extra}, x, y)` });
+      expect(r.isError, text(r)).toBe(true);
+      expect(text(r)).toMatch(/does not understand the argument/);
+      expect(text(r)).toContain(extra);
+      expect(Date.now() - started).toBeLessThan(1000);
+    }
+  );
+
   describe('non-finite arithmetic through the published compute tool', () => {
     it('0/0 is an error, not an answer', async () => {
       const r = await computeHandler({ problem: '0/0' });
