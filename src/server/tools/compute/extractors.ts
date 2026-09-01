@@ -267,7 +267,37 @@ export function extractTaylor(problem: string): RouteResult {
  * group accepted `y(0,1)=1`, folded it, and Giac answered as though the caller
  * had written `y(0)=1` — a confident answer to a different problem.
  */
-const SINGLE_ODE_CONDITION = /^[A-Za-z_]\w*'*\s*\(\s*[^),]*\s*\)\s*=\s*.+$/;
+const SINGLE_ODE_CONDITION = /^[A-Za-z_]\w*'*\s*\(\s*[^),]*\s*\)\s*=\s*(.+)$/;
+
+/**
+ * A condition's right-hand side must be a VALUE, not a proposition.
+ *
+ * `.+` admitted a top-level boolean, and parenthesising the join — correct on
+ * its own terms — turned that from a Giac error into a silent loss:
+ * `(y'=y) and (y(0)=1 or y(0)=2)` is accepted, the condition is ignored, and
+ * `c_0*exp(x)` ships with isError:false. That is the very shape this extractor
+ * was changed to remove. `y(0)=1==1` answered -exp(x) the same way.
+ */
+const CONDITION_VALUE_IS_A_PROPOSITION = /\b(and|or)\b|[=<>!]=|[<>]/;
+
+function isCondition(part: string): boolean {
+  const rhs = SINGLE_ODE_CONDITION.exec(part)?.[1];
+  return rhs !== undefined && !CONDITION_VALUE_IS_A_PROPOSITION.test(rhs);
+}
+
+/**
+ * The unknowns of a SYSTEM, named as Giac's own third argument: `[y,z]`, or
+ * `[y(x),z(x)]`.
+ *
+ * Legitimate and ignorable. On the system path `function_name` is not used at
+ * all — parseOdeSystem derives the function list from the equations — so naming
+ * the unknowns is redundant rather than wrong, and prompts/index.ts steers
+ * callers at exactly this spelling: "For coupled systems, use Giac notation:
+ * desolve([eq1,eq2],[f,g])". Refusing it took five previously-correct,
+ * self-verified calls to a hard error.
+ */
+const UNKNOWNS_LIST =
+  /^\[\s*[A-Za-z]\w*(\s*\(\s*[A-Za-z]\w*\s*\))?(\s*,\s*[A-Za-z]\w*(\s*\(\s*[A-Za-z]\w*\s*\))?)*\s*\]$/;
 
 const BARE_IDENTIFIER = /^[A-Za-z]\w*$/;
 
@@ -313,10 +343,35 @@ export function extractOde(problem: string): RouteResult {
       .filter((part) => part.length > 0);
     // `y(x)` names the function by its identifier, so it joins the identifiers
     // rather than forming a fourth category.
-    const named = rest
-      .filter((part) => BARE_IDENTIFIER.test(part) || APPLIED_FUNCTION.test(part))
-      .map((part) => APPLIED_FUNCTION.exec(part)?.[1] ?? part);
-    const conditions = rest.filter((part) => SINGLE_ODE_CONDITION.test(part));
+    const trimmedEquation = equation.trim();
+    // A bracketed equation is a SYSTEM, and the two paths have different rules
+    // about the trailing arguments, so this has to be known before they are
+    // classified.
+    const isSystemList = trimmedEquation.startsWith('[') && trimmedEquation.endsWith(']');
+    // `y(x)` names the FUNCTION — it cannot be an independent variable — so that
+    // fact is carried rather than re-derived below.
+    const differentiated = differentiatedName(equation);
+    // Classified by POSITION, so the argument reported back is the first one the
+    // caller wrote rather than the first some filter reached.
+    const roles = rest.map((part) => {
+      const applied = APPLIED_FUNCTION.exec(part)?.[1];
+      if (applied !== undefined) {
+        // `y(x)` names the function. If the equation differentiates something
+        // else, the two disagree and the caller has to settle it — silently
+        // preferring either one is how this file's older bugs read.
+        return differentiated !== undefined && applied !== differentiated
+          ? ({ kind: 'unsupported' } as const)
+          : ({ kind: 'function', name: applied } as const);
+      }
+      if (BARE_IDENTIFIER.test(part)) return { kind: 'identifier', name: part } as const;
+      if (isCondition(part)) return { kind: 'condition' } as const;
+      if (isSystemList && UNKNOWNS_LIST.test(part)) return { kind: 'unknowns' } as const;
+      return { kind: 'unsupported' } as const;
+    });
+    const appliedNames = roles.flatMap((r) => (r.kind === 'function' ? [r.name] : []));
+    const bareNames = roles.flatMap((r) => (r.kind === 'identifier' ? [r.name] : []));
+    const named = [...bareNames, ...appliedNames];
+    const conditions = rest.filter((_, i) => roles[i].kind === 'condition');
     // The three tests are mutually exclusive: a bare identifier has neither `(`
     // nor `=`, a condition has both, and an applied function has `(` without `=`.
     // So this is their exact complement.
@@ -325,19 +380,35 @@ export function extractOde(problem: string): RouteResult {
     // earlier version of this comment claimed every argument was accounted for
     // while `desolve(y'=y, y(0)=1, x, y, zzz)` still discarded `zzz` — the same
     // silent drop this change exists to remove, one bucket over.
-    const unsupported = [
-      ...rest.filter(
-        (part) =>
-          !BARE_IDENTIFIER.test(part) &&
-          !APPLIED_FUNCTION.test(part) &&
-          !SINGLE_ODE_CONDITION.test(part)
-      ),
-      ...named.slice(2),
-    ];
-    const differentiated = differentiatedName(equation);
+    // Only the first two identifiers are read on the single-equation path, so a
+    // later one is neither used nor refused unless it is collected here — the
+    // same silent drop this change exists to remove, one bucket over. A SYSTEM is
+    // different: parseOdeSystem ignores function_name entirely, so
+    // `desolve([y'=z, z'=-y], x, y, z)` names its unknowns redundantly and was
+    // answered, and verified, on main.
+    let identifiersSeen = 0;
+    const unsupported = rest.filter((_, i) => {
+      const role = roles[i];
+      if (role.kind === 'unsupported') return true;
+      if (isSystemList) return false;
+      if (role.kind === 'identifier' || role.kind === 'function') {
+        identifiersSeen += 1;
+        return identifiersSeen > 2;
+      }
+      return false;
+    });
     let variable: string;
     let function_name: string;
-    if (named.length >= 2) {
+    if (appliedNames.length > 0) {
+      // `y(x)` settles the function on its own. Deriving it from the equation
+      // instead read `y` as the VARIABLE whenever differentiatedName found no
+      // derivative — which is every `diff(y(x),x)` spelling, since that helper
+      // knows only `y'` and `dy/dx`. `desolve(diff(y(x),x)=y(x), y(x))` built
+      // `desolve(...,y,y)`, Giac answered `[]`, and the new empty-result guard
+      // then reported an unsatisfiable IVP for a call with no conditions.
+      function_name = appliedNames[0];
+      variable = bareNames[0]?.trim() ?? independentVariable(equation, function_name);
+    } else if (named.length >= 2) {
       variable = named[0].trim();
       function_name = named[1].trim();
     } else {
@@ -377,13 +448,18 @@ export function extractOde(problem: string): RouteResult {
     // it is 8192 and ode-system-shape.ts records conditions trapping the engine
     // at 1,415 characters, which is why that channel bounds itself at 280. The
     // reason is parity: this exact text already reaches this exact `desolve`
-    // through the equation argument, which no bound measures on main either.
+    // through the equation argument on main, and kills the worker there the same
+    // way. What does measure it is compute/schema.ts's MAX_EXPRESSION_LENGTH on
+    // the whole `problem` — 8192, far above the ~1,415-character trap — so the
+    // channel is bounded, not closed, and calculus.ts now actively tells callers
+    // to use it. Applying MAX_CONDITION_CHARS here is the open follow-up.
     // Bounded, not closed, same as the note at ode-system-shape.ts on the
     // conditions channel.
-    const trimmedEquation = equation.trim();
-    const isSystemList = trimmedEquation.startsWith('[') && trimmedEquation.endsWith(']');
+    // An empty equation is refused by validateParams, and folding onto it built a
+    // non-empty string that slipped past that check — `desolve(, y(0)=1)` reached
+    // the worker and came back blaming the CAS.
     const withConditions =
-      conditions.length === 0
+      conditions.length === 0 || trimmedEquation.length === 0
         ? equation
         : isSystemList
           ? `${trimmedEquation.slice(0, -1)}, ${conditions.join(', ')}]`

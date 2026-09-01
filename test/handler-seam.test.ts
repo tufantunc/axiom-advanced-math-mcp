@@ -319,13 +319,94 @@ describe('spellings the router has to tell apart', () => {
     // filter dropped it and inference recovered the same name from the equation.
     // Classifying it as unrecognised turned a correct answer into a refusal.
     //
-    // These rows pin that refusal, not the classification: recognising `y(x)` and
-    // silently dropping it both produce this same answer, because inference
-    // reaches the same function name either way. No input separates them that is
-    // worth a row, so the distinction is recorded here instead of asserted.
+    // These rows pin the refusal only: for `y'=y`, recognising `y(x)` and silently
+    // dropping it both give this answer, because inference reaches the same name
+    // either way. An earlier version of this comment concluded from that that no
+    // input worth a row separates the two — false, and it is why the regression in
+    // the `diff(y(x),x)` rows below shipped. That spelling separates them with
+    // opposite outcomes.
     const r = await computeHandler({ problem });
     expect(r.isError, text(r)).toBe(false);
     expect(text(r)).toMatch(expected);
+  });
+
+  it.each([
+    ['desolve(diff(y(x),x)=y(x), y(x))', /^Result: c_0\*exp\(x\)$/m],
+    ['dsolve(diff(y(x),x)=y(x), y(x))', /^Result: c_0\*exp\(x\)$/m],
+    ['desolve(diff(y(t),t)=y(t), y(t))', /^Result: c_0\*exp\(t\)$/m],
+    ['desolve(diff(y(x),x)=2*x, y(x))', /^Result: c_0\+x\^2$/m],
+  ])('%s names the function, not the variable', async (problem, expected) => {
+    // differentiatedName knows `y'` and `dy/dx` only, so for the `diff(y(x),x)`
+    // spelling it finds nothing. Recognising `y(x)` and then asking the equation
+    // which role it plays therefore read `y` as the independent VARIABLE, built
+    // `desolve(...,y,y)`, and Giac answered `[]` — which the new empty-result
+    // guard then reported as an unsatisfiable IVP, on a call with no conditions.
+    // An applied argument names the function by construction; that is carried
+    // rather than re-derived.
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(false);
+    expect(text(r)).toMatch(expected);
+  });
+
+  it.each([
+    ["desolve([y'=z, z'=-y], t, [y,z])", /^Result: \[\[c_0\*cos\(t\)/m],
+    ["desolve([y'=z, z'=-y], x, y, z)", /^Result: \[\[c_0\*cos\(x\)/m],
+    ["desolve([y'=z, z'=-y], x, [y(x),z(x)])", /^Result: \[\[c_0\*cos\(x\)/m],
+    ["desolve([y'=z, z'=-y, y(0)=1, z(0)=0], t, [y,z])", /^Result: \[\[cos\(t\),-sin\(t\)\]\]$/m],
+  ])('%s may name its unknowns', async (problem, expected) => {
+    // A SYSTEM ignores function_name entirely — parseOdeSystem derives the
+    // function list from the equations — so naming the unknowns is redundant, not
+    // wrong, and prompts/index.ts steers callers at exactly this spelling. The
+    // strict single-equation rule refused five calls that main answered AND
+    // self-verified.
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(false);
+    expect(text(r)).toMatch(expected);
+  });
+
+  it.each([["desolve(y'=y, y(0)=1 or y(0)=2, x, y)"], ["desolve(y'=y, y(0)=1==1, x, y)"]])(
+    'refuses %s rather than folding a proposition',
+    async (problem) => {
+      // Parenthesising each side of the join is correct for precedence, and it
+      // opened this: Giac ACCEPTS `(y'=y) and (y(0)=1 or y(0)=2)`, ignores the
+      // condition, and `c_0*exp(x)` ships with isError:false — the general solution
+      // as the answer to an IVP, which is the shape this whole change exists to
+      // remove. Unparenthesised, Giac errored and the call was refused, so the fix
+      // for one hazard uncovered another. A condition's right-hand side has to be a
+      // value.
+      const r = await computeHandler({ problem });
+      expect(r.isError, text(r)).toBe(true);
+      expect(text(r)).toMatch(/does not understand the argument/);
+      expect(text(r)).not.toMatch(/c_0/);
+    }
+  );
+
+  it('refuses an applied name the equation contradicts', async () => {
+    // Deliberate deviation from main, which answered `c_0*exp(x)` here — by
+    // dropping `z(x)` and inferring `y` from the equation. The input is
+    // self-contradictory: the equation differentiates `y` and the caller names
+    // `z` as the unknown. Preferring either side silently is how this file's
+    // older bugs read, and the previous commit's version answered `c_0*exp(z)` —
+    // a wrong answer rather than a refusal. Same treatment as a condition on a
+    // function the equation never mentions.
+    const r = await computeHandler({ problem: "desolve(y'=y, z(x))" });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/does not understand the argument "z\(x\)"/);
+  });
+
+  it("reports the caller's first unrecognised argument, not the filters'", async () => {
+    const r = await computeHandler({ problem: "desolve(y'=y, x, y, zzz, 42)" });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/argument "zzz"/);
+  });
+
+  it('still refuses an empty equation before any engine call', async () => {
+    // Folding built a non-empty string from an empty equation, so the
+    // "'equation' is required" check never fired and a precise usage error became
+    // a CAS-blaming one, paid for with a Giac round-trip.
+    const r = await computeHandler({ problem: 'desolve(, y(0)=1)' });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/'equation' is required/);
   });
 
   it('refuses a third identifier rather than discarding it', async () => {
