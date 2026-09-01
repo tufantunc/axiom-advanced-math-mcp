@@ -364,6 +364,64 @@ describe('spellings the router has to tell apart', () => {
     expect(text(r)).toMatch(expected);
   });
 
+  it.each([
+    ["desolve([y'=z, z'=-y], x, z(x))", /^Result: \[\[c_0\*cos\(x\)/m],
+    ["desolve([y'=z, z'=-y], t, z(t))", /^Result: \[\[c_0\*cos\(t\)/m],
+    ["desolve([y'=z, z'=-y], x, y(x), z(x))", /^Result: \[\[c_0\*cos\(x\)/m],
+  ])('%s may name a non-first unknown applied', async (problem, expected) => {
+    // differentiatedName returns only the FIRST differentiated name, so comparing
+    // an applied argument against it made every unknown but `y` look like a
+    // contradiction: `x, y(x)` was accepted and `x, z(x)` refused for the same
+    // system, which no caller can predict. Membership in the system's own
+    // function list is the test.
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(false);
+    expect(text(r)).toMatch(expected);
+  });
+
+  it('refuses an applied name that is not an unknown of the system', async () => {
+    const r = await computeHandler({ problem: "desolve([y'=z, z'=-y], x, q(x))" });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/does not understand the argument "q\(x\)"/);
+  });
+
+  it.each([["desolve([y'=y, y(0)=1], x, y, zzz)"], ["desolve([y'=y], x, y, zzz)"]])(
+    '%s refuses the surplus argument even though it is bracketed',
+    async (problem) => {
+      // Brackets are not a system. parseOdeSystem needs two derivative members —
+      // `[y'=2*x, y(0)=1]` is a single equation, its docblock says so — so keying
+      // the trailing-argument rules off the punctuation gave these the system's
+      // permissiveness with the single-equation path's consequences: `zzz` was
+      // dropped and the answer shipped, while the unbracketed same request was
+      // refused and pinned by a row above.
+      const r = await computeHandler({ problem });
+      expect(r.isError, text(r)).toBe(true);
+      expect(text(r)).toMatch(/does not understand the argument "zzz"/);
+    }
+  );
+
+  it.each([["desolve(y'=y, [y])"], ["desolve(y'=y, y(0)=1, [y])"]])(
+    '%s accepts an unknowns list on a single equation',
+    async (problem) => {
+      // Recognising the list only for systems made `desolve(y'=y, [y])` a refusal
+      // while `desolve([y'=y], [y])` was accepted — same mathematics, opposite
+      // outcomes decided by whether the caller bracketed the equation.
+      const r = await computeHandler({ problem });
+      expect(r.isError, text(r)).toBe(false);
+      expect(text(r)).toMatch(/exp\(x\)/);
+    }
+  );
+
+  it('folds into a bracketed single equation, not after it', async () => {
+    // Where the conditions go is a question about syntax, not about systemhood: a
+    // bracketed list takes them as further members. Keying the fold off the system
+    // predicate instead would put `([y'=y]) and (y(0)=1)` into the command.
+    const r = await computeHandler({ problem: "desolve([y'=y], y(0)=1, x, y)" });
+    expect(r.isError, text(r)).toBe(false);
+    expect(text(r)).toMatch(/^Result: exp\(x\)$/m);
+    expect(text(r)).toMatch(/Command: desolve\(\[y'=y, y\(0\)=1\]/);
+  });
+
   it.each([["desolve(y'=y, y(0)=1 or y(0)=2, x, y)"], ["desolve(y'=y, y(0)=1==1, x, y)"]])(
     'refuses %s rather than folding a proposition',
     async (problem) => {

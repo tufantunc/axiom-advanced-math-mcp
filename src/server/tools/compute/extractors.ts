@@ -1,4 +1,5 @@
 import type { RouteResult } from './types.js';
+import { parseOdeSystem } from '../ode-system-shape.js';
 import { coerceTestData } from '../hypothesis-testing.js';
 import {
   extractFnArgs,
@@ -289,12 +290,20 @@ function isCondition(part: string): boolean {
  * The unknowns of a SYSTEM, named as Giac's own third argument: `[y,z]`, or
  * `[y(x),z(x)]`.
  *
- * Legitimate and ignorable. On the system path `function_name` is not used at
- * all — parseOdeSystem derives the function list from the equations — so naming
- * the unknowns is redundant rather than wrong, and prompts/index.ts steers
- * callers at exactly this spelling: "For coupled systems, use Giac notation:
- * desolve([eq1,eq2],[f,g])". Refusing it took five previously-correct,
- * self-verified calls to a hard error.
+ * Legitimate and ignorable, on either path. For a real system parseOdeSystem
+ * derives the function list from the equations and `function_name` is never read,
+ * so naming the unknowns is redundant rather than wrong; for a single equation
+ * inference reaches the same name anyway. Refusing it took previously-correct,
+ * self-verified calls to a hard error — four rows below cover them.
+ *
+ * What this does NOT restore is the spelling prompts/index.ts advertises,
+ * `desolve([eq1,eq2],[f,g])` with no variable argument. Recognising the list
+ * leaves `named` empty, so the variable falls to independentVariable(), which
+ * picks one of the unknowns and the call is refused as "uses z as both the
+ * independent variable and an unknown function" — on main too. Accepting the
+ * list is necessary for the variable-supplied spellings and not sufficient for
+ * that one; making it answerable means excluding the system's own function names
+ * from independentVariable's candidates, which is a separate change.
  */
 const UNKNOWNS_LIST =
   /^\[\s*[A-Za-z]\w*(\s*\(\s*[A-Za-z]\w*\s*\))?(\s*,\s*[A-Za-z]\w*(\s*\(\s*[A-Za-z]\w*\s*\))?)*\s*\]$/;
@@ -347,39 +356,62 @@ export function extractOde(problem: string): RouteResult {
     // A bracketed equation is a SYSTEM, and the two paths have different rules
     // about the trailing arguments, so this has to be known before they are
     // classified.
-    const isSystemList = trimmedEquation.startsWith('[') && trimmedEquation.endsWith(']');
+    // Where the conditions GO is a question about syntax: a bracketed list takes
+    // them as further members, whether or not it holds two equations. Which
+    // trailing-argument rules apply is a different question, answered by isSystem
+    // below. Conflating the two put `([y'=y]) and (y(0)=1)` into the command.
+    const isBracketedList = trimmedEquation.startsWith('[') && trimmedEquation.endsWith(']');
     // `y(x)` names the FUNCTION — it cannot be an independent variable — so that
     // fact is carried rather than re-derived below.
     const differentiated = differentiatedName(equation);
+    // The SAME predicate calculus.ts uses, not the punctuation. The rules used to
+    // key off the brackets, and parseOdeSystem needs two
+    // derivative members — its own docblock says `[y'=2*x, y(0)=1]` is a single
+    // equation. So bracketed non-systems got the system's trailing-argument rules
+    // and the single-equation path's consequences: `desolve([y'=y, y(0)=1], x, y,
+    // zzz)` answered exp(x) and dropped `zzz`, the drop this change exists to
+    // remove, while the unbracketed same request was refused.
+    const parsedSystem = parseOdeSystem(trimmedEquation);
+    const isSystem = parsedSystem !== null;
+    const systemFunctions = new Set(parsedSystem?.equations.map((e) => e.fn) ?? []);
     // Classified by POSITION, so the argument reported back is the first one the
     // caller wrote rather than the first some filter reached.
     const roles = rest.map((part) => {
       const applied = APPLIED_FUNCTION.exec(part)?.[1];
       if (applied !== undefined) {
-        // `y(x)` names the function. If the equation differentiates something
-        // else, the two disagree and the caller has to settle it — silently
-        // preferring either one is how this file's older bugs read.
+        // A system's unknowns may be named applied, and function_name is unused
+        // on that path, so naming one is redundant rather than wrong. Comparing
+        // against `differentiated` refused them: that helper returns only the
+        // FIRST differentiated name, so for `[y'=z, z'=-y]` every unknown but `y`
+        // looked like a contradiction — `x, y(x)` was accepted and `x, z(x)`
+        // refused for the same system. Membership is the right test, and a name
+        // that is not an unknown of the system is still refused.
+        if (isSystem) {
+          return systemFunctions.has(applied)
+            ? ({ kind: 'unknowns' } as const)
+            : ({ kind: 'unsupported' } as const);
+        }
+        // Single equation: `y(x)` names the function. If the equation
+        // differentiates something else the two disagree and the caller has to
+        // settle it — silently preferring either is how this file's older bugs
+        // read.
         return differentiated !== undefined && applied !== differentiated
           ? ({ kind: 'unsupported' } as const)
           : ({ kind: 'function', name: applied } as const);
       }
       if (BARE_IDENTIFIER.test(part)) return { kind: 'identifier', name: part } as const;
       if (isCondition(part)) return { kind: 'condition' } as const;
-      if (isSystemList && UNKNOWNS_LIST.test(part)) return { kind: 'unknowns' } as const;
+      // Ignorable on either path, so recognised on both. Gating it on the system
+      // made `desolve(y'=y, [y])` — answered on main — a refusal while
+      // `desolve([y'=y], [y])` was accepted: same mathematics, opposite outcomes
+      // decided by whether the caller bracketed the equation.
+      if (UNKNOWNS_LIST.test(part)) return { kind: 'unknowns' } as const;
       return { kind: 'unsupported' } as const;
     });
     const appliedNames = roles.flatMap((r) => (r.kind === 'function' ? [r.name] : []));
     const bareNames = roles.flatMap((r) => (r.kind === 'identifier' ? [r.name] : []));
     const named = [...bareNames, ...appliedNames];
     const conditions = rest.filter((_, i) => roles[i].kind === 'condition');
-    // The three tests are mutually exclusive: a bare identifier has neither `(`
-    // nor `=`, a condition has both, and an applied function has `(` without `=`.
-    // So this is their exact complement.
-    //
-    // `named.slice(2)` is in here because only the first two are ever read. An
-    // earlier version of this comment claimed every argument was accounted for
-    // while `desolve(y'=y, y(0)=1, x, y, zzz)` still discarded `zzz` — the same
-    // silent drop this change exists to remove, one bucket over.
     // Only the first two identifiers are read on the single-equation path, so a
     // later one is neither used nor refused unless it is collected here — the
     // same silent drop this change exists to remove, one bucket over. A SYSTEM is
@@ -390,7 +422,7 @@ export function extractOde(problem: string): RouteResult {
     const unsupported = rest.filter((_, i) => {
       const role = roles[i];
       if (role.kind === 'unsupported') return true;
-      if (isSystemList) return false;
+      if (isSystem) return false;
       if (role.kind === 'identifier' || role.kind === 'function') {
         identifiersSeen += 1;
         return identifiersSeen > 2;
@@ -453,15 +485,13 @@ export function extractOde(problem: string): RouteResult {
     // the whole `problem` — 8192, far above the ~1,415-character trap — so the
     // channel is bounded, not closed, and calculus.ts now actively tells callers
     // to use it. Applying MAX_CONDITION_CHARS here is the open follow-up.
-    // Bounded, not closed, same as the note at ode-system-shape.ts on the
-    // conditions channel.
     // An empty equation is refused by validateParams, and folding onto it built a
     // non-empty string that slipped past that check — `desolve(, y(0)=1)` reached
     // the worker and came back blaming the CAS.
     const withConditions =
       conditions.length === 0 || trimmedEquation.length === 0
         ? equation
-        : isSystemList
+        : isBracketedList
           ? `${trimmedEquation.slice(0, -1)}, ${conditions.join(', ')}]`
           : `(${equation}) and (${conditions.join(') and (')})`;
 
