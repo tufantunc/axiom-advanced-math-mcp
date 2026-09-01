@@ -606,9 +606,22 @@ export function extractOde(problem: string): RouteResult {
     };
   }
   // Implicit ODE: contains y', y'', dy/dx
+  //
+  // `original_equation` here too, or the residual check is inert on this spelling
+  // and the families it demonstrably catches keep shipping: `y'=y and y(x)=5`
+  // answered 5/exp(x)*exp(x) while `desolve(y'=y and y(x)=5, x, y)` — the same
+  // request with a verb — was refused. The variable and function are hardcoded on
+  // this path, and the verifier is handed those same values, so the substitution
+  // cannot disagree with the command.
   return {
     handler: 'calculus',
-    args: { operation: 'solve_ode', equation: problem.trim(), variable: 'x', function_name: 'y' },
+    args: {
+      operation: 'solve_ode',
+      equation: problem.trim(),
+      original_equation: problem.trim(),
+      variable: 'x',
+      function_name: 'y',
+    },
   };
 }
 

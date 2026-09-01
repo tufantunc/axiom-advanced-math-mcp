@@ -535,6 +535,41 @@ describe('spellings the router has to tell apart', () => {
     expect(text(r)).toMatch(expected);
   });
 
+  it.each([
+    ["desolve(y'=y and(y(0)=1), x, y)", /^Result: exp\(x\)$/m],
+    ["desolve((y'=y)and(y(0)=1), x, y)", /^Result: exp\(x\)$/m],
+    ["desolve(y''=-y and(y(0)=1) and (y'(0)=0), x, y)", /^Result: cos\(x\)$/m],
+  ])('%s is answered, not accused by the residual check', async (problem, expected) => {
+    // Giac's own IVP syntax without a space. The residual check cuts the equation
+    // at the first top-level `and` before substituting, and its detector required
+    // whitespace BEFORE the token — so `and(` was missed, the condition stayed in
+    // the equation, and a correct answer was refused as not satisfying it. A
+    // verifier that can manufacture a disproof is worse than none, and this pins
+    // the direction that matters.
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(false);
+    expect(text(r)).toMatch(expected);
+  });
+
+  it.each([
+    ["desolve(y'=y and y(x)=5, x, y)"],
+    ["desolve([y'=y, y(x)=5], x, y)"],
+    ["desolve(y'=y and y(0)=x^2, x, y)"],
+    ["desolve([y'=y, y(0)=x^2], x, y)"],
+    // The bare spelling looksLikeOde accepts, with no verb at all. It reached the
+    // handler without `original_equation`, so the check was inert on it and the
+    // same non-solutions shipped that `desolve(...)` refused.
+    ["y'=y and y(x)=5"],
+    ["y'=y and y(0)=x^2"],
+  ])('%s is refused by the residual check', async (problem) => {
+    // A condition written INSIDE the equation walks past the argument guard, which
+    // only scans the trailing arguments. These are the families the residual check
+    // exists for, and main answers every one of them with a non-solution.
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/does not satisfy/);
+  });
+
   it.each([['derive'], ['deriver']])('refuses %s(z)=5 by name, like diff', async (operator) => {
     // derivativeOnRight already recorded that these are Giac's own aliases for
     // diff; isBareDiffCall listed only `diff`, so replacing the extractor's own

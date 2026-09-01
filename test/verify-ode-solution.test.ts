@@ -36,6 +36,11 @@ describe('verifyOdeSolution', () => {
     // and it evaluates to -7.1e-15.
     ["y'=y", 'sqrt(2)*exp(x)'],
     ["y'=y", '2^(1/3)*exp(x)'],
+    // `or` is cut like `and`: the first top-level term is the equation either way,
+    // and exp(x) does satisfy `y'=y`. The cut is what the belt-and-braces check
+    // below relies on — if a join ever survives it, the verifier declines instead
+    // of substituting into a boolean.
+    ["y'=y or y(0)=1", 'exp(x)'],
   ])('verifies %s satisfied by %s', async (equation, answer) => {
     const out = await verifyOdeSolution(equation, 'y', 'x', answer, evaluate);
     expect(out, `${equation} / ${answer}`).toMatchObject({ verified: true });
@@ -83,6 +88,18 @@ describe('verifyOdeSolution', () => {
     ['z_1=w_2', 'exp(x)'],
     // A branch set — which branch the caller meant is a different question.
     ["y'=y^2", '[1/(1-x),2/(1-x)]'],
+    // `y'(x)` is not one of the three spellings. Unanchored, the prime rule ate the
+    // prime and left `(x)` applied to the substituted expression, which Giac reads
+    // as multiplication — so the residual mentioned no `y`, the fn-mention guard
+    // could not fire, and a correct answer was refuted.
+    ["y'(x)=y(x)", 'c_0*exp(x)'],
+    // Stripping the brackets can EXPOSE a join the cut could not see: inside the
+    // member's own parentheses it is not top-level, and once they come off it is.
+    // The assertion after the cut is what catches that; without it this would be
+    // substituted into as though it were a bare equation. (`(y'=y and y(0)=1)`
+    // alone does NOT reach it — the outer strip runs before the cut, so the join is
+    // already top-level and gets cut normally.)
+    ["[(y'=y and y(0)=1), q]", 'exp(x)'],
     // Too large to hand back to the engine.
     ["y'=y", `exp(x)*(${'1+'.repeat(2100)}1)`],
   ])('returns no verdict for %s / %s', async (equation, answer) => {

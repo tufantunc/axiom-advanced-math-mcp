@@ -264,24 +264,37 @@ export async function verifyOdeSystem(
 }
 
 /**
- * The text before the first top-level `and`.
+ * The text before the first top-level `and` or `or`.
  *
- * splitTopLevel takes a single CHARACTER, so it cannot do this — passing it
- * 'and' silently split on nothing and left the conditions in the equation, which
- * is how the first version of the residual check accused `y'=y and y(0)=1` of not
- * satisfying itself.
+ * Token-based, not whitespace-anchored. splitTopLevel takes a single CHARACTER,
+ * so it cannot do this — passing it 'and' silently split on nothing and left the
+ * conditions in the equation, which is how the first version of this check accused
+ * `y'=y and y(0)=1` of not satisfying itself. The second version demanded a space
+ * before the token, so `y'=y and(y(0)=1)` — Giac's own syntax, which it answers
+ * correctly — was accused the same way.
  */
-function beforeTopLevelAnd(text: string): string {
+const BOOLEAN_JOIN = /^(?:and|or)(?![A-Za-z0-9_])/;
+
+function beforeTopLevelJoin(text: string): string {
   let depth = 0;
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
     if (ch === '(' || ch === '[' || ch === '{') depth++;
     else if (ch === ')' || ch === ']' || ch === '}') depth--;
-    else if (depth === 0 && /\s/.test(ch) && /^\s+and\s/.test(text.slice(i))) {
+    else if (
+      depth === 0 &&
+      !/[A-Za-z0-9_]/.test(text[i - 1] ?? ' ') &&
+      BOOLEAN_JOIN.test(text.slice(i))
+    ) {
       return text.slice(0, i);
     }
   }
   return text;
+}
+
+/** Whether a boolean join survives at depth 0 — the cut above did not reach it. */
+function hasTopLevelJoin(text: string): boolean {
+  return beforeTopLevelJoin(text) !== text;
 }
 
 /**
@@ -325,7 +338,7 @@ export async function verifyOdeSolution(
   // (`y'=y^2` answers `[1/(1/5-x)]`); more than one is a branch set, and which
   // branch the caller meant is not this function's question.
   const inner = /^\[(.*)\]$/.exec(raw)?.[1];
-  const answer = inner !== undefined && !inner.includes(',') ? inner : raw;
+  const answer = inner !== undefined && splitTopLevel(inner, ',').length === 1 ? inner : raw;
   if (answer.startsWith('[')) return undefined;
 
   // The DIFFERENTIAL EQUATION only. The text handed in is the caller's whole
@@ -341,17 +354,24 @@ export async function verifyOdeSolution(
   // can satisfy the ODE and miss the condition — and it is the system path's
   // verifyOdeSystem that covers that for its own shape.
   const firstMember = splitTopLevel(stripEnclosingBrackets(equation.trim()), ',')[0] ?? '';
-  const equationOnly = beforeTopLevelAnd(firstMember).trim();
-  if (equationOnly.length === 0) return undefined;
+  const equationOnly = stripEnclosingBrackets(beforeTopLevelJoin(firstMember).trim()).trim();
+  // Belt and braces, because the cut above is itself a spelling prediction and has
+  // been wrong twice. If a join survives it, this is not a bare equation and
+  // nothing substituted into it can be trusted — decline rather than risk a third
+  // manufactured disproof.
+  if (equationOnly.length === 0 || hasTopLevelJoin(equationOnly)) return undefined;
 
   const fn = functionName.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
   const v = variable.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
   const sub = `(${answer})`;
   // Longest spelling first, so `diff(y(x),x,2)` is not eaten by the `y(x)` rule.
-  // These are the same three spellings derivativeTarget reads; a fourth would
-  // simply not be substituted, and an unsubstituted `y'` leaves a residual that
-  // mentions the function, which the guard below turns into no verdict rather
-  // than a false accusation.
+  // The same three spellings derivativeTarget reads, and the prime rule is anchored
+  // the way derivativeTarget anchors it: `y'` is a derivative, `y'(x)` is not one of
+  // the three. Unanchored it ate the prime and left `(x)` applied to the substituted
+  // expression, which Giac reads as multiplication — a residual mentioning no `y`, so
+  // the guard below could not catch it, and a correct `c_0*exp(x)` was refuted for
+  // `y'(x)=y(x)`. Anything outside the three is now left intact BY CONSTRUCTION, so
+  // the residual still names the function and the guard declines.
   const substituted = equationOnly
     .replaceAll(
       new RegExp(
@@ -369,7 +389,7 @@ export async function verifyOdeSolution(
     )
     .replaceAll(new RegExp(`\\bd${fn}\\s*/\\s*d${v}\\b`, 'g'), `diff(${sub},${variable})`)
     .replaceAll(
-      new RegExp(`\\b${fn}('+)`, 'g'),
+      new RegExp(`\\b${fn}('+)(?!\\s*\\()`, 'g'),
       (_m, primes: string) => `diff(${sub},${variable},${primes.length})`
     )
     .replaceAll(new RegExp(`\\b${fn}\\s*\\(\\s*${v}\\s*\\)`, 'g'), sub)

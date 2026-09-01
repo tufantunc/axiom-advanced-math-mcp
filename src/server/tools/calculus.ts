@@ -205,8 +205,13 @@ export async function calculusHandler(args: Record<string, unknown>) {
       // coefficient named `ilaplace_k` does not trip them either. It is here
       // because the `Command:` line echoes caller text and a sentinel added
       // later may not be as punctuated.
-      const resultLine = /^Result:\s*(.*)$/m.exec(response.content.map((c) => c.text).join('\n'));
-      const result = resultLine?.[1]?.trim() ?? '';
+      // The typed value, not a scrape of the rendered block. evalWithLatex returns
+      // `result` for exactly this, and it exists because this file used to read its
+      // own `Verified: ✗` glyph back out of the display. A `^Result:(.*)$` scrape
+      // also stops at the first newline, and a truncated answer handed to the
+      // substituter below would be a manufactured residual — a manufactured
+      // disproof, which is the one thing this check must never produce.
+      const result = response.result.trim();
       // The shared detector decides the three checks it already owns — an empty
       // result, a GIAC_ERROR, and a non-finite token — and this path adds only
       // what is specific to a solution VECTOR. Re-deriving them here had let the
@@ -282,8 +287,7 @@ export async function calculusHandler(args: Record<string, unknown>) {
     // scanning the whole response would refuse an equation for a coefficient's
     // name.
     if (!functions && operation === 'solve_ode') {
-      const line = /^Result:\s*(.*)$/m.exec(response.content.map((c) => c.text).join('\n'));
-      const resultText = line?.[1]?.trim() ?? '';
+      const resultText = response.result.trim();
       // `infinity` is checked here and not in detectFailure because it is not a
       // failure in general — `integrate(1/x^2, x, 0, 1)` correctly diverges — but
       // no SOLUTION of an ODE is infinity. The solution-vector guard has had this
@@ -319,19 +323,24 @@ export async function calculusHandler(args: Record<string, unknown>) {
       // nonzero residual does not survive numeric evaluation — and "I did not
       // check" must not become an accusation.
       //
-      // No input reaches this refusal today, and that is the point rather than a
-      // gap: the argument guard in extractOde refuses every family currently
-      // known, before any engine call and with a message naming the offending
-      // argument. Disabling this call fails no test. It is here for the family
-      // that is not known yet — three rounds of syntactic guards each closed the
-      // reported spelling and left the field next door, and each time the next
-      // family was found by substituting the answer back rather than by guessing
-      // a spelling. Its logic is pinned by verify-ode-solution.test.ts; only its
-      // reachability is not, and cannot be.
+      // This fires, and on families nothing else covers. An earlier version of
+      // this note claimed no input reached it — false, and expensively so: the
+      // argument guard in extractOde scans the trailing ARGUMENTS, so a condition
+      // written inside the equation walks straight past it. Both spellings reach
+      // here and are refused, where main answers each with a non-solution:
       //
-      // The argument guard is kept in front of it deliberately, not redundantly:
-      // it costs no round-trip and it can say which argument is wrong, which a
-      // residual cannot.
+      //   desolve(y'=y and y(x)=5, x, y)      residual -5
+      //   desolve([y'=y, y(x)=5], x, y)       residual -5
+      //   desolve(y'=y and y(0)=x^2, x, y)    residual 2*x*exp(x)
+      //   desolve([y'=y, y(0)=x^2], x, y)     residual 2*x*exp(x)
+      //
+      // Believing that note is why the reachable path went untested, and that is
+      // how a version of the verifier that refused `y'=y and(y(0)=1)` — a correct
+      // answer, Giac's own syntax — shipped unnoticed.
+      //
+      // The argument guard stays in front of it for the arguments it does cover:
+      // no round-trip, and it can name the offending argument, which a residual
+      // cannot.
       const original = args.original_equation;
       if (typeof original === 'string' && original.length > 0) {
         const verdict = await verifyOdeSolution(
