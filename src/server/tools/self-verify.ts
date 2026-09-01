@@ -1,5 +1,6 @@
 import { giacEngine } from '../giac/index.js';
-import { MAX_ENGINE_DEPTH, nestingDepth } from './giac-eval.js';
+import { MAX_ENGINE_DEPTH } from './giac-eval.js';
+import { nestingDepth } from './output-cleanup.js';
 import { isPrintedZero, splitTopLevel } from './output-cleanup.js';
 import { stripEnclosingBrackets } from './compute/arg-parsing.js';
 

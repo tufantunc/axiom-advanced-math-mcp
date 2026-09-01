@@ -1,9 +1,11 @@
 import { formatErrorResponse } from './response-formatter.js';
 import { validateExpression } from './expression-validator.js';
 import { evalWithLatex } from './giac-eval.js';
+import { detectFailure } from './compute/silent-failure.js';
 import { giacEngine } from '../giac/index.js';
 import { verifyIntegrate, verifyOdeSystem } from './self-verify.js';
-import { parseOdeSystem, translateOdeSystem } from './ode-system.js';
+import { parseOdeSystem } from './ode-system-shape.js';
+import { translateOdeSystem } from './ode-system.js';
 
 function buildSimpleCommand(operation: string, args: Record<string, unknown>): string {
   switch (operation) {
@@ -191,23 +193,41 @@ export async function calculusHandler(args: Record<string, unknown>) {
       // later may not be as punctuated.
       const resultLine = /^Result:\s*(.*)$/m.exec(response.content.map((c) => c.text).join('\n'));
       const result = resultLine?.[1]?.trim() ?? '';
+      // The shared detector decides the three checks it already owns — an empty
+      // result, a GIAC_ERROR, and a non-finite token — and this path adds only
+      // what is specific to a solution VECTOR. Re-deriving them here had let the
+      // two drift: `detectFailure` token-matches `NaN`, `Inf` and `-Inf`, and this
+      // copy did not, so a non-finite component would have shipped as a solution.
+      //
+      // It is given a synthesized `Result:` line rather than the whole response,
+      // which is what keeps an earlier fix: the `Command:` line echoes the
+      // caller's own text, so scanning the full response refused
+      // `[y'=k_undefined*z, z'=-y]` for a coefficient's NAME.
+      //
+      // `infinity` stays local. It is not a failure in general — `integrate(1/x^2,
+      // x, 0, 1)` correctly diverges to `+infinity` and detectFailure is right to
+      // pass it — but neither an infinite COMPONENT of a solution vector nor an
+      // `integrate(…,0,+infinity)` the engine never evaluated is a solution.
+      // Token-matched so a coefficient named `infinity_k` is not caught by its own
+      // name.
+      //
+      // Reached by `[y'=z, z'=-y+x^x]`, which answers `[[infinity,infinity]]`, and
+      // by four forcing terms that come back with an unevaluated
+      // `integrate(…,x,0,+infinity)`: exp(exp(x)), Gamma(x), log(x)^2,
+      // exp(x)*sin(exp(x)). The pole rule cannot refuse any of them — `denom(x^x)`
+      // does not mention x, and none is tan/cotan/tanh — so this arm is the only
+      // guard on that answer. An earlier version of this comment called the arm
+      // unreachable; `x^x` was the counterexample, and the row named
+      // 'refuses an infinite solution component' in handler-seam.test.ts pins it.
+      //
+      // `ilaplace(` has never been observed without `poly1[` beside it — over 120
+      // random matrices and every shape tried here — so no input discriminates
+      // that arm and no test can pin it. Recorded so the next reader does not go
+      // looking for the test that is missing.
       const unfinished =
-        result === '[]' ||
-        // `ilaplace(` has never been observed without `poly1[` beside it — over
-        // 120 random matrices and every shape tried here, the two arrive
-        // together — so no input discriminates this arm and no test can pin it.
-        // Kept rather than removed because it costs nothing and names a distinct
-        // leftover; recorded here so the next reader does not go looking for the
-        // test that is missing.
+        detectFailure(`Result: ${result}`) !== null ||
         /poly1\[|ilaplace\(/.test(result) ||
-        /(^|[^A-Za-z_0-9])undef([^A-Za-z_0-9]|$)/.test(result) ||
-        // `[y'=z+exp(x)/x, z'=-y]` answered `[[infinity,infinity]]` with
-        // isError:false. A component that is literally infinity is not a
-        // solution, and shipping one is the same defect as shipping `[]`.
-        // Token-matched, like `undef`, so a coefficient named `infinity_k` is
-        // not caught by its own name.
-        /(^|[^A-Za-z_0-9])infinity([^A-Za-z_0-9]|$)/.test(result) ||
-        result.includes('GIAC_ERROR');
+        /(^|[^A-Za-z_0-9])infinity([^A-Za-z_0-9]|$)/.test(result);
       // Reachable again. This branch was removed when verifyOdeSystem could only
       // say ✓ or nothing; it can now prove failure for an exact system, and a
       // disproved answer must not ship — `[y'=z, z'=-y+sqrt(x)]` was going out as

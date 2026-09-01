@@ -1,7 +1,7 @@
 import { giacEngine } from '../giac/index.js';
 import { formatToolResponse, formatErrorResponse } from './response-formatter.js';
 import { evaluationCache, isCacheable } from '../giac/cache.js';
-import { stripQuotes, stripDisplayMode, stripOrderTerm } from './output-cleanup.js';
+import { stripQuotes, stripDisplayMode, stripOrderTerm, nestingDepth } from './output-cleanup.js';
 import type { VerificationResult } from './self-verify.js';
 import { unicodeToAscii } from './unicode-normalize.js';
 
@@ -27,26 +27,6 @@ export interface EvalOptions {
 /** Deepest nesting handed back to `latex(...)`; see the note in toLatex. */
 export const MAX_ENGINE_DEPTH = 100;
 const MAX_LATEX_DEPTH = MAX_ENGINE_DEPTH;
-
-/**
- * Deepest parenthesis nesting in a printed result, call or grouping alike.
- *
- * Parentheses only. Counting `[` and `{` as well seemed the cautious reading —
- * how deep the tree goes, whichever delimiter spelt it — but it refuses LaTeX
- * that renders perfectly well: a list nested 200 deep is 401 characters and
- * `latex()` answers it with the worker untouched, where a 140-deep run of
- * `sqrt(1+...)` kills it. The hazard is nested function application; grouping
- * parentheses are counted too, which only makes this more conservative.
- */
-export function nestingDepth(text: string): number {
-  let depth = 0;
-  let deepest = 0;
-  for (const ch of text) {
-    if (ch === '(') deepest = Math.max(deepest, ++depth);
-    else if (ch === ')') depth -= 1;
-  }
-  return deepest;
-}
 
 /** Largest result handed back to `latex(...)`; see the note in toLatex. */
 const MAX_LATEX_INPUT = 6_000;
