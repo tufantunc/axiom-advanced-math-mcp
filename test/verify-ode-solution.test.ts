@@ -122,6 +122,17 @@ describe('verifyOdeSolution', () => {
   it.each([
     // Nothing to substitute: not this function's equation to judge.
     ['z_1=w_2', 'exp(x)'],
+    // A branch solution: the CONSTANT is the domain boundary, so probing at a fixed
+    // x with an assigned c_0 asks whether a correct answer holds at a point it never
+    // claimed. All six of these were refused — correct answers, all of which main
+    // returned — and whether it fired was luck: the same equation with y(0)=1 gives
+    // [(1+x/2)^2], where the probe point lands inside the branch, and shipped.
+    // `abs(`/`sign(` in the residual is the signature; no pinned disproof carries one.
+    ["y'=sqrt(y)", '[(-1/2*c_0+1/2*x)^2]'],
+    ["y'=y^(1/2)", '[(-1/2*c_0+1/2*x)^2]'],
+    ["y'=sqrt(y+1)", '[(-1/2*c_0+1/2*x)^2-1]'],
+    ["y'=x*sqrt(y)", '[(-1/2*c_0+1/4*x^2)^2]'],
+    ["y'=y^(3/2)", '[(2/(c_0-x))^2]'],
     // A branch set — which branch the caller meant is a different question.
     ["y'=y^2", '[1/(1-x),2/(1-x)]'],
     // `y'(x)` is not one of the three spellings, and neither is `y''(x)`. Both were

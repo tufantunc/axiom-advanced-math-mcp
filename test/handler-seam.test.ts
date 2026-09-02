@@ -598,6 +598,44 @@ describe('spellings the router has to tell apart', () => {
     expect(text(r)).toMatch(/does not satisfy/);
   });
 
+  it.each([
+    ["desolve(y'=sqrt(y), x, y)", /\(-1\/2\*c_0\+1\/2\*x\)\^2/],
+    ["desolve(y'=y^(3/2), x, y)", /2\/\(c_0-x\)/],
+    // The IVP form is the one that stung: the branch's own condition folding
+    // produces the correct particular solution and the verifier then destroyed it.
+    ["desolve(y'=sqrt(y), y(4)=1, x, y)", /\(-1\+1\/2\*x\)\^2/],
+  ])(
+    '%s is answered, not refuted for holding outside the probe point',
+    async (problem, expected) => {
+      // The residual of a branch solution is nonzero wherever the answer does not
+      // claim to hold, and the numeric probe pins x while moving the constant — which
+      // for a separable ODE through a square root moves the domain out from under it.
+      // A verifier that can invent a disproof is worse than no verifier.
+      const r = await computeHandler({ problem });
+      expect(r.isError, text(r)).toBe(false);
+      expect(text(r)).toMatch(expected);
+    }
+  );
+
+  it('keeps the finite branches when one branch is infinity', async () => {
+    // Scanning the whole printed result refused `2*y*y'=1` outright and threw away
+    // the two correct +/-sqrt(x-c_1) branches with the one infinite one.
+    const r = await computeHandler({ problem: "desolve(2*y*y'=1, x, y)" });
+    expect(r.isError, text(r)).toBe(false);
+    expect(text(r)).toMatch(/sqrt\(x-c_1\)|√\(x-c_1\)/);
+  });
+
+  it.each([
+    ["desolve(y'=log(y), x, y)", /no solution for this equation/],
+    ["desolve(y'=y, y(0)=1, y(1)=5, x, y)", /conditions cannot all be satisfied/],
+  ])('%s diagnoses only what the caller wrote', async (problem, expected) => {
+    // The IVP wording fired on every empty result, so a caller who supplied no
+    // conditions at all was told theirs could not be satisfied.
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(expected);
+  });
+
   it.each([['derive'], ['deriver']])('refuses %s(z)=5 by name, like diff', async (operator) => {
     // derivativeOnRight already recorded that these are Giac's own aliases for
     // diff; isBareDiffCall listed only `diff`, so replacing the extractor's own

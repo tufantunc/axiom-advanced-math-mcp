@@ -2,6 +2,8 @@ import { formatErrorResponse } from './response-formatter.js';
 import { validateExpression } from './expression-validator.js';
 import { evalWithLatex } from './giac-eval.js';
 import { detectFailure } from './compute/silent-failure.js';
+import { splitTopLevel } from './output-cleanup.js';
+import { stripEnclosingBrackets } from './compute/arg-parsing.js';
 import { giacEngine } from '../giac/index.js';
 import { verifyIntegrate, verifyOdeSystem, verifyOdeSolution } from './self-verify.js';
 import { parseOdeSystem } from './ode-system-shape.js';
@@ -296,16 +298,30 @@ export async function calculusHandler(args: Record<string, unknown>) {
       // `desolve(y''=-y, y(pi/2)=1, y'(0)=0)`, which looks ordinary and is in fact
       // unsatisfiable. Newly reachable, because conditions written as separate
       // arguments used to be dropped.
+      // Per BRANCH, not over the whole print. Giac answers `2*y*y'=1` with three
+      // branches of which the first is `infinity`; scanning the text refused the
+      // request and threw away the two correct +/-sqrt(x-c_1) branches with it.
+      // Only an answer whose every branch is non-finite is no answer.
+      const branches = splitTopLevel(stripEnclosingBrackets(resultText), ',');
+      const everyBranchInfinite =
+        resultText.length > 0 &&
+        branches.every((b) => /(^|[^A-Za-z_0-9])infinity([^A-Za-z_0-9]|$)/.test(b));
       const failure =
         detectFailure(`Result: ${resultText}`) ??
-        (/(^|[^A-Za-z_0-9])infinity([^A-Za-z_0-9]|$)/.test(resultText)
-          ? 'non-finite result'
-          : null);
+        (everyBranchInfinite ? 'non-finite result' : null);
       if (failure !== null) {
+        // The IVP diagnosis only where the caller actually wrote conditions —
+        // `equation` differs from `original_equation` exactly when some were folded
+        // in. Unconditionally, it told callers of `desolve(y'=log(y), x, y)`, who
+        // supplied none, that their conditions could not all be satisfied, and sent
+        // them looking in the wrong place for a Giac limitation.
+        const foldedConditions = args.equation !== args.original_equation;
         const why =
           failure === 'empty result'
-            ? 'the CAS returned no solution, which for an initial-value problem ' +
-              'usually means the conditions cannot all be satisfied'
+            ? foldedConditions
+              ? 'the CAS returned no solution, which for an initial-value problem ' +
+                'usually means the conditions cannot all be satisfied'
+              : 'the CAS returned no solution for this equation'
             : `the CAS returned ${failure}`;
         return formatErrorResponse(`solve_ode cannot solve this equation — ${why}`);
       }

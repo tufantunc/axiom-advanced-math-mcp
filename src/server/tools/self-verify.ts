@@ -264,16 +264,6 @@ export async function verifyOdeSystem(
 }
 
 /**
- * The text before the first top-level `and` or `or`.
- *
- * Token-based, not whitespace-anchored. splitTopLevel takes a single CHARACTER,
- * so it cannot do this — passing it 'and' silently split on nothing and left the
- * conditions in the equation, which is how the first version of this check accused
- * `y'=y and y(0)=1` of not satisfying itself. The second version demanded a space
- * before the token, so `y'=y and(y(0)=1)` — Giac's own syntax, which it answers
- * correctly — was accused the same way.
- */
-/**
  * Whether a join begins at `i`, with the boundary rule each FORM needs.
  *
  * The word form needs a boundary before it, or `and` matches inside `command`. An
@@ -285,22 +275,20 @@ export async function verifyOdeSystem(
  *
  * Shared by the cut and the backstop so they cannot disagree about what a join
  * LOOKS like. They still disagree about what to DO with one, which is the point.
+ *
+ * The history is worth keeping because each version was a spelling prediction and
+ * each was wrong: splitTopLevel takes a single CHARACTER and silently split on
+ * nothing when handed 'and', leaving the condition in the equation and accusing
+ * `y'=y and y(0)=1` of not satisfying itself; then a space was demanded before the
+ * token, so `y'=y and(y(0)=1)` was accused the same way; then the boundary was
+ * demanded of the operators too. What ended it is not this function — it is
+ * isOneBareEquation, which asks nothing about spelling.
  */
 function startsAt(text: string, i: number, operators: RegExp, word: RegExp): boolean {
   if (operators.test(text.slice(i))) return true;
   if (/[A-Za-z0-9_]/.test(text[i - 1] ?? ' ')) return false;
   return word.test(text.slice(i));
 }
-
-const CONJUNCTION_OPERATOR = /^(?:&&|\u2227)/;
-const CONJUNCTION_WORD = /^and(?![A-Za-z0-9_])/i;
-const JOIN_OPERATOR = /^(?:&&|\|\||\u2227|\u2228)/;
-const JOIN_WORD = /^(?:and|or)(?![A-Za-z0-9_])/i;
-
-const startsConjunction = (text: string, i: number): boolean =>
-  startsAt(text, i, CONJUNCTION_OPERATOR, CONJUNCTION_WORD);
-const startsJoin = (text: string, i: number): boolean =>
-  startsAt(text, i, JOIN_OPERATOR, JOIN_WORD);
 
 /**
  * A conjunction, which is Giac's IVP spelling: the first term is the equation.
@@ -318,6 +306,15 @@ const startsJoin = (text: string, i: number): boolean =>
  * "the equation" — refuting an answer to the second branch would be wrong — and
  * Giac refuses `or` inside desolve anyway. It is declined below instead of cut.
  */
+const CONJUNCTION_OPERATOR = /^(?:&&|\u2227)/;
+const CONJUNCTION_WORD = /^and(?![A-Za-z0-9_])/i;
+const JOIN_OPERATOR = /^(?:&&|\|\||\u2227|\u2228)/;
+const JOIN_WORD = /^(?:and|or)(?![A-Za-z0-9_])/i;
+
+const startsConjunction = (text: string, i: number): boolean =>
+  startsAt(text, i, CONJUNCTION_OPERATOR, CONJUNCTION_WORD);
+const startsJoin = (text: string, i: number): boolean =>
+  startsAt(text, i, JOIN_OPERATOR, JOIN_WORD);
 
 function beforeTopLevelConjunction(text: string): string {
   let depth = 0;
@@ -384,9 +381,11 @@ function isOneBareEquation(text: string): boolean {
  *
  *   - ✓ only where the residual is exactly zero. `normal` is not a zero test, so
  *     a nonzero print is not yet evidence.
- *   - ✗ only where a nonzero residual SURVIVES numeric evaluation. That is what
- *     separates a dropped term (O(1)) from the `exp(ln(2)/3)-2^(1/3)` spelling
- *     artifact (~1e-15) that made an earlier version refuse correct answers.
+ *   - ✗ only where a nonzero residual survives numeric evaluation AND carries no
+ *     branch marker. The numeric stage separates a dropped term (O(1)) from the
+ *     `exp(ln(2)/3)-2^(1/3)` spelling artifact (~1e-15); it does NOT separate a
+ *     wrong answer from a correct one probed outside its domain, which is what
+ *     `abs(`/`sign(` marks and why that is declined before the probe runs.
  *   - no verdict otherwise, including when the answer is too large to hand back
  *     to the engine. "I did not check" is not evidence against an answer.
  */
@@ -522,6 +521,20 @@ export async function verifyOdeSolution(
     // assignment that leaves a residual is a disproof — two are used only because
     // one unlucky assignment could cancel a term that does not cancel in general.
     const assignments = [(k: number) => 2 + k, (k: number) => 1 - 2 * k];
+    // A residual that carries a branch marker is not evidence. For a separable ODE
+    // integrated through a square root the CONSTANT is the domain boundary — the
+    // solution family of `y'=sqrt(y)` is [((x-c_0)/2)^2], valid for x >= c_0 — so
+    // probing at x=13/10 with c_0=2 asks whether a correct answer holds at a point
+    // it never claimed. It does not, and the answer was refused: six correct
+    // answers, all of which main returned, turned into hard errors blaming the CAS.
+    //
+    // Whether it fired was luck. The same equation with y(0)=1 gives [(1+x/2)^2],
+    // where 13/10 happens to land inside the branch, and shipped.
+    //
+    // `abs(` / `sign(` is the signature: all six false refusals carry one and none
+    // of the disproofs this suite pins does. This is a could-not-check, not a
+    // disproof — the distinction this file already draws everywhere else.
+    if (/\b(?:abs|sign)\s*\(/.test(residual)) return undefined;
     let magnitude = 0;
     for (const value of assignments) {
       const constants = [...new Set(residual.match(/\bc_\d+\b/g) ?? [])]
