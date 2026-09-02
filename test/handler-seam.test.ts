@@ -542,6 +542,7 @@ describe('spellings the router has to tell apart', () => {
     // `&&` and `AND` are Giac's too, and it answers all three identically.
     ["desolve(y'=y && y(0)=1, x, y)", /^Result: exp\(x\)$/m],
     ["desolve(y'=y AND y(0)=1, x, y)", /^Result: exp\(x\)$/m],
+    ["desolve(y'=y ∧ y(0)=1, x, y)", /^Result: exp\(x\)$/m],
   ])('%s is answered, not accused by the residual check', async (problem, expected) => {
     // Giac's own IVP syntax without a space. The residual check cuts the equation
     // at the first top-level `and` before substituting, and its detector required
@@ -568,6 +569,11 @@ describe('spellings the router has to tell apart', () => {
     // affirming the family it exists to refuse.
     ["desolve(y'=y && y(x)=5, x, y)"],
     ["desolve(y'=y AND y(x)=5, x, y)"],
+    // The join the previous round's widening missed. It shipped 5/exp(x)*exp(x) at
+    // isError:false — a non-solution — while the verifier correctly declined rather
+    // than certifying, which is the difference the one-bare-equation invariant made.
+    ["desolve(y'=y ∧ y(x)=5, x, y)"],
+    ["desolve(y'=y ∧ y(0)=x^2, x, y)"],
   ])('%s is refused by the residual check', async (problem) => {
     // A condition written INSIDE the equation walks past the argument guard, which
     // only scans the trailing arguments. These are the families the residual check

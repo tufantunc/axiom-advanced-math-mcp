@@ -276,17 +276,20 @@ export async function verifyOdeSystem(
 /**
  * A conjunction, which is Giac's IVP spelling: the first term is the equation.
  *
- * `&&` is Giac's too, and case does not matter to it — `desolve(y'=y && y(0)=1,x,y)`
- * and the `AND` spelling both answer exp(x). Knowing only `and` was the second
- * version of this bug: the join stayed in the equation, so a correct answer was
- * refused AND a non-solution was certified, depending on whether the leftover
- * boolean survived normalisation or collapsed to a truth value.
+ * So are `&&` and `∧` (U+2227), and case does not matter for the word form —
+ * probed against the engine rather than assumed: `and`, `AND`, `&&`, `&&&` and `∧`
+ * all answer exp(x), while `And`, `et`, `xor`, `∩`, `⋀` and `&` do not. Knowing
+ * only `and` was the second version of this bug: the join stayed in the equation,
+ * so a correct answer was refused AND a non-solution was certified, depending on
+ * whether the leftover boolean survived normalisation or collapsed to a truth
+ * value. `∧` was the third, and it slipped past a round that had just widened this
+ * to `&&`.
  *
  * `or` is deliberately NOT here. It is a disjunction, so the first term is not
  * "the equation" — refuting an answer to the second branch would be wrong — and
  * Giac refuses `or` inside desolve anyway. It is declined below instead of cut.
  */
-const CONJUNCTION = /^(?:and(?![A-Za-z0-9_])|&&)/i;
+const CONJUNCTION = /^(?:and(?![A-Za-z0-9_])|&&|\u2227)/i;
 
 function beforeTopLevelConjunction(text: string): string {
   let depth = 0;
@@ -320,11 +323,12 @@ function beforeTopLevelConjunction(text: string): string {
  * right-hand side. That alone refuses `y'=y && y(0)=1` without knowing what `&&`
  * is. The keyword scan is kept as well, for a join that carries no second `=`.
  *
- * Measured: the `=` count is redundant against every spelling currently known —
- * remove it and no test fails, because the later guards decline those inputs for
- * other reasons. It is kept because it is the only part of this that a new join
- * spelling cannot walk past, which is exactly the failure that has now happened
- * twice. That is a deliberate choice and not a claim of coverage.
+ * The `=` count has now earned itself. It looked redundant — remove it and no test
+ * failed, because the later guards declined those inputs anyway — and it was kept
+ * on the argument that a NEW join spelling could not walk past it. `∧` then turned
+ * up as exactly that spelling: the cut did not know it, and this count is what made
+ * the verifier decline instead of reaching a verdict on a boolean. It cost a
+ * shipped non-solution, because declining is not refusing, but not a wrong verdict.
  */
 function isOneBareEquation(text: string): boolean {
   if (splitTopLevel(text, '=').length !== 2) return false;
@@ -336,7 +340,7 @@ function isOneBareEquation(text: string): boolean {
     else if (
       depth === 0 &&
       !/[A-Za-z0-9_]/.test(text[i - 1] ?? ' ') &&
-      /^(?:and(?![A-Za-z0-9_])|or(?![A-Za-z0-9_])|&&|\|\|)/i.test(text.slice(i))
+      /^(?:and(?![A-Za-z0-9_])|or(?![A-Za-z0-9_])|&&|\|\||\u2227|\u2228)/i.test(text.slice(i))
     ) {
       return false;
     }

@@ -43,6 +43,11 @@ describe('verifyOdeSolution', () => {
     ["y'=y && y(0)=1", 'exp(x)'],
     ["y'=y AND y(0)=1", 'exp(x)'],
     ["y'=y and(y(0)=1)", 'exp(x)'],
+    // U+2227, which Giac accepts and answers identically. Found by probing the
+    // engine for what it takes as a join rather than by waiting for the next
+    // review: `and`, `AND`, `&&`, `&&&` and `∧` are accepted; `And`, `et`, `xor`,
+    // `∩`, `⋀` and `&` are not.
+    ["y'=y ∧ y(0)=1", 'exp(x)'],
   ])('verifies %s satisfied by %s', async (equation, answer) => {
     const out = await verifyOdeSolution(equation, 'y', 'x', answer, evaluate);
     expect(out, `${equation} / ${answer}`).toMatchObject({ verified: true });
@@ -60,6 +65,7 @@ describe('verifyOdeSolution', () => {
     ["y'=y && y(x)=5", '5/exp(x)*exp(x)'],
     ["y'=y AND y(x)=5", '5/exp(x)*exp(x)'],
     ["y'=y and y(x)=5", '5/exp(x)*exp(x)'],
+    ["y'=y ∧ y(x)=5", '5/exp(x)*exp(x)'],
     ["y'=2*x", 'x^2+x^2'],
     ["y''=-y", 'x^2*sin(x)'],
     ["y'=y*x", 'x^2*exp(x^2/2)'],
