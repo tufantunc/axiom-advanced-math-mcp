@@ -955,6 +955,14 @@ describe("an initial condition's cost is bounded, not only its size", () => {
     // A digit run that is a whole token, next to punctuation rather than to
     // more of a token.
     ["desolve(y'=y, y(0)=1/2!, x, y)", /^Result: 1\/2\*exp\(x\)$/m],
+    // A DECIMAL operand is a readable literal, not an unreadable token. `.` had
+    // to become a token character to stop `1.0e4!` being read as `4`, and that
+    // refused these until the bound learned to count them rounded up.
+    ["desolve(y'=y, y(0)=1.5!, x, y)", /^Result: 1\.32934038818\*exp\(x\)$/m],
+    ["desolve(y'=y, y(0)=0.5!, x, y)", /^Result: 0\.886226925453\*exp\(x\)$/m],
+    // The named spelling needs a left boundary, or any symbol ending in
+    // "factorial" is read as one: this was refused as a factorial of 50,000.
+    ["desolve(y'=y, y(0)=myfactorial(50000), x, y)", /^Result: myfactorial\(50000\)\*exp\(x\)$/m],
   ])('still answers %s', async (problem, expected) => {
     const r = await computeHandler({ problem });
     expect(r.isError, text(r)).toBe(false);
@@ -964,17 +972,18 @@ describe("an initial condition's cost is bounded, not only its size", () => {
   // implausibleMagnitude is applied to every system equation's RIGHT-HAND SIDE
   // too, not only to conditions, so a symbol ending in digits had to survive
   // there as well: `y'=z*k2000!` was refused as a right-hand side of implausible
-  // magnitude.
+  // magnitude. Pinned on the Result line, not the whole response, whose
+  // `Command:` line echoes the caller's own `k2000!` back.
   it('does not refuse a symbol ending in digits on a system right-hand side', async () => {
     const r = await computeHandler({ problem: "desolve([y'=z*k2000!, z'=-y], x)" });
     expect(r.isError, text(r)).toBe(false);
-    expect(text(r)).toContain('k2000!');
+    expect(text(r)).toMatch(/^Result: .*k2000!/m);
   });
 
   // A digit run that is only the TAIL of a token is not the operand. Reading it
-  // as one admitted an argument of 100,000 under a bound of 1,000, and made the
-  // two spellings disagree — `factorial(1e5)` takes the whole group and was
-  // already refused.
+  // as one read `1e5!` as a factorial of 5 — admitting a 456,574-digit number —
+  // and made the two spellings disagree, since `factorial(1e5)` takes the whole
+  // group and was already refused.
   it.each([
     ["desolve(y'=y, y(0)=1e5!, x, y)", /a factorial this cannot bound \(1e5\)/],
     ["desolve(y'=y, y(0)=1.0e4!, x, y)", /a factorial this cannot bound \(1\.0e4\)/],
@@ -1004,9 +1013,12 @@ describe("an initial condition's cost is bounded, not only its size", () => {
     }
   });
 
-  // An unbalanced named call must widen the refusal, not the bound: taking the
-  // slice one short of the end read `factorial(10000` as 1000 and passed it,
-  // which is the unsafe direction for a guard.
+  // An unbalanced named call must never SHORTEN the operand: slicing one short
+  // of the end read `factorial(10000` as 1000 and passed it, and truncation is
+  // the one direction a bound must not fail in. Taking the whole tail leaves it
+  // either a readable literal that is bounded like any other or unreadable and
+  // refused — these two land on the second, because the bracketed argument
+  // carries its `]` into the operand.
   it.each([
     "desolve([y'=y, y(0)=factorial(10000], x, y)",
     "desolve([y'=y, y(0)=factorial(1001], x, y)",
@@ -1016,19 +1028,77 @@ describe("an initial condition's cost is bounded, not only its size", () => {
     expect(text(r)).toMatch(/a factorial this cannot bound/);
   });
 
+  // And the other landing: a bare unbalanced tail that IS a readable literal is
+  // bounded as that literal rather than truncated to a passing one. Truncation
+  // read this exact input as `1000` — inside the bound — and let it through.
+  it('bounds an unbalanced tail as the literal it is, not a shortened one', async () => {
+    const r = await computeHandler({ problem: "y'=y, y(0)=factorial(10000" });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/a factorial of 10000/);
+  });
+
   it('still answers the largest factorial the bound admits', async () => {
-    const r = await computeHandler({ problem: "desolve(y'=y, y(0)=1000!, x, y)" });
-    expect(r.isError).toBe(false);
-    // 1000! is 2,568 digits; asserting the leading digits pins that the value
-    // was computed rather than echoed.
-    expect(text(r)).toContain('402387260077093773543702433923');
+    const r = await computeHandler({ problem: "desolve(y'=y, y(0)=1142!, x, y)" });
+    expect(r.isError, text(r)).toBe(false);
+    // 1142! is 2,998 digits, just inside the 3,000. Asserting the leading digits
+    // pins that the value was computed rather than echoed.
+    expect(text(r)).toMatch(/^Result: 65818352720512045295/m);
   });
 
   it('refuses one past the bound and admits the bound itself', async () => {
-    const inside = await computeHandler({ problem: "desolve(y'=y, y(0)=1000!, x, y)" });
-    const outside = await computeHandler({ problem: "desolve(y'=y, y(0)=1001!, x, y)" });
-    expect(inside.isError).toBe(false);
-    expect(outside.isError).toBe(true);
-    expect(text(outside)).toMatch(/a factorial of 1001/);
+    const inside = await computeHandler({ problem: "desolve(y'=y, y(0)=1142!, x, y)" });
+    const outside = await computeHandler({ problem: "desolve(y'=y, y(0)=1143!, x, y)" });
+    expect(inside.isError, text(inside)).toBe(false);
+    expect(outside.isError, text(outside)).toBe(true);
+    // 2,998 digits in, 3,001 out. The message reports the count, so the
+    // boundary is visible rather than inferred.
+    expect(text(outside)).toMatch(/a factorial of 1143, which denotes a 3001-digit number/);
   });
+
+  // The axis is the size of the number the WHOLE condition denotes, and bounding
+  // each factorial's argument alone did not express it: eleven copies of a
+  // per-argument maximum of 1,000 is 70 characters, nests zero deep, and killed
+  // the shared worker — measured, 28,248 denoted digits against a cliff that
+  // turns over between 25,800 and 27,800 however the caller composes it.
+  it('refuses factorials that compose past the cliff, each one admissible alone', async () => {
+    const eleven = Array.from({ length: 11 }, () => '1000!').join('*');
+    const r = await computeHandler({ problem: `desolve(y'=y, y(0)=${eleven}, x, y)` });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/factorials denoting 28248 digits together/);
+    expect(text(r)).not.toMatch(/memory access|worker exited|RuntimeError/);
+    // Each factor on its own is admitted, so this refusal cannot come from a
+    // per-argument bound.
+    const alone = await computeHandler({ problem: "desolve(y'=y, y(0)=1000!, x, y)" });
+    expect(alone.isError, text(alone)).toBe(false);
+    // And the worker the composition used to kill still answers.
+    const after = await computeHandler({ problem: "desolve(y'=y, y(0)=2, x, y)" });
+    expect(after.isError, text(after)).toBe(false);
+    expect(text(after)).toMatch(/^Result: 2\*exp\(x\)$/m);
+  });
+
+  it('sums the composition on the system path too', async () => {
+    const r = await computeHandler({
+      problem: "desolve([y'=z, z'=-y, y(0)=1000!*1000!, z(0)=0], x)",
+    });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/^Error: solve_ode cannot solve this system — it gives /m);
+    expect(text(r)).toMatch(/factorials denoting 5136 digits together/);
+  });
+
+  // The implicit route builds no `desolve(` of its own, but calculus.ts builds
+  // one from its args, so it reaches the same trap. Gating the bound on the verb
+  // made the verdict depend on how the request was typed: on ed5917e
+  // `desolve([y'=y, y(0)=50000!], x, y)` was refused while `[y'=y, y(0)=50000!]`
+  // killed the worker AND the call queued behind it.
+  it.each(["[y'=y, y(0)=50000!]", "y'=y, y(0)=50000!", "y''=-y, y(0)=50000!, y'(0)=0"])(
+    'refuses the verbless %s',
+    async (problem) => {
+      const r = await computeHandler({ problem });
+      expect(r.isError, text(r)).toBe(true);
+      expect(text(r)).toMatch(/a factorial of 50000/);
+      expect(text(r)).not.toMatch(/memory access|worker exited|RuntimeError/);
+      const after = await computeHandler({ problem: "desolve(y'=y, y(0)=2, x, y)" });
+      expect(after.isError, text(after)).toBe(false);
+    }
+  );
 });

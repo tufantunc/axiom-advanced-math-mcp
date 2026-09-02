@@ -60,7 +60,7 @@ const MAX_SYSTEM_EQUATIONS = 9;
  *
  * This bound is the only thing guarding the CHAINED-factorial shape below —
  * `y(0)=1!!!…`, whose every operand after the first is another `!` and so is not
- * a literal MAX_FACTORIAL_ARGUMENT can read. That shape does not throw either:
+ * a literal MAX_FACTORIAL_DIGITS can count. That shape does not throw either:
  * `exact([y(0)=1!!!…])` RETURNS a normal-looking answer and leaves the worker
  * dead, so nothing downstream notices — `isFatalWasmTrap` is never consulted,
  * and the try/catch around the call never runs.
@@ -82,7 +82,8 @@ const MAX_CONDITION_CHARS = 280;
 const MAX_CONDITION_DEPTH = 100;
 
 /**
- * Ceiling on the argument of a factorial in caller text.
+ * Ceiling on the DIGITS the factorials in one initial condition denote, all of
+ * them together.
  *
  * A third axis, because neither of the two above expresses it: `y(0)=50000!` is
  * six characters of value, nests zero deep, and kills the shared worker. It is
@@ -93,33 +94,68 @@ const MAX_CONDITION_DEPTH = 100;
  * ode-system.ts, killed the worker there, and reported its own death as a
  * refusal while the next unrelated request came back "the CAS was unavailable".
  *
- * Measured on a FRESH worker, one value per process, in the two shapes this text
- * actually reaches — `exact([y(0)=50000!,z(0)=0])` as ode-system.ts's conditions
- * scan sends it, and `desolve((y'=y) and (y(0)=50000!),x,y)` as the
- * single-equation path folds it. In both, `7500!` answers with a
- * 25,816-character result and `8000!` traps and kills the worker.
+ * DIGITS, and not the argument, because the argument is only a proxy and a
+ * leaky one. An earlier version of this bounded each factorial's argument at
+ * 1,000 and was composable straight through: `y(0)=1000!*1000!*…` with eleven
+ * factors is 70 characters, nests zero deep, holds nothing but the admitted
+ * maximum, and killed the worker — inside the very channel this exists to bound.
+ * The text budget buys about forty of them, so no per-argument number survives
+ * that. What traps is the size of the number the condition denotes, so that is
+ * what is bounded.
  *
- * The cliff is not a constant, which is why the bound is not set just under it.
- * The same value EVALUATED BARE, with no command around it, still answers at
- * 8000! (27,753 characters), and inside one already-warm worker the cliff moved
- * the other way — `exact` died at 8000! and the fold at 9000! in a process that
- * had already answered several large ones. So it tracks both the command and the
- * worker's heap state.
+ * One cliff, measured four independent ways on a FRESH worker, one value per
+ * process, in both shapes this text reaches (`exact([y(0)=…,z(0)=0])` as
+ * ode-system.ts's conditions scan sends it, and
+ * `desolve((y'=y) and (y(0)=…),x,y)` as the single-equation path folds it):
  *
- * 1000 therefore keeps a factor of eight below the lowest kill, where
- * MAX_CONDITION_CHARS keeps two: a moving cliff earns more headroom than a fixed
- * one. It also still costs nothing. `1000!` is a 2,568-digit number, so the
- * largest value this admits already denotes something an order of magnitude
- * longer than the 280 characters the condition TEXT is allowed to be, and no
- * initial condition anyone means is bigger — `y(0)=5!`, `y(0)=20!` and
- * `y(0)=100!` all still answer.
+ *   one factorial       7500!            25,809 digits  answers
+ *                       8000!            27,753 digits  kills the worker
+ *   ten of the maximum  1000!*…  (×10)   25,680 digits  answers
+ *                       1000!*…  (×11)   28,248 digits  kills the worker
+ *   many small ones     100!*…   (×160)  25,280 digits  answers
+ *                       100!*…   (×180)  28,440 digits  kills the worker
  *
- * Equal to the exponent bound below by coincidence, not by measurement: that one
- * is 1,000 because `10^100000` traps, this one because `8000!` does. They must
- * not be merged — borrowing a number measured for a different shape is the
- * mistake MAX_CONDITION_CHARS' own docblock records.
+ * Every construction turns over between about 25,800 and 27,800 denoted digits,
+ * however the caller composes it, which is what makes this one axis rather than
+ * a list of shapes.
+ *
+ * 3,000 keeps a factor of nine below the lowest kill, where MAX_CONDITION_CHARS
+ * keeps two. The extra headroom is because this cliff MOVES: the same value
+ * evaluated bare, with no command around it, still answers at 8000! (27,753
+ * digits), and inside one already-warm worker it fell to 8000! in the `exact`
+ * shape while the fold survived to 9000!. So it tracks the command and the
+ * worker's heap state, not just the number.
+ *
+ * It also costs nothing real. `1000!` is 2,568 digits and still answers, which
+ * is already an order of magnitude more digits than the 280 characters the
+ * condition TEXT is allowed to be; `y(0)=5!`, `y(0)=20!` and `y(0)=100!` are
+ * far below it. The largest single factorial admitted is 1142!, at 2,998 digits.
+ *
+ * NOT the same axis as the exponent bound below, and it does not subsume it: the
+ * same composition on powers does not trap. Measured, `10^1000*…` forty times
+ * denotes 40,040 digits and answers with the worker alive — well past where
+ * factorials die — so a power's cost is not its digit count and that channel
+ * keeps its own separately measured bound.
  */
-const MAX_FACTORIAL_ARGUMENT = 1_000;
+const MAX_FACTORIAL_DIGITS = 3_000;
+
+/**
+ * How many decimal digits n! has.
+ *
+ * Stirling with the 1/(12n) correction rather than a loop over k, because the
+ * argument is caller text: `1000000000!` would walk a billion iterations to
+ * reach a verdict this can state in closed form. Checked against the exact sum
+ * of log10(k) at the sizes that decide anything — 1000! gives 2,568 both ways.
+ *
+ * Approximate is sound HERE specifically because it feeds a bound with a factor
+ * of nine of headroom; the error is far below one digit for n ≥ 2, and this is
+ * never used to report a value back to a caller as exact.
+ */
+function factorialDigits(n: number): number {
+  if (n < 2) return 1;
+  const ln = n * Math.log(n) - n + 0.5 * Math.log(2 * Math.PI * n) + 1 / (12 * n);
+  return Math.floor(ln / Math.LN10) + 1;
+}
 
 /**
  * The shape of an initial condition: `y(0)=1`.
@@ -692,10 +728,20 @@ function implausibleMagnitude(text: string): string | undefined {
       }
     }
   }
+  // Summed, not judged one at a time: what traps is the size of the number the
+  // whole condition denotes, and eleven copies of a per-argument maximum reach
+  // it just as well as one argument over that maximum.
+  let digits = 0;
+  let biggest = '';
   for (const argument of factorialArguments(text)) {
     const literal = argument.trim();
-    if (/^\d+$/.test(literal)) {
-      if (Number(literal) > MAX_FACTORIAL_ARGUMENT) return `a factorial of ${literal}`;
+    // A literal DECIMAL counts too, and is not refused for having a point in
+    // it: `y(0)=1.5!` is gamma(2.5) and answers as 1.32934038818, so refusing it
+    // was a cost the docblock never claimed. Rounded up, which is the direction
+    // that cannot under-count.
+    if (/^[\d.]+$/.test(literal) && Number.isFinite(Number(literal))) {
+      digits += factorialDigits(Math.ceil(Number(literal)));
+      if (biggest === '' || Number(literal) > Number(biggest)) biggest = literal;
       continue;
     }
     // A bare symbol denotes no literal and Giac does not evaluate it — measured,
@@ -706,6 +752,14 @@ function implausibleMagnitude(text: string): string | undefined {
     // `factorial(9)!` hides the same thing behind a function name.
     if (/^[A-Za-z_]\w*$/.test(literal)) continue;
     return `a factorial this cannot bound (${literal.slice(0, 20)})`;
+  }
+  if (digits > MAX_FACTORIAL_DIGITS) {
+    // Named by its argument when there is only one, because that is what the
+    // caller can act on; by the total when the size was composed, because then
+    // no single factorial is the thing that is too big.
+    return biggest !== '' && digits === factorialDigits(Math.ceil(Number(biggest)))
+      ? `a factorial of ${biggest}, which denotes a ${digits}-digit number`
+      : `factorials denoting ${digits} digits together`;
   }
   return undefined;
 }
@@ -730,16 +784,18 @@ function implausibleMagnitude(text: string): string | undefined {
  *
  * And a whole TOKEN is read, not a digit run, because a run that stops at the
  * first non-digit is the tail of a longer token as often as it is the token:
- * `1e5!` was read as a factorial of 5, admitting an argument of 100,000 under a
- * bound of 1,000, while `k2000!` was read as a factorial of 2,000 and refused a
- * symbol this promises to leave alone — `y'=z*k2000!` came back as a right-hand
- * side of implausible magnitude. `.` is a token character for the same reason
- * (`1.0e4!`). Reading the token and letting the caller classify it is also what
- * makes the two spellings agree, which they did not: `factorial(1e5)` takes the
- * whole group and was already refused.
+ * `1e5!` was read as a factorial of 5, admitting a 456,574-digit number, while
+ * `k2000!` was read as a factorial of 2,000 and refused a symbol this promises
+ * to leave alone — `y'=z*k2000!` came back as a right-hand side of implausible
+ * magnitude. `.` is a token character for the same reason (`1.0e4!`), and a
+ * decimal that is a whole token is a readable literal rather than a refusal —
+ * `1.5!` answers, so the caller above counts it rounded up instead of refusing
+ * it. Reading the token and letting the caller classify it is also what makes
+ * the two spellings agree, which they did not: `factorial(1e5)` takes the whole
+ * group and was already refused.
  *
  * A `!` whose operand is another `!` is skipped, deliberately: at the largest
- * inner value MAX_FACTORIAL_ARGUMENT admits, Giac leaves the outer one
+ * inner value MAX_FACTORIAL_DIGITS admits, Giac leaves the outer one
  * unapplied — measured, `1000!!` answers `(402387…)!` in 2,571 characters with
  * the worker alive. MAX_CONDITION_CHARS is what bounds a long chain of them.
  */
@@ -747,7 +803,10 @@ function factorialArguments(text: string): string[] {
   const operands: string[] = [];
   const isTokenChar = (c: string): boolean => /[A-Za-z0-9_.]/.test(c);
   for (let i = 0; i < text.length; i += 1) {
-    const named = /^factorial\s*\(/.exec(text.slice(i));
+    // Bounded on the left, or the name is only a suffix: the scan tries every
+    // index, so without this `myfactorial(50000)` matched at offset 2 and a
+    // caller's own free symbol was refused as a factorial of 50,000.
+    const named = i > 0 && isTokenChar(text[i - 1]) ? null : /^factorial\s*\(/.exec(text.slice(i));
     if (named) {
       const from = i + named[0].length;
       let depth = 1;
@@ -758,9 +817,15 @@ function factorialArguments(text: string): string[] {
       }
       // `j - 1` is one past the closing bracket only when the group closed.
       // Unbalanced, the loop runs off the end with depth still positive and that
-      // slice dropped the operand's last character — `factorial(10000` read as
-      // 1000 and passed, which is the unsafe direction for a bound. So take the
-      // whole tail instead: unreadable as a literal, and therefore refused.
+      // slice dropped the operand's last character, so `factorial(10000` was
+      // read as 1000 and passed — truncation makes an out-of-bounds argument
+      // look in-bounds, which is the one direction a bound must never fail in.
+      //
+      // So the unbalanced case takes the whole tail. The point is only that it
+      // is never SHORTENED; the tail is then classified like any other operand,
+      // which means `factorial(10000` is bounded as the literal 10000 while
+      // `factorial(1000]` is refused as unreadable. Either is fine — neither
+      // understates the operand.
       operands.push(
         depth === 0 ? stripEnclosingBrackets(text.slice(from, j - 1)) : text.slice(from)
       );
