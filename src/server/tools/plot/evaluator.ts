@@ -1,5 +1,5 @@
 import { runJsComputeJson } from '../../js-compute/index.js';
-import type { PlotPoint, PlotSegment, SampledFunction } from '../../js-compute/index.js';
+import type { SampledFunction } from '../../js-compute/index.js';
 
 /**
  * Function sampling for the plot tool, bounded outside the server process.
@@ -19,7 +19,7 @@ export const DEFAULT_PLOT_POINTS = 200;
 // Re-exported from the module that produces them: the two sides of the IPC
 // boundary previously declared identical shapes with no type relationship, so a
 // renamed field compiled clean on both.
-export type { PlotPoint, PlotSegment };
+export type { PlotPoint, PlotSegment } from '../../js-compute/index.js';
 export type EvaluationResult = SampledFunction;
 
 /**

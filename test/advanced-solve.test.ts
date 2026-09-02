@@ -3,23 +3,6 @@ import { AdvancedSolveService } from '../src/server/tools/advanced-solve-service
 import { giacEngine } from '../src/server/giac/index.js';
 
 describe('AdvancedSolveService', () => {
-  it('renders LaTeX through the shared path, bounds and all', async () => {
-    // This was a fourth open-coded copy of the latex pipeline: no size bound, so
-    // a deep result handed straight to `latex(...)` traps the engine and takes
-    // the shared worker down with whatever else is in flight, and no `undef`
-    // rejection or quote stripping either.
-    const service = new AdvancedSolveService();
-    const ordinary = await service.evaluate({ expression: 'integrate(x^2,x)', format: 'latex' });
-    expect(ordinary.latex).toBe('\\frac{x^{3}}{3}');
-
-    const deep = await service.evaluate({
-      expression: 'g:=x;for(k:=0;k<150;k++){g:=sqrt(1+g);};g',
-      format: 'latex',
-      simplify: false,
-    });
-    expect(deep.latex).toBeUndefined();
-    await expect(giacEngine.evaluate('diff(x^3,x)')).resolves.toContain('3*x^2');
-  });
   let service: AdvancedSolveService;
 
   beforeAll(async () => {
@@ -28,6 +11,24 @@ describe('AdvancedSolveService', () => {
 
   beforeEach(() => {
     service = new AdvancedSolveService();
+  });
+
+  it('renders LaTeX through the shared path, bounds and all', async () => {
+    // This was a fourth open-coded copy of the latex pipeline: no size bound, so
+    // a deep result handed straight to `latex(...)` traps the engine and takes
+    // the shared worker down with whatever else is in flight, and no `undef`
+    // rejection or quote stripping either.
+    const local = new AdvancedSolveService();
+    const ordinary = await local.evaluate({ expression: 'integrate(x^2,x)', format: 'latex' });
+    expect(ordinary.latex).toBe('\\frac{x^{3}}{3}');
+
+    const deep = await local.evaluate({
+      expression: 'g:=x;for(k:=0;k<150;k++){g:=sqrt(1+g);};g',
+      format: 'latex',
+      simplify: false,
+    });
+    expect(deep.latex).toBeUndefined();
+    await expect(giacEngine.evaluate('diff(x^3,x)')).resolves.toContain('3*x^2');
   });
 
   describe('Integration', () => {

@@ -528,13 +528,13 @@ function valueOf(line: string): string {
   // which has no top-level `=` — so both branches fell through and the whole
   // labelled line became the answer.
   const parts = splitTopLevel(line.replace('≈', '='), '=');
-  if (parts.length > 1) return parts[parts.length - 1].trim();
+  if (parts.length > 1) return (parts.at(-1) ?? '').trim();
   return line.replace(/^[^:]*:\s*/, '').trim();
 }
 
 function answerLine(op: string, lines: string[]): string | null {
   const shape = ANSWER_LINE[op];
-  if (!shape) return lines[lines.length - 1];
+  if (!shape) return lines.at(-1) ?? null;
   for (let i = lines.length - 1; i >= 0; i--) {
     if (shape.test(lines[i])) return lines[i];
   }

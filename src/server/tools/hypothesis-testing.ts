@@ -17,6 +17,13 @@ function std(data: number[], sampleStd = true): number {
   return Math.sqrt(variance(data, sampleStd));
 }
 
+/** The H₁ comparator for an alternative hypothesis, shared by every t-test report. */
+function altSymbol(alternative: string): string {
+  if (alternative === 'two_sided') return '≠';
+  if (alternative === 'less') return '<';
+  return '>';
+}
+
 function formatTestConclusion(pValue: number, significance: number, detail = ''): string {
   if (Number.isNaN(pValue)) return 'Could not determine significance';
   const action = pValue < significance ? '✗ Reject H₀' : '✓ Fail to reject H₀';
@@ -74,6 +81,12 @@ async function tPValue(t: number, df: number, alternative: string): Promise<numb
   return 2 * Math.min(cdf, 1 - cdf);
 }
 
+/** The report header `paired_t` must override — see oneSampleT's `report` param. */
+const DEFAULT_ONE_SAMPLE_REPORT: { name: string; parameter: string } = {
+  name: 'One-sample t-test',
+  parameter: 'μ',
+};
+
 async function oneSampleT(
   data: { sample1?: number[]; mu0?: number; significance: number },
   alternative: string,
@@ -83,10 +96,7 @@ async function oneSampleT(
    * as "One-sample t-test / H₀: μ = 0" tells a user who asked for a paired
    * test that a different test ran.
    */
-  report: { name: string; parameter: string } = {
-    name: 'One-sample t-test',
-    parameter: 'μ',
-  }
+  report: { name: string; parameter: string } = DEFAULT_ONE_SAMPLE_REPORT
 ): Promise<string[]> {
   const { sample1, mu0, significance } = data;
   if (!sample1 || sample1.length < 2)
@@ -139,7 +149,7 @@ async function oneSampleT(
 
   return [
     `Test: ${report.name}`,
-    `H₀: ${report.parameter} = ${mu0}  |  H₁: ${report.parameter} ${alternative === 'two_sided' ? '≠' : alternative === 'less' ? '<' : '>'} ${mu0}`,
+    `H₀: ${report.parameter} = ${mu0}  |  H₁: ${report.parameter} ${altSymbol(alternative)} ${mu0}`,
     ``,
     `Sample mean: ${xbar.toFixed(6)}`,
     `Sample std:  ${s.toFixed(6)}`,
@@ -205,7 +215,7 @@ async function twoSampleT(
 
   return [
     `Test: Two-sample Welch's t-test`,
-    `H₀: μ₁ = μ₂  |  H₁: μ₁ ${alternative === 'two_sided' ? '≠' : alternative === 'less' ? '<' : '>'} μ₂`,
+    `H₀: μ₁ = μ₂  |  H₁: μ₁ ${altSymbol(alternative)} μ₂`,
     ``,
     `Sample 1: mean = ${m1.toFixed(6)}, std = ${s1.toFixed(6)}, n = ${n1}`,
     `Sample 2: mean = ${m2.toFixed(6)}, std = ${s2.toFixed(6)}, n = ${n2}`,
@@ -542,7 +552,7 @@ function checkDataShape(data: Record<string, unknown> | undefined): string | nul
 
   const mu0 = data['mu0'];
   if (mu0 !== undefined && !(typeof mu0 === 'number' && Number.isFinite(mu0))) {
-    return `mu0 must be a finite number, got ${String(mu0)}`;
+    return `mu0 must be a finite number, got ${JSON.stringify(mu0)}`;
   }
   return null;
 }
@@ -620,7 +630,8 @@ export async function hypothesisTestingHandler(args: Record<string, unknown>) {
     const failure = inBandFailure(lines);
     if (failure) return formatErrorResponse(failure);
 
-    const mainResult = lines[lines.length - 1];
+    const mainResult = lines.at(-1);
+    if (mainResult === undefined) return formatErrorResponse('the test produced no output');
     return formatToolResponse({
       result: mainResult,
       notes: lines,

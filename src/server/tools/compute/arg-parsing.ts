@@ -194,7 +194,7 @@ export function expressionArg(arg: string | undefined): string {
  */
 export function stripEnclosingBrackets(problem: string): string {
   let s = problem.trim();
-  while (s.length > 1 && (s[0] === '(' || s[0] === '[')) {
+  while (s.length > 1 && (s.startsWith('(') || s.startsWith('['))) {
     let depth = 0;
     let partner = -1;
     for (let i = 0; i < s.length; i++) {

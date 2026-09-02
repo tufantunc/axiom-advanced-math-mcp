@@ -57,13 +57,12 @@ export async function analyzeNumberCore(n: number): Promise<string[]> {
     } catch {}
   }
 
-  lines.push(
-    `Perfect square: ${isPerfectSquare(absN) ? `Yes (${Math.round(Math.sqrt(absN))}²)` : 'No'}`
-  );
-  lines.push(
-    `Perfect cube: ${isPerfectCube(absN) ? `Yes (${Math.round(Math.cbrt(absN))}³)` : 'No'}`
-  );
-  lines.push(`Triangular: ${isTriangular(absN) ? `Yes (T${triangularIndex(absN)})` : 'No'}`);
+  const squareNote = isPerfectSquare(absN) ? `Yes (${Math.round(Math.sqrt(absN))}²)` : 'No';
+  lines.push(`Perfect square: ${squareNote}`);
+  const cubeNote = isPerfectCube(absN) ? `Yes (${Math.round(Math.cbrt(absN))}³)` : 'No';
+  lines.push(`Perfect cube: ${cubeNote}`);
+  const triangularNote = isTriangular(absN) ? `Yes (T${triangularIndex(absN)})` : 'No';
+  lines.push(`Triangular: ${triangularNote}`);
   lines.push(`Fibonacci: ${isFibonacci(absN) ? 'Yes' : 'No'}`);
 
   return lines;

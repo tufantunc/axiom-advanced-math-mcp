@@ -102,7 +102,8 @@ export function checkGeometric(terms: number[]): SequenceResult | null {
     const a = terms[0];
     const r = ratios[0];
     const next: number[] = [];
-    let last = terms[terms.length - 1];
+    let last = terms.at(-1);
+    if (last === undefined) return null;
     for (let i = 0; i < 3; i++) {
       last *= r;
       next.push(Math.round(last * 1e9) / 1e9);
@@ -136,7 +137,13 @@ export function checkQuadratic(terms: number[]): SequenceResult | null {
     }
 
     const parts: string[] = [];
-    if (A !== 0) parts.push(A === 1 ? 'n²' : A === -1 ? '-n²' : `${A}n²`);
+    if (A !== 0) {
+      let aTerm: string;
+      if (A === 1) aTerm = 'n²';
+      else if (A === -1) aTerm = '-n²';
+      else aTerm = `${A}n²`;
+      parts.push(aTerm);
+    }
     if (B !== 0) parts.push(B > 0 && parts.length > 0 ? `+${B}n` : `${B}n`);
     if (C !== 0) parts.push(C > 0 && parts.length > 0 ? `+${C}` : `${C}`);
 

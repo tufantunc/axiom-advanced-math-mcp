@@ -5,7 +5,8 @@ import { toLatex } from '../giac-eval.js';
 
 /** Build a Giac substitution list "[x=1,y=2]" from variables + point values. */
 function substList(variables: string[], point: string[]): string {
-  return `[${variables.map((v, i) => `${v}=${point[i]}`).join(',')}]`;
+  const assignments = variables.map((v, i) => `${v}=${point[i]}`).join(',');
+  return `[${assignments}]`;
 }
 
 /** Evaluate a Giac expression, throwing on undef/empty. */
@@ -102,7 +103,8 @@ export async function optimizationHandler(args: Record<string, unknown>) {
         return formatErrorResponse("'direction' length must match 'variables' length");
       }
       const sub = substList(variables, point);
-      const norm = await giac(`sqrt(${direction.map((d) => `(${d})^2`).join('+')})`);
+      const squaredComponents = direction.map((d) => `(${d})^2`).join('+');
+      const norm = await giac(`sqrt(${squaredComponents})`);
       if (norm === '0') return formatErrorResponse('direction vector cannot be zero');
       const parts: string[] = [];
       for (let i = 0; i < variables.length; i++) {

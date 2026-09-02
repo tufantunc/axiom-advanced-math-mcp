@@ -114,6 +114,17 @@ describe('linear_regression', () => {
       const t = r.content.map((c) => c.text).join('\n');
       expect(t).toMatch(/ŷ = 2\.0*x/);
     });
+
+    it('prints a negative leading coefficient with its sign', async () => {
+      // y = 1 - 2x: the FIRST term's sign is a bare '-', not ' - ' and not
+      // nothing. Dropping that arm renders "ŷ = 2.00000x + 1.00000" — a
+      // wrong-sign equation with correct coefficients beneath it, which no
+      // other pin catches (every existing fixture fits a positive slope).
+      const r = await linearRegressionHandler({ x: [0, 1, 2, 3, 4], y: [1, -1, -3, -5, -7] });
+      expect(r.isError).toBe(false);
+      const t = r.content.map((c) => c.text).join('\n');
+      expect(t).toMatch(/ŷ = -2\.00000x \+ 1\.00000/);
+    });
   });
 });
 

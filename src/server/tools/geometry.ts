@@ -25,10 +25,7 @@ export async function geometryHandler(args: Record<string, unknown>) {
           : `d = hypot(${formatNumber(x2 - x1)}, ${formatNumber(y2 - y1)})`;
         return formatToolResponse({
           result: formatNumber(d),
-          notes: [
-            `Distance between (${x1},${y1}) and (${x2},${y2})`,
-            derivation,
-          ],
+          notes: [`Distance between (${x1},${y1}) and (${x2},${y2})`, derivation],
         });
       }
 
@@ -90,12 +87,10 @@ export async function geometryHandler(args: Record<string, unknown>) {
           area += xi * yj - xj * yi;
         }
         area = Math.abs(area) / 2;
+        const vertexList = points.map(([x, y]) => `(${x},${y})`).join(', ');
         return formatToolResponse({
           result: formatNumber(area),
-          notes: [
-            `Polygon with ${n} vertices (shoelace formula)`,
-            `Vertices: ${points.map(([x, y]) => `(${x},${y})`).join(', ')}`,
-          ],
+          notes: [`Polygon with ${n} vertices (shoelace formula)`, `Vertices: ${vertexList}`],
         });
       }
 

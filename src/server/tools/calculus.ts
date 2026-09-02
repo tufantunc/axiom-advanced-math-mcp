@@ -1,6 +1,7 @@
 import { formatErrorResponse } from './response-formatter.js';
 import { validateExpression } from './expression-validator.js';
 import { evalWithLatex } from './giac-eval.js';
+import type { VerificationResult } from './self-verify.js';
 import { detectFailure } from './compute/silent-failure.js';
 import { splitTopLevel } from './output-cleanup.js';
 import { stripEnclosingBrackets } from './compute/arg-parsing.js';
@@ -191,20 +192,21 @@ export async function calculusHandler(args: Record<string, unknown>) {
     // A rewritten system is checked against Y' = A*Y + b. The shape guards below
     // catch an answer that is visibly not one (`[]`, `undef`, `poly1[`); this
     // catches one that looks entirely ordinary and simply is not a solution.
-    const verify = isIndefiniteIntegral
-      ? (result: string) =>
-          verifyIntegrate(args.expression as string, args.variable as string, result)
-      : system
-        ? (result: string) =>
-            verifyOdeSystem(
-              system.matrix,
-              system.constants,
-              system.variable,
-              result,
-              (expr: string) => giacEngine.evaluate(expr),
-              system.condition
-            )
-        : undefined;
+    let verify: ((result: string) => Promise<VerificationResult | undefined>) | undefined;
+    if (isIndefiniteIntegral) {
+      verify = (result: string) =>
+        verifyIntegrate(args.expression as string, args.variable as string, result);
+    } else if (system) {
+      verify = (result: string) =>
+        verifyOdeSystem(
+          system.matrix,
+          system.constants,
+          system.variable,
+          result,
+          (expr: string) => giacEngine.evaluate(expr),
+          system.condition
+        );
+    }
     // Through `notes`, not appended to the formatted content: formatToolResponse
     // owns line order and puts notes before the "The answer is" summary. Pushed
     // onto content it landed after the sentence presenting the answer, which for
@@ -266,7 +268,7 @@ export async function calculusHandler(args: Record<string, unknown>) {
       const unfinished =
         detectFailure(`Result: ${result}`) !== null ||
         /poly1\[|ilaplace\(/.test(result) ||
-        /(^|[^A-Za-z_0-9])infinity([^A-Za-z_0-9]|$)/.test(result);
+        /(^|\W)infinity(\W|$)/.test(result);
       // Reachable again. This branch was removed when verifyOdeSystem could only
       // say ✓ or nothing; it can now prove failure for an exact system, and a
       // disproved answer must not ship — `[y'=z, z'=-y+sqrt(x)]` was going out as
@@ -322,8 +324,7 @@ export async function calculusHandler(args: Record<string, unknown>) {
       // Only an answer whose every branch is non-finite is no answer.
       const branches = splitTopLevel(stripEnclosingBrackets(resultText), ',');
       const everyBranchInfinite =
-        resultText.length > 0 &&
-        branches.every((b) => /(^|[^A-Za-z_0-9])infinity([^A-Za-z_0-9]|$)/.test(b));
+        resultText.length > 0 && branches.every((b) => /(^|\W)infinity(\W|$)/.test(b));
       const failure =
         detectFailure(`Result: ${resultText}`) ??
         (everyBranchInfinite ? 'non-finite result' : null);
@@ -334,13 +335,16 @@ export async function calculusHandler(args: Record<string, unknown>) {
         // supplied none, that their conditions could not all be satisfied, and sent
         // them looking in the wrong place for a Giac limitation.
         const foldedConditions = args.equation !== args.original_equation;
-        const why =
-          failure === 'empty result'
-            ? foldedConditions
-              ? 'the CAS returned no solution, which for an initial-value problem ' +
-                'usually means the conditions cannot all be satisfied'
-              : 'the CAS returned no solution for this equation'
-            : `the CAS returned ${failure}`;
+        let why: string;
+        if (failure === 'empty result' && foldedConditions) {
+          why =
+            'the CAS returned no solution, which for an initial-value problem ' +
+            'usually means the conditions cannot all be satisfied';
+        } else if (failure === 'empty result') {
+          why = 'the CAS returned no solution for this equation';
+        } else {
+          why = `the CAS returned ${failure}`;
+        }
         return formatErrorResponse(`solve_ode cannot solve this equation — ${why}`);
       }
       // The residual check, and the reason the guards above are not the defence.
@@ -394,10 +398,22 @@ export async function calculusHandler(args: Record<string, unknown>) {
       // never produces one (see everyConditionHolds for why no sound disproof of a
       // condition is available), and unlike the system path this one hands no
       // `verify` callback to evalWithLatex, so there is no `Verified:` line for a
-      // withheld mark to disappear from. It is not dead code in the sense of
-      // unreachable — verifyOdeSolution reads it on every solve_ode request, and
-      // removing it makes 16 rows of verify-ode-solution.test.ts fail — but its
-      // effect stops at a return value nothing consumes.
+      // withheld mark to disappear from.
+      //
+      // Two mutations, two different referents, and an earlier version of this
+      // paragraph gave both answers at once by borrowing one's number for the
+      // other. Measured here, separately:
+      //
+      //   delete THIS argument at the call site  -> 0 of 1907 rows fail
+      //   make the FUNCTION ignore the parameter
+      //     (odeClauses(equation) instead of
+      //      odeClauses(conditionSource ?? equation))  -> 16 rows fail
+      //
+      // So the SEMANTICS of the parameter are pinned from inside self-verify.ts;
+      // what no row pins is the WIRING here. That distinction is the whole point
+      // of this paragraph — it is the only thing protecting a line with no test —
+      // and reading the 16 as cover for the wiring would tell the next maintainer
+      // the line is guarded when it is not.
       //
       // It ships anyway because it fixes what the ✓ MEANS. Without it that value
       // can only ever say "solves the equation, conditions unexamined", and the
@@ -414,7 +430,7 @@ export async function calculusHandler(args: Record<string, unknown>) {
           (args.function_name as string) ?? 'y',
           (args.variable as string) ?? 'x',
           resultText,
-          (expr) => giacEngine.evaluate(expr).then((r) => String(r)),
+          (expr) => giacEngine.evaluate(expr).then(String),
           args.equation as string
         );
         if (verdict?.verified === false) {

@@ -90,7 +90,9 @@ function stirlingSecond(n: number, k: number): bigint {
 function bellNumber(n: number): bigint {
   let row: bigint[] = [1n];
   for (let i = 1; i <= n; i++) {
-    const next: bigint[] = [row[row.length - 1]];
+    // The Bell triangle seeds each row with the previous row's last element,
+    // which at iteration i is row[i-1] — the row has length i by construction.
+    const next: bigint[] = [row[i - 1]];
     for (let j = 0; j < row.length; j++) next.push(next[j] + row[j]);
     row = next;
   }

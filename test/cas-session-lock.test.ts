@@ -44,10 +44,14 @@ describe('createMutex', () => {
     const release = await m.acquire();
     release();
     release();
-    // A second holder must still be able to take it exactly once.
+    // A second and third holder must still be able to take it — the double
+    // release must not have wedged the mutex or corrupted its grant count.
     const second = await m.acquire();
+    expect(typeof second).toBe('function');
     second();
-    expect(true).toBe(true);
+    const third = await m.acquire();
+    expect(typeof third).toBe('function');
+    third();
   });
 });
 

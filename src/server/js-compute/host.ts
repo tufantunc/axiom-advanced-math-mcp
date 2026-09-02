@@ -125,11 +125,11 @@ export function createJsComputeHost(opts: JsComputeHostOptions = {}) {
    */
   function armAdmission(id: number): void {
     const p = pending.get(id);
-    if (!p || p.phase !== 'queued') return;
+    if (p?.phase !== 'queued') return;
     if (p.timer) clearTimeout(p.timer);
     p.timer = setTimeout(() => {
       const cur = pending.get(id);
-      if (!cur || cur.phase !== 'queued') return;
+      if (cur?.phase !== 'queued') return;
       if (!childReady() || runningEntry() === undefined) {
         // The worker's own setup, not another caller's computation, so extend
         // rather than blame this one. Two kinds of setup reach here:
@@ -331,7 +331,14 @@ export function createJsComputeHost(opts: JsComputeHostOptions = {}) {
         if (msg.error !== undefined) {
           // A task that threw means the worker is healthy and the expression was
           // not: `evaluation_failed`, not `worker_failed`. Only the worker's own
-          // faults get that code, so a caller can tell whose problem it is.
+          // faults get that code.
+          //
+          // This ternary is the one place in the product code that BRANCHES on a
+          // code (worker.ts reads one, but only to put it on the message; see
+          // errors.ts). A task that refused an oversized result on purpose keeps
+          // `result_too_large`; everything else — including a plain mathjs throw,
+          // which arrives with no code at all — collapses to `evaluation_failed`.
+          // The distinction is internal; what reaches the caller is the message.
           p.reject(
             new JsComputeError(
               msg.error,

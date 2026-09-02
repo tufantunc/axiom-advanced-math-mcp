@@ -59,9 +59,12 @@ export async function fourierTransformHandler(args: Record<string, unknown>) {
       lines.push('Reconstructed time-domain signal:');
       for (let k = 0; k < complex.length; k++) {
         const { re, im } = complex[k];
-        lines.push(
-          `  [${k}]  ${re.toFixed(8)}${Math.abs(im) > 1e-10 ? ` ${im < 0 ? '-' : '+'} ${Math.abs(im).toFixed(8)}i` : ''}`
-        );
+        let imaginaryPart = '';
+        if (Math.abs(im) > 1e-10) {
+          const sign = im < 0 ? '-' : '+';
+          imaginaryPart = ` ${sign} ${Math.abs(im).toFixed(8)}i`;
+        }
+        lines.push(`  [${k}]  ${re.toFixed(8)}${imaginaryPart}`);
       }
     }
 

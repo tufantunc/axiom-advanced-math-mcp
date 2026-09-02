@@ -63,6 +63,10 @@ const CAPABILITIES: [string, RegExp][] = [
   // Number theory
   ['ifactor(2310)', /^Result: 2\*3\*5\*7\*11$/m],
   ['analyze(28)', /Divisor sum: 56/],
+  // The classification verdicts are mathematics, not decoration: 28 is not a
+  // square, and nothing else in the suite would notice the No branch dying.
+  ['analyze(28)', /^Perfect square: No$/m],
+  ['analyze(36)', /^Perfect square: Yes \(6²\)$/m],
   // Combinatorics
   ['C(10,3)', /^Result: 120$/m],
   ['multinomial(5, [2,2,1])', /^Result: 30$/m],
@@ -93,6 +97,8 @@ const CAPABILITIES: [string, RegExp][] = [
   // A polygon given as one bracketed list arrived double-nested — read as a
   // single vertex, so a four-vertex call was "fewer than 3 vertices".
   ['area_polygon([[0,0],[4,0],[4,3],[0,3]])', /^Result: 12$/m],
+  // The vertex note is the only per-call trace of what was actually parsed.
+  ['area_polygon([[0,0],[4,0],[4,3],[0,3]])', /Vertices: \(0,0\), \(4,0\), \(4,3\), \(0,3\)/],
   ['area_polygon([0,0],[4,0],[4,3],[0,3])', /^Result: 12$/m],
   ['area_polygon(vertices=[[0,0],[4,0],[4,3],[0,3]])', /^Result: 12$/m],
   ['perimeter_polygon([[0,0],[4,0],[4,3],[0,3]])', /^Result: 14$/m],
@@ -601,6 +607,9 @@ describe('spellings the router has to tell apart', () => {
   it.each([
     ["desolve(y'=sqrt(y), x, y)", /\(-1\/2\*c_0\+1\/2\*x\)\^2/],
     ["desolve(y'=y^(3/2), x, y)", /2\/\(c_0-x\)/],
+    // No `abs(`/`sign(` marker at all — the branch shows up as a square root, and a
+    // single probe point past the boundary refuted this correct answer.
+    ["desolve(y'=sqrt(1-y^2), y(0)=1/2, x, y)", /sin\(x\+1\/6\*pi\)/],
     // The IVP form is the one that stung: the branch's own condition folding
     // produces the correct particular solution and the verifier then destroyed it.
     ["desolve(y'=sqrt(y), y(4)=1, x, y)", /\(-1\+1\/2\*x\)\^2/],
@@ -881,7 +890,7 @@ describe('spellings the router has to tell apart', () => {
       // normalize lifts the line into envelope.warnings and compute/index.ts
       // prepends warnings, so the same 190-character sentence printed twice.
       const t = text(await computeHandler({ problem: '1/0' }));
-      expect((t.match(/result is infinite/g) ?? []).length).toBe(1);
+      expect(t.match(/result is infinite/g) ?? []).toHaveLength(1);
     });
 
     it('reaches a JSON consumer through envelope.warnings', async () => {

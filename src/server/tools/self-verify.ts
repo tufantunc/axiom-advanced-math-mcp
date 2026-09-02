@@ -1,7 +1,6 @@
 import { giacEngine } from '../giac/index.js';
 import { MAX_ENGINE_DEPTH } from './giac-eval.js';
-import { nestingDepth } from './output-cleanup.js';
-import { isPrintedZero, splitTopLevel } from './output-cleanup.js';
+import { nestingDepth, isPrintedZero, splitTopLevel } from './output-cleanup.js';
 import { stripEnclosingBrackets } from './compute/arg-parsing.js';
 
 /** Largest answer this will substitute back; a huge one is its own hazard. */
@@ -182,7 +181,8 @@ export async function verifyOdeSystem(
     return undefined;
   }
   const solution = raw.slice(1, -1);
-  const rhs = `(${matrix})*(${solution})${constants ? `+(${constants})` : ''}`;
+  const constantTerm = constants ? `+(${constants})` : '';
+  const rhs = `(${matrix})*(${solution})${constantTerm}`;
   try {
     // Exact, or no verdict. There is no sound numeric version of this check.
     //
@@ -293,7 +293,7 @@ export async function verifyOdeSystem(
 function joinAt(text: string, i: number, operators: RegExp, word: RegExp): number | undefined {
   const asOperator = operators.exec(text.slice(i));
   if (asOperator) return asOperator[0].length;
-  if (/[A-Za-z0-9_]/.test(text[i - 1] ?? ' ')) return undefined;
+  if (/\w/.test(text[i - 1] ?? ' ')) return undefined;
   return word.exec(text.slice(i))?.[0].length;
 }
 
@@ -326,9 +326,9 @@ function startsAt(text: string, i: number, operators: RegExp, word: RegExp): boo
  * added `∧`.
  */
 const CONJUNCTION_OPERATOR = /^(?:&&+|\u2227)/;
-const CONJUNCTION_WORD = /^and(?![A-Za-z0-9_])/i;
+const CONJUNCTION_WORD = /^and(?!\w)/i;
 const JOIN_OPERATOR = /^(?:&&|\|\||\u2227|\u2228)/;
-const JOIN_WORD = /^(?:and|or)(?![A-Za-z0-9_])/i;
+const JOIN_WORD = /^(?:and|or)(?!\w)/i;
 
 const conjunctionAt = (text: string, i: number): number | undefined =>
   joinAt(text, i, CONJUNCTION_OPERATOR, CONJUNCTION_WORD);
@@ -412,17 +412,26 @@ function odeClauses(text: string): string[] {
   const parts: string[] = [];
   let depth = 0;
   let start = 0;
-  for (let i = 0; i < t.length; i++) {
+  let i = 0;
+  while (i < t.length) {
     const ch = t[i];
-    if (ch === '(' || ch === '[' || ch === '{') depth++;
-    else if (ch === ')' || ch === ']' || ch === '}') depth--;
-    else if (depth === 0) {
+    if (ch === '(' || ch === '[' || ch === '{') {
+      depth++;
+      i++;
+    } else if (ch === ')' || ch === ']' || ch === '}') {
+      depth--;
+      i++;
+    } else if (depth === 0) {
       const width = ch === ',' ? 1 : conjunctionAt(t, i);
       if (width !== undefined) {
         parts.push(t.slice(start, i));
         start = i + width;
-        i = start - 1;
+        i = start;
+      } else {
+        i++;
       }
+    } else {
+      i++;
     }
   }
   if (parts.length === 0) return [t];
@@ -495,14 +504,14 @@ function readCondition(
   variable: string
 ): OdeCondition | undefined {
   const shape = new RegExp(
-    `^${escapeForRegExp(functionName)}('*)\\s*\\(\\s*([^(){}\\[\\],]*?)\\s*\\)\\s*=\\s*(.+)$`
+    String.raw`^${escapeForRegExp(functionName)}('*)\s*\(\s*([^(){}\[\],]*?)\s*\)\s*=\s*(.+)$`
   );
   const parsed = shape.exec(clause.trim());
   if (!parsed) return undefined;
   const [, primes, point, value] = parsed;
   if (point.length === 0) return undefined;
   if (NOT_A_VALUE.test(point) || NOT_A_VALUE.test(value)) return undefined;
-  const mentionsVariable = new RegExp(`\\b${escapeForRegExp(variable)}\\b`);
+  const mentionsVariable = new RegExp(String.raw`\b${escapeForRegExp(variable)}\b`);
   if (mentionsVariable.test(point) || mentionsVariable.test(value)) return undefined;
   return { order: primes.length, point, value };
 }
@@ -726,25 +735,25 @@ export async function verifyOdeSolution(
   const substituted = equationOnly
     .replaceAll(
       new RegExp(
-        `\\b(?:diff|derive|deriver)\\s*\\(\\s*${fn}\\s*\\(\\s*${v}\\s*\\)\\s*,\\s*${v}\\s*,\\s*(\\d+)\\s*\\)`,
+        String.raw`\b(?:diff|derive|deriver)\s*\(\s*${fn}\s*\(\s*${v}\s*\)\s*,\s*${v}\s*,\s*(\d+)\s*\)`,
         'g'
       ),
       `diff(${sub},${variable},$1)`
     )
     .replaceAll(
       new RegExp(
-        `\\b(?:diff|derive|deriver)\\s*\\(\\s*${fn}\\s*\\(\\s*${v}\\s*\\)\\s*,\\s*${v}\\s*\\)`,
+        String.raw`\b(?:diff|derive|deriver)\s*\(\s*${fn}\s*\(\s*${v}\s*\)\s*,\s*${v}\s*\)`,
         'g'
       ),
       `diff(${sub},${variable})`
     )
-    .replaceAll(new RegExp(`\\bd${fn}\\s*/\\s*d${v}\\b`, 'g'), `diff(${sub},${variable})`)
+    .replaceAll(new RegExp(String.raw`\bd${fn}\s*/\s*d${v}\b`, 'g'), `diff(${sub},${variable})`)
     .replaceAll(
-      new RegExp(`\\b${fn}('+)(?!['\\s]*\\()`, 'g'),
+      new RegExp(String.raw`\b${fn}('+)(?!['\s]*\()`, 'g'),
       (_m, primes: string) => `diff(${sub},${variable},${primes.length})`
     )
-    .replaceAll(new RegExp(`\\b${fn}\\s*\\(\\s*${v}\\s*\\)`, 'g'), sub)
-    .replaceAll(new RegExp(`\\b${fn}\\b(?!\\s*\\()(?!')`, 'g'), sub);
+    .replaceAll(new RegExp(String.raw`\b${fn}\s*\(\s*${v}\s*\)`, 'g'), sub)
+    .replaceAll(new RegExp(String.raw`\b${fn}\b(?!\s*\()(?!')`, 'g'), sub);
   // Nothing was substituted, so there is nothing to check — an equation this does
   // not understand must not become an accusation.
   if (substituted === equationOnly) return undefined;
@@ -754,7 +763,7 @@ export async function verifyOdeSolution(
   // answer and a correct `cos(x)` was refuted. Checking the substituted TEXT rather
   // than the residual is what makes this independent of the engine — a leftover the
   // engine erases cannot be seen downstream, only here.
-  if (new RegExp(`\\b${fn}\\b`).test(substituted)) return undefined;
+  if (new RegExp(String.raw`\b${fn}\b`).test(substituted)) return undefined;
 
   try {
     const residual = (await evaluate(`normal(${toZeroForm(substituted)})`)).trim();
@@ -786,7 +795,7 @@ export async function verifyOdeSolution(
     }
     // Kept as a second net: the engine can introduce the name itself, e.g. as
     // `(function_diff(y))(x)`, where nothing was left unsubstituted going in.
-    if (new RegExp(`\\b${fn}\\b`).test(residual)) return undefined;
+    if (new RegExp(String.raw`\b${fn}\b`).test(residual)) return undefined;
     // The free constants have to go too, or nothing with a `c_0` in it can ever be
     // disproved. `desolve(y''=-y, y'(x)=0)` answers a disguised `c_1/sin(x)`,
     // which is not a solution; its residual is plainly nonzero but still mentions
@@ -805,19 +814,50 @@ export async function verifyOdeSolution(
     // Whether it fired was luck. The same equation with y(0)=1 gives [(1+x/2)^2],
     // where 13/10 happens to land inside the branch, and shipped.
     //
-    // `abs(` / `sign(` is the signature: all six false refusals carry one and none
-    // of the disproofs this suite pins does. This is a could-not-check, not a
+    // `abs(` / `sign(` is the signature for those six: all carry one and none of
+    // the disproofs this suite pins does. This is a could-not-check, not a
     // disproof — the distinction this file already draws everywhere else.
     if (/\b(?:abs|sign)\s*\(/.test(residual)) return undefined;
-    let magnitude = 0;
-    for (const value of assignments) {
-      const constants = [...new Set(residual.match(/\bc_\d+\b/g) ?? [])]
-        .map((name, k) => `${name}=${value(k)}`)
-        .join(',');
-      const substs = [`${variable}=13/10`, ...(constants ? [constants] : [])].join(',');
-      const settled = await evaluate(`evalf(subst(${residual},${substs}))`);
-      const at = Math.abs(Number(settled.trim()));
-      if (Number.isFinite(at)) magnitude = Math.max(magnitude, at);
+    // A marker list is not enough, because the same domain problem arrives without
+    // one. `desolve(y'=sqrt(1-y^2), y(0)=1/2, x, y)` answers [sin(x+pi/6)], which is
+    // CORRECT, and its residual is cos(θ)-√(1-sin²θ) — that is cos(θ)-|cos(θ)|
+    // wearing a square root, so it is zero while cos θ >= 0 and nonzero after. A
+    // single probe at x=13/10 sits past that boundary, so a correct answer was
+    // refuted, and adding `sqrt` to the marker list would have gutted the disproof
+    // for every equation with a radical in it.
+    //
+    // So the domain is SAMPLED rather than assumed: a disproof requires the residual
+    // to be nonzero at every point, and a residual that vanishes anywhere on the
+    // sample is a domain artifact rather than evidence. Measured, the five disproofs
+    // this suite pins are nonzero at all three points (-5, 2*x*exp(x), 2*x,
+    // 4*x*cos(x)+2*sin(x), 2*x*exp(x^2/2)) while the residual above is 3.6e-15 at
+    // x=1/10 and 0.5 at x=13/10, so it declines.
+    //
+    // The small point earns its place: with only points past pi/3 every sample is
+    // outside the branch and the false refusal survives. Zero is deliberately NOT a
+    // point — `2*x` and `2*x*exp(x)` vanish there, and a genuine disproof must not
+    // be discarded for having a root at the origin.
+    const probePoints = ['1/10', '13/10', '23/10'];
+    let magnitude = Number.POSITIVE_INFINITY;
+    for (const point of probePoints) {
+      magnitude = Math.min(magnitude, await residualMagnitudeAt(point));
+      if (magnitude < 1e-6) break;
+    }
+    async function residualMagnitudeAt(point: string): Promise<number> {
+      let at = 0;
+      for (const value of assignments) {
+        const constants = [...new Set(residual.match(/\bc_\d+\b/g) ?? [])]
+          .map((name, k) => `${name}=${value(k)}`)
+          .join(',');
+        const substs = [`${variable}=${point}`, ...(constants ? [constants] : [])].join(',');
+        const settled = await evaluate(`evalf(subst(${residual},${substs}))`);
+        const here = Math.abs(Number(settled.trim()));
+        // Max over the constant assignments, as before: a solution FAMILY has to
+        // satisfy the equation for every constant, so one assignment leaving a
+        // residual is enough at this point.
+        if (Number.isFinite(here)) at = Math.max(at, here);
+      }
+      return at;
     }
     if (magnitude < 1e-6) return undefined;
     return {

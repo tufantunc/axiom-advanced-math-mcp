@@ -384,9 +384,8 @@ export async function numericalMethodsHandler(args: Record<string, unknown>) {
       lines.find((l) => l.startsWith('Root:')) ?? lines.find((l) => l.startsWith('Result'));
     // Strip the label only from a line that has one. Applying the strip to the
     // raw last line is what turned `Last x = 0` into a bare `0`.
-    const mainResult = labelled
-      ? labelled.replace(/^[^=:]*[=:]\s*/, '').trim()
-      : lines[lines.length - 1];
+    const mainResult = labelled ? labelled.replace(/^[^=:]*[=:]\s*/, '').trim() : lines.at(-1);
+    if (mainResult === undefined) return formatErrorResponse('the method produced no output');
 
     return formatToolResponse({
       result: mainResult,

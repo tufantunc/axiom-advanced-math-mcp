@@ -68,7 +68,9 @@ async function runCompute(cmd: ComputeCommand): Promise<number> {
   const problem = await resolveInput(cmd.expression, 'expression');
 
   // quiet reads the envelope's display field, so it needs the json format too.
-  const format = cmd.output === 'text' ? 'text' : cmd.output === 'latex' ? 'latex' : 'json';
+  let format: 'text' | 'latex' | 'json' = 'json';
+  if (cmd.output === 'text') format = 'text';
+  else if (cmd.output === 'latex') format = 'latex';
 
   // computeTool takes `Record<string, unknown>`, so these casts buy no
   // checking from the compiler — parse.ts is the only thing that guarantees

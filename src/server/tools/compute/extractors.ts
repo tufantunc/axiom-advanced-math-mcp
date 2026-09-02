@@ -537,7 +537,7 @@ export function extractOde(problem: string): RouteResult {
         // only a residual check can ask; the system path has one in verifyOdeSystem
         // and this path does not.
         const escaped = variable.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
-        const mentionsVariable = new RegExp(`\\b${escaped}\\b`).test(rest[i]);
+        const mentionsVariable = new RegExp(String.raw`\b${escaped}\b`).test(rest[i]);
         if (mentionsVariable) return { kind: 'unsupported' } as const;
         // The same three bounds the system path puts on a condition, from the same
         // function, because this argument is about to be folded into a `desolve`
@@ -1127,38 +1127,36 @@ export function extractGeometry(problem: string): RouteResult {
     // coercion — so parsing `inner` again with a second policy meant one
     // non-JSON element threw and dropped every point, where the shared parser
     // coerces element by element and keeps the rest.
-    {
-      const parsed = callArgs.positional;
-      {
-        if (operation === 'area_circle' || operation === 'circumference') {
-          args['radius'] = parsed[0];
-        } else if (
-          operation === 'area_triangle' &&
-          parsed.length === 2 &&
-          parsed.every((n) => typeof n === 'number')
-        ) {
-          // Two bare numbers for a triangle are base and height, not points.
-          args['base'] = parsed[0];
-          args['height'] = parsed[1];
-        } else if (operation === 'angle_between_lines' || operation === 'line_intersection') {
-          args['line1'] = parsed[0];
-          args['line2'] = parsed[1];
-        } else if (operation === 'point_line_distance') {
-          // The handler reads `points[0]` and `line1`; nothing set `line1`, so
-          // every call reported "requires points[0] and line1". The line comes
-          // either as one [a,b,c] argument or as three bare coefficients —
-          // reading the first spelling only left the second destructuring a
-          // number, which surfaced as the raw "line1 is not iterable".
-          args['points'] = [parsed[0]];
-          args['line1'] = Array.isArray(parsed[1])
-            ? parsed[1]
-            : parsed.slice(1, 4).every((n) => typeof n === 'number')
-              ? parsed.slice(1, 4)
-              : undefined;
-        } else {
-          args['points'] = parsePointList(inner) ?? parsed;
-        }
+    const parsed = callArgs.positional;
+    if (operation === 'area_circle' || operation === 'circumference') {
+      args['radius'] = parsed[0];
+    } else if (
+      operation === 'area_triangle' &&
+      parsed.length === 2 &&
+      parsed.every((n) => typeof n === 'number')
+    ) {
+      // Two bare numbers for a triangle are base and height, not points.
+      args['base'] = parsed[0];
+      args['height'] = parsed[1];
+    } else if (operation === 'angle_between_lines' || operation === 'line_intersection') {
+      args['line1'] = parsed[0];
+      args['line2'] = parsed[1];
+    } else if (operation === 'point_line_distance') {
+      // The handler reads `points[0]` and `line1`; nothing set `line1`, so
+      // every call reported "requires points[0] and line1". The line comes
+      // either as one [a,b,c] argument or as three bare coefficients —
+      // reading the first spelling only left the second destructuring a
+      // number, which surfaced as the raw "line1 is not iterable".
+      args['points'] = [parsed[0]];
+      if (Array.isArray(parsed[1])) {
+        args['line1'] = parsed[1];
+      } else if (parsed.slice(1, 4).every((n) => typeof n === 'number')) {
+        args['line1'] = parsed.slice(1, 4);
+      } else {
+        args['line1'] = undefined;
       }
+    } else {
+      args['points'] = parsePointList(inner) ?? parsed;
     }
   }
 
@@ -1307,7 +1305,7 @@ export function extractLinearRegression(problem: string): RouteResult {
     // straight line (ŷ = 5x - 5, R² = 0.969) for data whose fit is ŷ = x².
     const named = parseCallArgs(inner).named;
     const degree =
-      typeof named['degree'] === 'number' ? named['degree'] : Number(parts[parts.length - 1]);
+      typeof named['degree'] === 'number' ? named['degree'] : Number(parts.at(-1) ?? Number.NaN);
     if (Number.isInteger(degree) && degree > 0) args['degree'] = degree;
   }
 

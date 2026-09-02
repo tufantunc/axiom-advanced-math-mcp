@@ -53,7 +53,7 @@ export function disposeJsCompute(): Promise<void> {
 
 export { createJsComputeHost } from './host.js';
 export { TASKS, type TaskName, type TaskArgs } from './tasks.js';
-export { JsComputeError, jsComputeErrorCode, type JsComputeErrorCode } from './errors.js';
+export { JsComputeError, type JsComputeErrorCode } from './errors.js';
 export type {
   MathJsTaskName,
   EvaluatedExpression,

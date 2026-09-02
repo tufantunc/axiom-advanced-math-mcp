@@ -35,6 +35,10 @@ describe('Verify Tool', () => {
       });
       const text = getText(res);
       expect(text).toContain('FALSE');
+      // The diagnostic names WHERE the sampled check failed, at which
+      // substitution, with what residual — pin its shape so the failure
+      // detail cannot degrade into an unreadable blob.
+      expect(text).toMatch(/At x=[-\d.]+: diff = [-\d.e+]+/);
     });
 
     it('should verify numeric identity 2+3 = 5', async () => {

@@ -43,7 +43,7 @@ export function isCacheable(expression: string): boolean {
  * Simple LRU cache for Giac evaluation results.
  */
 class LruCache {
-  private cache = new Map<string, CacheEntry>();
+  private readonly cache = new Map<string, CacheEntry>();
 
   get(key: string): CacheEntry | undefined {
     const entry = this.cache.get(key);

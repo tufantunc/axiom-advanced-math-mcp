@@ -564,6 +564,23 @@ describe('hypothesis_testing', () => {
       expect(p).toBeCloseTo(expected, 4);
     });
 
+    it('the H₁ line states the tested direction', async () => {
+      // The statistics read `alternative` directly; the report's comparator is
+      // a separate mapping (altSymbol), and nothing asserted it — a 'less'
+      // caller reading "H₁: μ₁ > μ₂" would misread their own test's direction.
+      const twoSided = await hypothesisTestingHandler({
+        test: 'two_sample_t',
+        data: { sample1: [1, 2, 3], sample2: [4, 5, 6] },
+      });
+      expect(allText(twoSided)).toMatch(/H₁: μ₁ ≠ μ₂/);
+      const less = await hypothesisTestingHandler({
+        test: 'two_sample_t',
+        data: { sample1: [1, 2, 3], sample2: [4, 5, 6] },
+        alternative: 'less',
+      });
+      expect(allText(less)).toMatch(/H₁: μ₁ < μ₂/);
+    });
+
     it('still matches student_cdf exactly when df is an integer', async () => {
       const r = await hypothesisTestingHandler({
         test: 'one_sample_t',
