@@ -805,19 +805,50 @@ export async function verifyOdeSolution(
     // Whether it fired was luck. The same equation with y(0)=1 gives [(1+x/2)^2],
     // where 13/10 happens to land inside the branch, and shipped.
     //
-    // `abs(` / `sign(` is the signature: all six false refusals carry one and none
-    // of the disproofs this suite pins does. This is a could-not-check, not a
+    // `abs(` / `sign(` is the signature for those six: all carry one and none of
+    // the disproofs this suite pins does. This is a could-not-check, not a
     // disproof — the distinction this file already draws everywhere else.
     if (/\b(?:abs|sign)\s*\(/.test(residual)) return undefined;
-    let magnitude = 0;
-    for (const value of assignments) {
-      const constants = [...new Set(residual.match(/\bc_\d+\b/g) ?? [])]
-        .map((name, k) => `${name}=${value(k)}`)
-        .join(',');
-      const substs = [`${variable}=13/10`, ...(constants ? [constants] : [])].join(',');
-      const settled = await evaluate(`evalf(subst(${residual},${substs}))`);
-      const at = Math.abs(Number(settled.trim()));
-      if (Number.isFinite(at)) magnitude = Math.max(magnitude, at);
+    // A marker list is not enough, because the same domain problem arrives without
+    // one. `desolve(y'=sqrt(1-y^2), y(0)=1/2, x, y)` answers [sin(x+pi/6)], which is
+    // CORRECT, and its residual is cos(θ)-√(1-sin²θ) — that is cos(θ)-|cos(θ)|
+    // wearing a square root, so it is zero while cos θ >= 0 and nonzero after. A
+    // single probe at x=13/10 sits past that boundary, so a correct answer was
+    // refuted, and adding `sqrt` to the marker list would have gutted the disproof
+    // for every equation with a radical in it.
+    //
+    // So the domain is SAMPLED rather than assumed: a disproof requires the residual
+    // to be nonzero at every point, and a residual that vanishes anywhere on the
+    // sample is a domain artifact rather than evidence. Measured, the five disproofs
+    // this suite pins are nonzero at all three points (-5, 2*x*exp(x), 2*x,
+    // 4*x*cos(x)+2*sin(x), 2*x*exp(x^2/2)) while the residual above is 3.6e-15 at
+    // x=1/10 and 0.5 at x=13/10, so it declines.
+    //
+    // The small point earns its place: with only points past pi/3 every sample is
+    // outside the branch and the false refusal survives. Zero is deliberately NOT a
+    // point — `2*x` and `2*x*exp(x)` vanish there, and a genuine disproof must not
+    // be discarded for having a root at the origin.
+    const probePoints = ['1/10', '13/10', '23/10'];
+    let magnitude = Number.POSITIVE_INFINITY;
+    for (const point of probePoints) {
+      magnitude = Math.min(magnitude, await residualMagnitudeAt(point));
+      if (magnitude < 1e-6) break;
+    }
+    async function residualMagnitudeAt(point: string): Promise<number> {
+      let at = 0;
+      for (const value of assignments) {
+        const constants = [...new Set(residual.match(/\bc_\d+\b/g) ?? [])]
+          .map((name, k) => `${name}=${value(k)}`)
+          .join(',');
+        const substs = [`${variable}=${point}`, ...(constants ? [constants] : [])].join(',');
+        const settled = await evaluate(`evalf(subst(${residual},${substs}))`);
+        const here = Math.abs(Number(settled.trim()));
+        // Max over the constant assignments, as before: a solution FAMILY has to
+        // satisfy the equation for every constant, so one assignment leaving a
+        // residual is enough at this point.
+        if (Number.isFinite(here)) at = Math.max(at, here);
+      }
+      return at;
     }
     if (magnitude < 1e-6) return undefined;
     return {

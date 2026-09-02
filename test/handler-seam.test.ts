@@ -601,6 +601,9 @@ describe('spellings the router has to tell apart', () => {
   it.each([
     ["desolve(y'=sqrt(y), x, y)", /\(-1\/2\*c_0\+1\/2\*x\)\^2/],
     ["desolve(y'=y^(3/2), x, y)", /2\/\(c_0-x\)/],
+    // No `abs(`/`sign(` marker at all — the branch shows up as a square root, and a
+    // single probe point past the boundary refuted this correct answer.
+    ["desolve(y'=sqrt(1-y^2), y(0)=1/2, x, y)", /sin\(x\+1\/6\*pi\)/],
     // The IVP form is the one that stung: the branch's own condition folding
     // produces the correct particular solution and the verifier then destroyed it.
     ["desolve(y'=sqrt(y), y(4)=1, x, y)", /\(-1\+1\/2\*x\)\^2/],
