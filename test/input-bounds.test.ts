@@ -1128,10 +1128,25 @@ describe("an initial condition's cost is bounded, not only its size", () => {
   // rather than vanish. The previous version dropped it silently, on the
   // strength of a comment asserting the only cases left were another `!` or an
   // operator — and `]` was neither, which is how the rows above got through.
-  it('refuses a factorial whose operand it cannot read at all', async () => {
-    const r = await computeHandler({ problem: "desolve(y'=y, y(0)={50000}!, x, y)" });
+  //
+  // `{50000}!` goes through the brace branch and `[[50000]]!` through the
+  // bracket one — both are real kills. `"50000"!` is the shape that reaches the
+  // final fall-through, and it is measured HARMLESS at the engine level
+  // (`[y(0)=(("50000")!),…]`, worker alive), so that row pins defence in depth
+  // rather than a demonstrated kill. It is pinned anyway: without it the
+  // fall-through is dead code, and a dead branch here is exactly what a later
+  // reader deletes for free — after which the next unreadable operand vanishes
+  // silently, which is how `]` got through in the first place.
+  it.each([
+    ["desolve(y'=y, y(0)={50000}!, x, y)", /a factorial this cannot bound/],
+    ["desolve(y'=y, y(0)=[[50000]]!, x, y)", /a factorial of 50000/],
+    ["desolve([y'=y, y(0)=(1,50000)!], x, y)", /a factorial this cannot bound \(1,50000\)/],
+    ['desolve(y\'=y, y(0)="50000"!, x, y)', /a factorial this cannot bound/],
+  ])('refuses %s, whose operand it cannot read as a value', async (problem, reason) => {
+    const r = await computeHandler({ problem });
     expect(r.isError, text(r)).toBe(true);
-    expect(text(r)).toMatch(/a factorial this cannot bound/);
+    expect(text(r)).toMatch(reason);
+    expect(text(r)).not.toMatch(/memory access|worker exited|RuntimeError/);
   });
 
   // The two magnitude axes have to compose, and did not: `10^9!` is `10^(9!)`,

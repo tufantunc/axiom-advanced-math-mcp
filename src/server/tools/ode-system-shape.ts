@@ -947,6 +947,12 @@ function factorialArguments(text: string): string[] {
     // above. EVERYTHING else reaches the caller's unreadable branch rather than
     // vanishing: the previous version dropped it silently on the strength of a
     // comment claiming an operator was all that was left, and `]` was not.
+    //
+    // Defence in depth, and honestly so — every shape measured to reach here is
+    // harmless (`y(0)="50000"!` answers symbolically with the worker alive; the
+    // dangerous bracket forms all take the branch above). It is kept and pinned
+    // because a dead branch is one a later reader deletes for free, and what it
+    // guards against is the silent drop that hid the `]` case.
     if (closer !== '!') operands.push(closer);
   }
   return operands;
