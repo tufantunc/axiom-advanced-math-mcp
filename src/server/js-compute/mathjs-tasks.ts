@@ -497,12 +497,10 @@ export const MATHJS_TASKS = {
         current = [];
         continue;
       }
-      if (current.length > 0) {
-        const prev = current[current.length - 1];
-        if (rawRange > 0 && Math.abs(pt.y - prev.y) > threshold) {
-          if (current.length > 1) segments.push({ points: current });
-          current = [];
-        }
+      const prev = current.at(-1);
+      if (prev !== undefined && rawRange > 0 && Math.abs(pt.y - prev.y) > threshold) {
+        if (current.length > 1) segments.push({ points: current });
+        current = [];
       }
       current.push(pt);
     }

@@ -1165,7 +1165,7 @@ export function extractLinearRegression(problem: string): RouteResult {
     // straight line (ŷ = 5x - 5, R² = 0.969) for data whose fit is ŷ = x².
     const named = parseCallArgs(inner).named;
     const degree =
-      typeof named['degree'] === 'number' ? named['degree'] : Number(parts[parts.length - 1]);
+      typeof named['degree'] === 'number' ? named['degree'] : Number(parts.at(-1) ?? Number.NaN);
     if (Number.isInteger(degree) && degree > 0) args['degree'] = degree;
   }
 

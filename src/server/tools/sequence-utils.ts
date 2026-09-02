@@ -102,7 +102,8 @@ export function checkGeometric(terms: number[]): SequenceResult | null {
     const a = terms[0];
     const r = ratios[0];
     const next: number[] = [];
-    let last = terms[terms.length - 1];
+    let last = terms.at(-1);
+    if (last === undefined) return null;
     for (let i = 0; i < 3; i++) {
       last *= r;
       next.push(Math.round(last * 1e9) / 1e9);
