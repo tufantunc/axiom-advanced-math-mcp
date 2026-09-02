@@ -2,8 +2,10 @@ import { formatErrorResponse } from './response-formatter.js';
 import { validateExpression } from './expression-validator.js';
 import { evalWithLatex } from './giac-eval.js';
 import { detectFailure } from './compute/silent-failure.js';
+import { splitTopLevel } from './output-cleanup.js';
+import { stripEnclosingBrackets } from './compute/arg-parsing.js';
 import { giacEngine } from '../giac/index.js';
-import { verifyIntegrate, verifyOdeSystem } from './self-verify.js';
+import { verifyIntegrate, verifyOdeSystem, verifyOdeSolution } from './self-verify.js';
 import { parseOdeSystem } from './ode-system-shape.js';
 import { translateOdeSystem } from './ode-system.js';
 
@@ -125,9 +127,23 @@ function validateParams(operation: string, args: Record<string, unknown>): strin
       if (!args.expression) return "'expression' is required for taylor";
       if (!args.variable) return "'variable' is required for taylor";
       return null;
-    case 'solve_ode':
+    case 'solve_ode': {
       if (!args.equation) return "'equation' is required for solve_ode";
+      // Refused, not ignored. The extractor folds the arguments it recognises —
+      // identifiers name the variable and the function, `y(0)=1` shapes are
+      // conditions — and reports the first it does not, because dropping one is
+      // how `desolve(y'=y, y(0)=1)` came to answer the general solution as if it
+      // satisfied the condition.
+      const unsupported = args.unsupported_argument;
+      if (typeof unsupported === 'string') {
+        return (
+          `solve_ode does not understand the argument "${unsupported.slice(0, 60)}" — ` +
+          'give the equation, then any conditions as y(0)=1, then the variable ' +
+          "and the function, as in desolve(y'=y, y(0)=1, x, y)"
+        );
+      }
       return null;
+    }
     default:
       return `Unknown operation: ${operation}`;
   }
@@ -191,8 +207,13 @@ export async function calculusHandler(args: Record<string, unknown>) {
       // coefficient named `ilaplace_k` does not trip them either. It is here
       // because the `Command:` line echoes caller text and a sentinel added
       // later may not be as punctuated.
-      const resultLine = /^Result:\s*(.*)$/m.exec(response.content.map((c) => c.text).join('\n'));
-      const result = resultLine?.[1]?.trim() ?? '';
+      // The typed value, not a scrape of the rendered block. evalWithLatex returns
+      // `result` for exactly this, and it exists because this file used to read its
+      // own `Verified: ✗` glyph back out of the display. A `^Result:(.*)$` scrape
+      // also stops at the first newline, and a truncated answer handed to the
+      // substituter below would be a manufactured residual — a manufactured
+      // disproof, which is the one thing this check must never produce.
+      const result = response.result.trim();
       // The shared detector decides the three checks it already owns — an empty
       // result, a GIAC_ERROR, and a non-finite token — and this path adds only
       // what is specific to a solution VECTOR. Re-deriving them here had let the
@@ -250,6 +271,104 @@ export async function calculusHandler(args: Record<string, unknown>) {
         return formatErrorResponse(
           `solve_ode cannot solve this system — the CAS could not finish it${hint}`
         );
+      }
+    }
+    // The single-equation path has no solution VECTOR to check, but it can still
+    // be handed something that is visibly not an answer, and it had no guard at
+    // all: `desolve(y'=y, y(0)=1, y(1)=2, x, y)` — over-determined — shipped
+    // `Result: []` as the answer with isError:false, and so did a condition on a
+    // function the equation never mentions.
+    //
+    // Only reachable since conditions written as separate arguments stopped being
+    // dropped. Dropping them meant Giac was never asked an unsatisfiable
+    // question, so fixing that drop is what made this path able to produce `[]`.
+    //
+    // Same delegation as the solution-vector guard, and the same synthesized
+    // `Result:` line
+    // for the same reason: the `Command:` line echoes the caller's own text, so
+    // scanning the whole response would refuse an equation for a coefficient's
+    // name.
+    if (!functions && operation === 'solve_ode') {
+      const resultText = response.result.trim();
+      // `infinity` is checked here and not in detectFailure because it is not a
+      // failure in general — `integrate(1/x^2, x, 0, 1)` correctly diverges — but
+      // no SOLUTION of an ODE is infinity. The solution-vector guard has had this
+      // arm all along; the single-equation path did not, so an inconsistent BVP
+      // shipped "infinity" as the answer at isError:false:
+      // `desolve(y''=-y, y(pi/2)=1, y'(0)=0)`, which looks ordinary and is in fact
+      // unsatisfiable. Newly reachable, because conditions written as separate
+      // arguments used to be dropped.
+      // Per BRANCH, not over the whole print. Giac answers `2*y*y'=1` with three
+      // branches of which the first is `infinity`; scanning the text refused the
+      // request and threw away the two correct +/-sqrt(x-c_1) branches with it.
+      // Only an answer whose every branch is non-finite is no answer.
+      const branches = splitTopLevel(stripEnclosingBrackets(resultText), ',');
+      const everyBranchInfinite =
+        resultText.length > 0 &&
+        branches.every((b) => /(^|[^A-Za-z_0-9])infinity([^A-Za-z_0-9]|$)/.test(b));
+      const failure =
+        detectFailure(`Result: ${resultText}`) ??
+        (everyBranchInfinite ? 'non-finite result' : null);
+      if (failure !== null) {
+        // The IVP diagnosis only where the caller actually wrote conditions —
+        // `equation` differs from `original_equation` exactly when some were folded
+        // in. Unconditionally, it told callers of `desolve(y'=log(y), x, y)`, who
+        // supplied none, that their conditions could not all be satisfied, and sent
+        // them looking in the wrong place for a Giac limitation.
+        const foldedConditions = args.equation !== args.original_equation;
+        const why =
+          failure === 'empty result'
+            ? foldedConditions
+              ? 'the CAS returned no solution, which for an initial-value problem ' +
+                'usually means the conditions cannot all be satisfied'
+              : 'the CAS returned no solution for this equation'
+            : `the CAS returned ${failure}`;
+        return formatErrorResponse(`solve_ode cannot solve this equation — ${why}`);
+      }
+      // The residual check, and the reason the guards above are not the defence.
+      // Each of them scans the ANSWER's shape for a sentinel, so each has to
+      // predict what a wrong answer looks like. Three rounds of syntactic guards
+      // on the condition arguments closed the reported spelling and left the field
+      // next door — `y(x)=5`, then `y(x+0)=5`, then `y(0)=x^2` — because an
+      // argument Giac reads as a second equation produces an answer that looks
+      // entirely ordinary. This asks the only question that settles it: does the
+      // thing about to be shipped solve the equation the caller wrote.
+      //
+      // Refuses on a DISPROOF only. verifyOdeSolution returns no verdict when it
+      // cannot substitute, when the answer is too large to hand back, or when a
+      // nonzero residual does not survive numeric evaluation — and "I did not
+      // check" must not become an accusation.
+      //
+      // This fires, and on families nothing else covers. An earlier version of
+      // this note claimed no input reached it — false, and expensively so: the
+      // argument guard in extractOde scans the trailing ARGUMENTS, so a condition
+      // written inside the equation walks straight past it. Both spellings reach
+      // here and are refused, where main answers each with a non-solution:
+      //
+      //   desolve(y'=y and y(x)=5, x, y)      residual -5
+      //   desolve([y'=y, y(x)=5], x, y)       residual -5
+      //   desolve(y'=y and y(0)=x^2, x, y)    residual 2*x*exp(x)
+      //   desolve([y'=y, y(0)=x^2], x, y)     residual 2*x*exp(x)
+      //
+      // Believing that note is why the reachable path went untested, and that is
+      // how a version of the verifier that refused `y'=y and(y(0)=1)` — a correct
+      // answer, Giac's own syntax — shipped unnoticed.
+      //
+      // The argument guard stays in front of it for the arguments it does cover:
+      // no round-trip, and it can name the offending argument, which a residual
+      // cannot.
+      const original = args.original_equation;
+      if (typeof original === 'string' && original.length > 0) {
+        const verdict = await verifyOdeSolution(
+          original,
+          (args.function_name as string) ?? 'y',
+          (args.variable as string) ?? 'x',
+          resultText,
+          (expr) => giacEngine.evaluate(expr).then((r) => String(r))
+        );
+        if (verdict?.verified === false) {
+          return formatErrorResponse(`solve_ode cannot solve this equation — ${verdict.detail}`);
+        }
       }
     }
     return response;

@@ -97,7 +97,20 @@ type Member =
   | { kind: 'condition'; text: string };
 
 /**
- * Whether the whole string is one balanced `diff(...)` call.
+ * Giac's spellings of the derivative operator.
+ *
+ * One list, because two places need it and they disagreed: derivativeOnRight
+ * already recorded that "listing only `diff` missed `derive` and `deriver`, Giac's
+ * own aliases for it", while isBareDiffCall below listed only `diff`. So
+ * isDerivativeEquation — which reads through derivativeTarget to isBareDiffCall —
+ * did not recognise `derive(z)=5`, and 57 arguments that had been refused by name
+ * were folded in as conditions instead and reported as an unsatisfiable
+ * initial-value problem.
+ */
+const DERIVATIVE_CALL = /^(diff|derive|deriver)\s*\(/;
+
+/**
+ * Whether the whole string is one balanced derivative call.
  *
  * Distinguishes the equation `diff(y(x),x)=z` from the initial condition
  * `diff(y(x),x)(0)=0`, whose left side is a diff call APPLIED to a point. A
@@ -106,7 +119,7 @@ type Member =
  * second-order ODE — as a system.
  */
 function isBareDiffCall(lhs: string): boolean {
-  if (!/^diff\s*\(/.test(lhs)) return false;
+  if (!DERIVATIVE_CALL.test(lhs)) return false;
   let depth = 0;
   for (let i = 0; i < lhs.length; i++) {
     if (lhs[i] === '(') depth++;
@@ -148,7 +161,7 @@ function derivativeTarget(lhs: string): DerivativeTarget | undefined {
   const leibniz = /^d([A-Za-z_]\w*)\s*\/\s*d([A-Za-z_]\w*)$/.exec(lhs);
   if (leibniz) return { fn: leibniz[1], order: 1, wrt: leibniz[2] };
   if (isBareDiffCall(lhs)) {
-    const inner = /^diff\s*\(\s*([A-Za-z_]\w*)/.exec(lhs);
+    const inner = /^(?:diff|derive|deriver)\s*\(\s*([A-Za-z_]\w*)/.exec(lhs);
     if (!inner) return undefined;
     // diff(y(x),x,2) — the optional third argument is the order.
     const order = /,\s*[A-Za-z_]\w*\s*,\s*(\d+)\s*\)$/.exec(lhs);
@@ -175,6 +188,66 @@ function classify(member: string): Member {
     ...(target.wrt === undefined ? {} : { wrt: target.wrt }),
     rhs: eq.slice(1).join('=').trim(),
   };
+}
+
+/**
+ * The function a SINGLE equation differentiates, for every spelling the router
+ * accepts — `y'`, `dy/dx`, and `diff(y(x),x)`.
+ *
+ * Exported so the extractor and this file cannot disagree about it. They did:
+ * the extractor had its own reader that knew two of the three, so for the
+ * `diff(y(x),x)` spelling prompts/index.ts advertises it returned undefined, and
+ * every rule keyed on "the equation differentiates something else" silently
+ * stopped applying — an unknowns list naming functions the equation never
+ * mentions was accepted and dropped, which is the defect those rules exist to
+ * prevent.
+ *
+ * derivativeTarget alone is not enough: it is anchored, so it reads `y''` but not
+ * the `y''+y` of `y''+y=0`. The unanchored scans are the fallback for that, and
+ * they run on the whole equation because a normalised left side is not
+ * guaranteed here.
+ */
+export function differentiatedFunction(equation: string): string | undefined {
+  const eq = unicodeToAscii(equation).trim();
+  const sides = splitTopLevel(eq, '=');
+  const target = derivativeTarget((sides[0] ?? eq).trim());
+  if (target) return target.fn;
+  const lagrange = /\b([A-Za-z_]\w*)'/.exec(eq);
+  if (lagrange) return lagrange[1];
+  const leibniz = /\bd([A-Za-z_]\w*)\s*\/\s*d[A-Za-z_]/.exec(eq);
+  if (leibniz) return leibniz[1];
+  return /\bdiff\s*\(\s*([A-Za-z_]\w*)/.exec(eq)?.[1];
+}
+
+/**
+ * Whether a bracketed member is an EQUATION rather than a condition.
+ *
+ * The same test classify() applies — derivativeTarget on the left side — so the
+ * extractor and this file cannot disagree about which members are equations.
+ *
+ * This replaced two weaker mechanisms in the extractor: a list of
+ * derivative-operator NAMES, which had to be kept in step with derivativeTarget
+ * by hand and was not, and a before/after comparison of the parsed equation set,
+ * which measured zero rejections on every corpus tried. The reason to prefer this
+ * one is provable rather than anecdotal: it IS classify()'s equation test, so
+ * folding a member it calls a condition can never add an equation and can never
+ * change what parseOdeSystem reads — checked by brute force over member
+ * spellings, and the fold changed the parsed equation set on none of them.
+ *
+ * What it cannot do is predict GIAC. `y'(x)=0` is a condition to classify() and
+ * an equation to Giac. The extractor narrows that gap by refusing a condition
+ * whose point MENTIONS the independent variable — a syntactic proxy for Giac's
+ * reading, not a proof of it. Endpoints that do not mention the variable, symbolic
+ * ones included, still fold.
+ *
+ * `y'(0)=0` is a condition and must stay one: derivativeTarget is anchored, so
+ * `y'(0)` is not a derivative target while `y'` is. That is the whole distinction,
+ * and it is why the prime cannot be the discriminator.
+ */
+export function isDerivativeEquation(member: string): boolean {
+  const sides = splitTopLevel(unicodeToAscii(member).trim(), '=');
+  if (sides.length < 2) return false;
+  return derivativeTarget((sides[0] ?? '').trim()) !== undefined;
 }
 
 export interface OdeSystem {

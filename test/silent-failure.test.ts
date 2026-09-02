@@ -7,6 +7,20 @@ describe('detectFailure', () => {
     expect(detectFailure('  Result:   []  ')).toBe('empty result');
   });
 
+  it("detects Giac's unevaluated-derivative marker", () => {
+    // Not an answer. It reached a Result line through the ODE condition-folding
+    // path: `desolve(y'=y, z'(x)=-y(x))` returned
+    // `-(function_diff(z))(x)/exp(x)*exp(x)` with isError:false. The extractor no
+    // longer folds that argument, so this is tested here rather than end to end —
+    // the marker is filtered whatever route puts it there.
+    expect(detectFailure('Result: -(function_diff(z))(x)/exp(x)*exp(x)')).toBe(
+      'unevaluated derivative'
+    );
+    // A coefficient whose NAME contains it is not a failure, same rule as the
+    // other tokens on this path.
+    expect(detectFailure('Result: my_function_diffs*exp(x)')).toBeNull();
+  });
+
   it('detects GIAC_ERROR', () => {
     expect(detectFailure('GIAC_ERROR: bad arg')).toBe('Giac error');
     expect(detectFailure('Result: GIAC_ERROR: desolve(...)')).toBe('Giac error');

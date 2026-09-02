@@ -256,6 +256,543 @@ describe('spellings the router has to tell apart', () => {
     expect(text(r)).toMatch(expected);
   });
 
+  // A condition written as its own argument was filtered out with everything
+  // that was not a bare identifier, so the general solution shipped as the
+  // answer to an IVP with isError:false. `desolve(y'=y, y(0)=1)` answered
+  // `c_0*exp(x)`; the answer is exp(x). The whole suite passed before this fix,
+  // which is why the rows below assert the ABSENCE of the constant rather than
+  // just a successful call — a general solution matches "contains exp(x)" too.
+  it.each([
+    ["desolve(y'=y, y(0)=1)", /^Result: exp\(x\)$/m],
+    ["desolve(y'=y, y(0)=1, x, y)", /^Result: exp\(x\)$/m],
+    ["odesolve(y'=y, y(0)=1)", /^Result: exp\(x\)$/m],
+    ["desolve(y'=2*x, y(0)=5, x, y)", /^Result: 5\+x\^2$/m],
+    // Second order, and the derivative condition `y'(0)=0` is why this shape
+    // needs its own regex rather than the system path's CONDITION_FORM.
+    ["desolve(y''=-y, y(0)=1, y'(0)=0, x, y)", /^Result: cos\(x\)$/m],
+    ["desolve(y''+y=0, y(0)=1, y'(0)=0, x, y)", /^Result: cos\(x\)$/m],
+    // A condition at a point other than 0.
+    ["desolve(y'=y+1, y(2)=3, x, y)", /^Result: 4\/exp\(2\)\*exp\(x\)-1$/m],
+  ])('%s applies the condition instead of dropping it', async (problem, expected) => {
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(false);
+    expect(text(r)).toMatch(expected);
+    // No arbitrary constant survives a fully determined IVP.
+    expect(text(r)).not.toMatch(/c_0/);
+  });
+
+  it('still answers the general solution when no condition is given', async () => {
+    // The other direction of the same change: folding must not invent a
+    // condition where the caller gave none.
+    const r = await computeHandler({ problem: "desolve(y'=y, x, y)" });
+    expect(r.isError, text(r)).toBe(false);
+    expect(text(r)).toMatch(/^Result: c_0\*exp\(x\)$/m);
+  });
+
+  it('folds conditions into a bracketed system instead of appending after it', async () => {
+    // calculus.ts decides "is this a system" by handing `equation` to
+    // parseOdeSystem, and `[y'=z, z'=-y] and y(0)=1` does not parse as one. The
+    // first version of the fold appended, which pushed the request off the
+    // Y' = A*Y + b path entirely — no matrix rewrite, no components note, and no
+    // `[]` guard, because that guard runs only when `functions` came back. It
+    // answered `[]` with isError:false, which is worse than the bug being fixed.
+    const r = await computeHandler({ problem: "desolve([y'=z, z'=-y], y(0)=1, z(0)=0, x)" });
+    expect(r.isError, text(r)).toBe(false);
+    expect(text(r)).toMatch(/^Result: \[\[cos\(x\),-sin\(x\)\]\]$/m);
+    // Same answer as writing the conditions inside the brackets, which is the
+    // spelling this now builds.
+    const bracketed = await computeHandler({
+      problem: "desolve([y'=z, z'=-y, y(0)=1, z(0)=0], x)",
+    });
+    expect(text(bracketed)).toMatch(/^Result: \[\[cos\(x\),-sin\(x\)\]\]$/m);
+    // The system path really was taken: this note only exists on it.
+    expect(text(r)).toMatch(/Components are in the order: y, z/);
+  });
+
+  it.each([
+    ["desolve(y'=y, y(x))", /^Result: c_0\*exp\(x\)$/m],
+    ["desolve(y'=y, x, y(x))", /^Result: c_0\*exp\(x\)$/m],
+    ["desolve(y'=y, y(0)=1, x, y(x))", /^Result: exp\(x\)$/m],
+  ])('accepts the applied-function spelling %s', async (problem, expected) => {
+    // `y(x)` is the canonical unknown-function spelling in the dialects whose
+    // verbs this router advertises, and it worked on main by accident: the old
+    // filter dropped it and inference recovered the same name from the equation.
+    // Classifying it as unrecognised turned a correct answer into a refusal.
+    //
+    // These rows pin the refusal only: for `y'=y`, recognising `y(x)` and silently
+    // dropping it both give this answer, because inference reaches the same name
+    // either way. An earlier version of this comment concluded from that that no
+    // input worth a row separates the two — false, and it is why the regression in
+    // the `diff(y(x),x)` rows below shipped. That spelling separates them with
+    // opposite outcomes.
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(false);
+    expect(text(r)).toMatch(expected);
+  });
+
+  it.each([
+    ['desolve(diff(y(x),x)=y(x), y(x))', /^Result: c_0\*exp\(x\)$/m],
+    ['dsolve(diff(y(x),x)=y(x), y(x))', /^Result: c_0\*exp\(x\)$/m],
+    ['desolve(diff(y(t),t)=y(t), y(t))', /^Result: c_0\*exp\(t\)$/m],
+    ['desolve(diff(y(x),x)=2*x, y(x))', /^Result: c_0\+x\^2$/m],
+  ])('%s names the function, not the variable', async (problem, expected) => {
+    // differentiatedName knows `y'` and `dy/dx` only, so for the `diff(y(x),x)`
+    // spelling it finds nothing. Recognising `y(x)` and then asking the equation
+    // which role it plays therefore read `y` as the independent VARIABLE, built
+    // `desolve(...,y,y)`, and Giac answered `[]` — which the new empty-result
+    // guard then reported as an unsatisfiable IVP, on a call with no conditions.
+    // An applied argument names the function by construction; that is carried
+    // rather than re-derived.
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(false);
+    expect(text(r)).toMatch(expected);
+  });
+
+  it.each([
+    ["desolve([y'=z, z'=-y], t, [y,z])", /^Result: \[\[c_0\*cos\(t\)/m],
+    ["desolve([y'=z, z'=-y], x, y, z)", /^Result: \[\[c_0\*cos\(x\)/m],
+    ["desolve([y'=z, z'=-y], x, [y(x),z(x)])", /^Result: \[\[c_0\*cos\(x\)/m],
+    ["desolve([y'=z, z'=-y, y(0)=1, z(0)=0], t, [y,z])", /^Result: \[\[cos\(t\),-sin\(t\)\]\]$/m],
+  ])('%s may name its unknowns', async (problem, expected) => {
+    // A SYSTEM ignores function_name entirely — parseOdeSystem derives the
+    // function list from the equations — so naming the unknowns is redundant, not
+    // wrong, and prompts/index.ts steers callers at exactly this spelling. The
+    // strict single-equation rule refused four calls that main answered AND
+    // self-verified — the four rows here.
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(false);
+    expect(text(r)).toMatch(expected);
+  });
+
+  it.each([
+    ["desolve([y'=z, z'=-y], x, z(x))", /^Result: \[\[c_0\*cos\(x\)/m],
+    ["desolve([y'=z, z'=-y], t, z(t))", /^Result: \[\[c_0\*cos\(t\)/m],
+    ["desolve([y'=z, z'=-y], x, y(x), z(x))", /^Result: \[\[c_0\*cos\(x\)/m],
+  ])('%s may name a non-first unknown applied', async (problem, expected) => {
+    // differentiatedName returns only the FIRST differentiated name, so comparing
+    // an applied argument against it made every unknown but `y` look like a
+    // contradiction: `x, y(x)` was accepted and `x, z(x)` refused for the same
+    // system, which no caller can predict. Membership in the system's own
+    // function list is the test.
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(false);
+    expect(text(r)).toMatch(expected);
+  });
+
+  it('refuses an applied name that is not an unknown of the system', async () => {
+    const r = await computeHandler({ problem: "desolve([y'=z, z'=-y], x, q(x))" });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/does not understand the argument "q\(x\)"/);
+  });
+
+  it.each([["desolve([y'=y, y(0)=1], x, y, zzz)"], ["desolve([y'=y], x, y, zzz)"]])(
+    '%s refuses the surplus argument even though it is bracketed',
+    async (problem) => {
+      // Brackets are not a system. parseOdeSystem needs two derivative members —
+      // `[y'=2*x, y(0)=1]` is a single equation, its docblock says so — so keying
+      // the trailing-argument rules off the punctuation gave these the system's
+      // permissiveness with the single-equation path's consequences: `zzz` was
+      // dropped and the answer shipped, while the unbracketed same request was
+      // refused and pinned by a row above.
+      const r = await computeHandler({ problem });
+      expect(r.isError, text(r)).toBe(true);
+      expect(text(r)).toMatch(/does not understand the argument "zzz"/);
+    }
+  );
+
+  it.each([["desolve(y'=y, [y])"], ["desolve(y'=y, y(0)=1, [y])"]])(
+    '%s accepts an unknowns list on a single equation',
+    async (problem) => {
+      // Recognising the list only for systems made `desolve(y'=y, [y])` a refusal
+      // while `desolve([y'=y], [y])` was accepted — same mathematics, opposite
+      // outcomes decided by whether the caller bracketed the equation.
+      const r = await computeHandler({ problem });
+      expect(r.isError, text(r)).toBe(false);
+      expect(text(r)).toMatch(/exp\(x\)/);
+    }
+  );
+
+  it.each([
+    ["desolve([y'=y], y(0)=1, x, y)", /Command: desolve\(\(y'=y\) and \(y\(0\)=1\)/],
+    ["desolve((y'=z, z'=-y), y(0)=1, z(0)=0, x)", /Command: desolve\(\[Y'=/],
+  ])('%s folds onto the members, not the outer punctuation', async (problem, expectedCommand) => {
+    // stripEnclosingBrackets peels `(` and `[` alike and repeatedly, so the member
+    // list parseOdeSystem reads is not always the one the outer punctuation names.
+    // Keying the fold off `startsWith('[')` appended ` and …` after
+    // `(y'=z, z'=-y)` — a real system — and inserted inside the outer bracket of
+    // `[[y'=z, z'=-y]]`, a level above the members. Both then parsed as
+    // non-systems downstream and were refused, where main answered them verified.
+    //
+    // A single-member list is a lone equation, so it takes the `and` form. The
+    // reason a real list must stay a list is parseOdeSystem, not Giac: it only
+    // reads conditions that are members, so an `and`-appended system parses as no
+    // system. Giac itself accepts either spelling — two earlier versions of this
+    // comment claimed a CAS constraint here and both measured false.
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(false);
+    expect(text(r)).toMatch(expectedCommand);
+  });
+
+  it.each([
+    ["desolve((y'=z, z'=-y), y(0)=1, z(0)=0, x)"],
+    ["desolve((y'=z, z'=-y), x, y(0)=1, z(0)=0)"],
+    ["desolve(((y'=z, z'=-y)), y(0)=1, z(0)=0, x)"],
+    ["desolve([[y'=z, z'=-y]], y(0)=1, z(0)=0, x)"],
+  ])('%s reaches the system path despite its wrapping', async (problem) => {
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(false);
+    expect(text(r)).toMatch(/^Result: \[\[cos\(x\),-sin\(x\)\]\]$/m);
+  });
+
+  it.each([
+    ["desolve(y'=y, y(x)=5)"],
+    ["desolve(y''=-y, y'(x)=0)"],
+    ["desolve(y'=2*x, y'(x)=y(x))"],
+    ["desolve(y'=y, z'(x)=-y(x))"],
+    ['desolve(diff(y(t),t)=y(t), y(t)=5, t, y)'],
+    // The point does not have to BE the variable — it only has to mention it.
+    // Testing equality closed the reported input and nothing else: `y(x+0)=5` is
+    // the same request one character longer and answered `5/exp(x)*exp(x)` with
+    // residual -5, as did `y(2*x)`, `y(x-1)`, `y(x/2)`, `y(-x)` and `y(x^2)` — 41
+    // measured calls that a round specifically looking for this family still
+    // shipped.
+    ["desolve(y'=y, y(x+0)=5)"],
+    ["desolve(y'=y, y(2*x)=5)"],
+    ["desolve(y'=y, y(x-1)=5)"],
+    ["desolve(y'=y, y(x/2)=5)"],
+    ["desolve(y'=2*x, y(-x)=5)"],
+    ["desolve(y'=y*x, y(x^2)=5)"],
+    ["desolve(y'=y, y((x))=5)"],
+    // The VALUE field, found one probe into a residual audit after two rounds of
+    // widening the POINT check. `y(0)=x^2` answered `x^2*exp(x)` with residual
+    // 2*x*exp(x) — 55 of 60 calls, and worse than main, which dropped the
+    // condition and returned a correct general solution. Giac reads a folded
+    // condition mentioning the integration variable ANYWHERE as a second equation.
+    ["desolve(y'=y, y(0)=x^2, x, y)"],
+    ["desolve(y'=y, y(0)=x, x, y)"],
+    ["desolve(y'=y, y(0)=1+x^2, x, y)"],
+    ["desolve(y'=2*x, y(0)=x^2, x, y)"],
+    ["desolve(y'=y*x, y(0)=x^2, x, y)"],
+    ["desolve(y''=-y, y(0)=0, y'(0)=x^2, x, y)"],
+    ['desolve(diff(y(t),t)=y(t), y(0)=t^2, t, y)'],
+  ])('%s is refused, not answered with a non-solution', async (problem) => {
+    // The condition shape's point group matches the independent VARIABLE as
+    // happily as a number, so these were folded in as conditions — and Giac reads
+    // them as equations. `desolve(y'=y, y(x)=5)` answered `5/exp(x)*exp(x)`, whose
+    // residual in the caller's own equation is -5, with isError:false. 25 measured
+    // calls shipped a non-solution that way.
+    //
+    // Neither isDerivativeEquation nor the invariant it replaced could catch this:
+    // parseOdeSystem also calls `y'(x)=0` a condition, so the extractor and the
+    // parser agree and are both wrong about what Giac will do. The test has to be
+    // about the caller's variable, which is why it runs after inference.
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/does not understand the argument/);
+  });
+
+  it.each([
+    ["desolve(y''+y=0, y(pi)=0, x, y)", /c_1\*sin\(x\)/],
+    ["desolve(y''+y=0, y(L)=0, x, y)", /tan\(L\/2\)/],
+    ["desolve(y'=y, y(a)=1, x, y)", /exp\(a\)/],
+    // Word-bounded, so a name that merely CONTAINS the variable is still a point.
+    ["desolve(y'=y, y(x_0)=5, x, y)", /exp\(x_0\)/],
+    ["desolve(y'=y, y(x0)=5, x, y)", /exp\(x0\)/],
+    ["desolve(y'=y, y(X)=5, x, y)", /exp\(X\)/],
+    ["desolve(y'=y, y(xx)=5, x, y)", /exp\(xx\)/],
+    // A VALUE that does not mention the variable is still a value.
+    ["desolve(y'=y, y(0)=a, x, y)", /a\*exp\(x\)/],
+    ["desolve(y'=y, y(0)=L^2, x, y)", /L\^2\*exp\(x\)/],
+  ])('%s keeps working — a symbolic endpoint is still a point', async (problem, expected) => {
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(false);
+    expect(text(r)).toMatch(expected);
+  });
+
+  it.each([
+    ["desolve(y''=-y, y(pi/2)=1, y'(0)=0)"],
+    ["desolve(y''+y=0, y(pi/2)=2, y'(0)=0)"],
+    ["desolve(y''=-4*y, y(pi/4)=1, y'(0)=0)"],
+  ])('%s refuses rather than shipping infinity as the answer', async (problem) => {
+    // Ordinary-looking BVPs that are in fact unsatisfiable — y'(0)=0 forces the
+    // sine term out and cos vanishes at the stated endpoint — so Giac answers
+    // `infinity`. detectFailure matches capitalised `Inf` and deliberately lets
+    // lowercase `infinity` through, because integrate legitimately diverges. The
+    // solution-vector guard has had this arm all along; the single-equation path
+    // did not, and it became reachable when conditions written as separate
+    // arguments stopped being dropped.
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).not.toMatch(/^Result: infinity$/m);
+  });
+
+  it.each([
+    ["desolve(y''=-y, y(pi/4)=1, y'(0)=0)", /cos\(x\)/],
+    ["desolve(y''=-y, y(0)=0, y(pi)=0, x, y)", /c_1\*sin\(x\)/],
+  ])('%s still answers — the infinity guard is not a BVP ban', async (problem, expected) => {
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(false);
+    expect(text(r)).toMatch(expected);
+  });
+
+  it.each([
+    ["desolve(y'=y and(y(0)=1), x, y)", /^Result: exp\(x\)$/m],
+    ["desolve((y'=y)and(y(0)=1), x, y)", /^Result: exp\(x\)$/m],
+    ["desolve(y''=-y and(y(0)=1) and (y'(0)=0), x, y)", /^Result: cos\(x\)$/m],
+    // `&&` and `AND` are Giac's too, and it answers all three identically.
+    ["desolve(y'=y && y(0)=1, x, y)", /^Result: exp\(x\)$/m],
+    ["desolve(y'=y AND y(0)=1, x, y)", /^Result: exp\(x\)$/m],
+    ["desolve(y'=y ∧ y(0)=1, x, y)", /^Result: exp\(x\)$/m],
+    // UNSPACED. `&&` and `∧` are operators and need no separator — the spaced rows
+    // above are green either way and prove nothing about the operator path.
+    ["desolve(y'=y&&y(0)=1, x, y)", /^Result: exp\(x\)$/m],
+    ["desolve(y'=y∧y(0)=1, x, y)", /^Result: exp\(x\)$/m],
+    // The word form still needs its boundary, or `and` matches inside an identifier.
+    ["desolve(y'=command_k*y, x, y)", /command_k/],
+  ])('%s is answered, not accused by the residual check', async (problem, expected) => {
+    // Giac's own IVP syntax without a space. The residual check cuts the equation
+    // at the first top-level `and` before substituting, and its detector required
+    // whitespace BEFORE the token — so `and(` was missed, the condition stayed in
+    // the equation, and a correct answer was refused as not satisfying it. A
+    // verifier that can manufacture a disproof is worse than none, and this pins
+    // the direction that matters.
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(false);
+    expect(text(r)).toMatch(expected);
+  });
+
+  it.each([
+    ["desolve(y'=y and y(x)=5, x, y)"],
+    ["desolve([y'=y, y(x)=5], x, y)"],
+    ["desolve(y'=y and y(0)=x^2, x, y)"],
+    ["desolve([y'=y, y(0)=x^2], x, y)"],
+    // The bare spelling looksLikeOde accepts, with no verb at all. It reached the
+    // handler without `original_equation`, so the check was inert on it and the
+    // same non-solutions shipped that `desolve(...)` refused.
+    ["y'=y and y(x)=5"],
+    ["y'=y and y(0)=x^2"],
+    // Certified as correct before the join spellings were widened — the check
+    // affirming the family it exists to refuse.
+    ["desolve(y'=y && y(x)=5, x, y)"],
+    ["desolve(y'=y AND y(x)=5, x, y)"],
+    // The join the previous round's widening missed. It shipped 5/exp(x)*exp(x) at
+    // isError:false — a non-solution — while the verifier correctly declined rather
+    // than certifying, which is the difference the one-bare-equation invariant made.
+    ["desolve(y'=y ∧ y(x)=5, x, y)"],
+    ["desolve(y'=y ∧ y(0)=x^2, x, y)"],
+    // The whole family, unspaced. 26 of 26 measured results shipped a non-solution
+    // at isError:false, separated from a refusal by one space character.
+    ["desolve(y'=y&&y(x)=5, x, y)"],
+    ["desolve(y'=y&& y(x)=5, x, y)"],
+    ["desolve(y'=y&&y(0)=x^2, x, y)"],
+    ["desolve(y'=y&&&y(x)=5, x, y)"],
+    ["desolve(y'=y∧y(x)=5, x, y)"],
+    ["desolve(y''=-y&&y(x)=5, x, y)"],
+    ["y'=y&&y(x)=5"],
+  ])('%s is refused by the residual check', async (problem) => {
+    // A condition written INSIDE the equation walks past the argument guard, which
+    // only scans the trailing arguments. These are the families the residual check
+    // exists for, and main answers every one of them with a non-solution.
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/does not satisfy/);
+  });
+
+  it.each([
+    ["desolve(y'=sqrt(y), x, y)", /\(-1\/2\*c_0\+1\/2\*x\)\^2/],
+    ["desolve(y'=y^(3/2), x, y)", /2\/\(c_0-x\)/],
+    // The IVP form is the one that stung: the branch's own condition folding
+    // produces the correct particular solution and the verifier then destroyed it.
+    ["desolve(y'=sqrt(y), y(4)=1, x, y)", /\(-1\+1\/2\*x\)\^2/],
+  ])(
+    '%s is answered, not refuted for holding outside the probe point',
+    async (problem, expected) => {
+      // The residual of a branch solution is nonzero wherever the answer does not
+      // claim to hold, and the numeric probe pins x while moving the constant — which
+      // for a separable ODE through a square root moves the domain out from under it.
+      // A verifier that can invent a disproof is worse than no verifier.
+      const r = await computeHandler({ problem });
+      expect(r.isError, text(r)).toBe(false);
+      expect(text(r)).toMatch(expected);
+    }
+  );
+
+  it('keeps the finite branches when one branch is infinity', async () => {
+    // Scanning the whole printed result refused `2*y*y'=1` outright and threw away
+    // the two correct +/-sqrt(x-c_1) branches with the one infinite one.
+    const r = await computeHandler({ problem: "desolve(2*y*y'=1, x, y)" });
+    expect(r.isError, text(r)).toBe(false);
+    expect(text(r)).toMatch(/sqrt\(x-c_1\)|√\(x-c_1\)/);
+  });
+
+  it.each([
+    ["desolve(y'=log(y), x, y)", /no solution for this equation/],
+    ["desolve(y'=y, y(0)=1, y(1)=5, x, y)", /conditions cannot all be satisfied/],
+  ])('%s diagnoses only what the caller wrote', async (problem, expected) => {
+    // The IVP wording fired on every empty result, so a caller who supplied no
+    // conditions at all was told theirs could not be satisfied.
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(expected);
+  });
+
+  it.each([['derive'], ['deriver']])('refuses %s(z)=5 by name, like diff', async (operator) => {
+    // derivativeOnRight already recorded that these are Giac's own aliases for
+    // diff; isBareDiffCall listed only `diff`, so replacing the extractor's own
+    // operator list with the shared predicate silently dropped them and 57
+    // arguments went from a precise refusal to "your conditions cannot all be
+    // satisfied". One list now.
+    const r = await computeHandler({ problem: `desolve(y'=y, ${operator}(z)=5, x, y)` });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/does not understand the argument/);
+  });
+
+  it.each([["desolve([y'=z, z'=-y], diff(w)=5, x)"], ["desolve([y'=y], diff(z)=5, x, y)"]])(
+    '%s refuses an argument that would add an equation',
+    async (problem) => {
+      // The system direction is the one a systemhood-only check cannot see: adding
+      // an equation to a system leaves it a system, so `[y'=z, z'=-y]` plus
+      // `diff(w)=5` came back as a THREE-component answer for a two-equation
+      // system. Comparing the equation SET catches both directions.
+      const r = await computeHandler({ problem });
+      expect(r.isError, text(r)).toBe(true);
+      expect(text(r)).toMatch(/does not understand the argument "diff\(/);
+    }
+  );
+
+  it.each([
+    ['desolve(diff(y(x),x)=y(x), [q])'],
+    ['desolve(diff(y(x),x)=y(x), [y,z,w])'],
+    ['desolve(diff(y(x),x)=y(x), q(x))'],
+  ])('%s applies the membership rule to the diff spelling too', async (problem) => {
+    // The extractor had its own reader for "which function is differentiated"
+    // that knew `y'` and `dy/dx` but not `diff(y(x),x)`, so for the spelling
+    // prompts/index.ts advertises it returned undefined and every rule keyed on
+    // it silently stopped applying: `desolve(y'=y, [q])` was refused while
+    // `desolve(diff(y(x),x)=y(x), [q])` was accepted and the list dropped. Both
+    // readers are now one, exported from ode-system-shape.ts.
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/does not understand the argument/);
+  });
+
+  it('refuses a condition-shaped argument that is really an equation', async () => {
+    // `diff(z)=5` satisfies the condition shape and IS an equation. Folded in as a
+    // member it turned `[y'=y]` into a two-equation system answering
+    // [[c_0*exp(x),c_1+5*x]] — with a verification check mark, because the mark is
+    // honest about the rewritten system and the rewritten system is not the one
+    // the caller wrote. main answered c_0*exp(x), the correct general solution.
+    const r = await computeHandler({ problem: "desolve([y'=y], diff(z)=5, x, y)" });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/does not understand the argument "diff\(z\)=5"/);
+  });
+
+  it.each([["desolve([y'=z, z'=-y], x, [q])"], ["desolve([y'=z, z'=-y], x, [y,z,w])"]])(
+    '%s refuses an unknowns list that does not match the system',
+    async (problem) => {
+      // `q(x)` was refused while `[q]` was accepted and ignored — the same claim
+      // spelled two ways getting opposite verdicts, which is what the applied-name
+      // membership rule was added to remove. `[y,z,w]` states an arity the system
+      // does not have.
+      const r = await computeHandler({ problem });
+      expect(r.isError, text(r)).toBe(true);
+      expect(text(r)).toMatch(/does not understand the argument/);
+    }
+  );
+
+  it.each([["desolve(y'=y, y(0)=1 or y(0)=2, x, y)"], ["desolve(y'=y, y(0)=1==1, x, y)"]])(
+    'refuses %s rather than folding a proposition',
+    async (problem) => {
+      // Parenthesising each side of the join is correct for precedence, and it
+      // opened this: Giac ACCEPTS `(y'=y) and (y(0)=1 or y(0)=2)`, ignores the
+      // condition, and `c_0*exp(x)` ships with isError:false — the general solution
+      // as the answer to an IVP, which is the shape this whole change exists to
+      // remove. Unparenthesised, Giac errored and the call was refused, so the fix
+      // for one hazard uncovered another. A condition's right-hand side has to be a
+      // value.
+      const r = await computeHandler({ problem });
+      expect(r.isError, text(r)).toBe(true);
+      expect(text(r)).toMatch(/does not understand the argument/);
+      expect(text(r)).not.toMatch(/c_0/);
+    }
+  );
+
+  it('refuses an applied name the equation contradicts', async () => {
+    // Deliberate deviation from main, which answered `c_0*exp(x)` here — by
+    // dropping `z(x)` and inferring `y` from the equation. The input is
+    // self-contradictory: the equation differentiates `y` and the caller names
+    // `z` as the unknown. Preferring either side silently is how this file's
+    // older bugs read, and the previous commit's version answered `c_0*exp(z)` —
+    // a wrong answer rather than a refusal. Same treatment as a condition on a
+    // function the equation never mentions.
+    const r = await computeHandler({ problem: "desolve(y'=y, z(x))" });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/does not understand the argument "z\(x\)"/);
+  });
+
+  it("reports the caller's first unrecognised argument, not the filters'", async () => {
+    const r = await computeHandler({ problem: "desolve(y'=y, x, y, zzz, 42)" });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/argument "zzz"/);
+  });
+
+  it('still refuses an empty equation before any engine call', async () => {
+    // Folding built a non-empty string from an empty equation, so the
+    // "'equation' is required" check never fired and a precise usage error became
+    // a CAS-blaming one, paid for with a Giac round-trip.
+    const r = await computeHandler({ problem: 'desolve(, y(0)=1)' });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/'equation' is required/);
+  });
+
+  it('refuses a third identifier rather than discarding it', async () => {
+    // Only the first two identifiers are read. `zzz` was classified and then
+    // dropped — the same silent drop this change exists to remove, one bucket
+    // over, while a comment claimed every argument was accounted for.
+    const r = await computeHandler({ problem: "desolve(y'=y, y(0)=1, x, y, zzz)" });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/does not understand the argument "zzz"/);
+  });
+
+  it.each([
+    ["desolve(y'=y, y(0)=1, y(1)=2, x, y)"],
+    ["desolve(y'=y, y(0)=1, y(0)=2, x, y)"],
+    ["desolve(y'=y, z(0)=1, x, y)"],
+  ])('refuses %s rather than answering []', async (problem) => {
+    // Newly reachable: while conditions were being dropped, Giac was never asked
+    // an unsatisfiable question. The single-equation path had no guard at all —
+    // the `[]`/`undef` one runs only for a rewritten system — so `Result: []`
+    // went out with isError:false.
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).not.toMatch(/^Result: \[\]$/m);
+  });
+
+  it('refuses a two-argument point instead of folding it', async () => {
+    // The condition's point group was `\([^)]*\)`, which accepted `y(0,1)=1`;
+    // Giac then answered as though the caller had written `y(0)=1` — a confident
+    // answer to a different problem.
+    const r = await computeHandler({ problem: "desolve(y'=y, y(0,1)=1, x, y)" });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/does not understand the argument/);
+  });
+
+  it.each([['ifactor(2^257-1)'], ['42']])(
+    'refuses the unrecognised argument %s instead of discarding it',
+    async (extra) => {
+      // Dropping was the bug; this is the same class. `ifactor(2^257-1)` also
+      // must not be FOLDED — it would be evaluated on the shared worker for the
+      // full budget. Requiring `=` in the condition shape is what excludes it,
+      // so this refusal is immediate.
+      const started = Date.now();
+      const r = await computeHandler({ problem: `desolve(y'=y, ${extra}, x, y)` });
+      expect(r.isError, text(r)).toBe(true);
+      expect(text(r)).toMatch(/does not understand the argument/);
+      expect(text(r)).toContain(extra);
+      expect(Date.now() - started).toBeLessThan(1000);
+    }
+  );
+
   describe('non-finite arithmetic through the published compute tool', () => {
     it('0/0 is an error, not an answer', async () => {
       const r = await computeHandler({ problem: '0/0' });

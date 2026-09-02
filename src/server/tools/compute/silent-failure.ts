@@ -29,5 +29,11 @@ export function detectFailure(displayText: string): string | null {
   // being a word boundary — true of the `\b` matching this line no longer does.
   if (/(^|[^A-Za-z_0-9])Inf([^A-Za-z_0-9]|$)/.test(t)) return 'non-finite result';
   if (/\b(NaN|undef)\b(?!\w)/.test(t)) return 'non-finite result';
+  // Giac's internal unevaluated-derivative wrapper. Not an answer, and it reaches
+  // a Result line: `desolve(y'=y, z'(x)=-y(x))` returned
+  // `-(function_diff(z))(x)/exp(x)*exp(x)` with isError:false. The extractor no
+  // longer folds the argument that produced it, so this is a backstop rather than
+  // the fix — it catches the marker whatever route puts it there.
+  if (/\bfunction_diff\b/.test(t)) return 'unevaluated derivative';
   return null;
 }
