@@ -435,11 +435,17 @@ function escapeForRegExp(name: string): string {
 /**
  * A comparison or a boolean, in either spelling the engine accepts.
  *
+ * `!=` rather than a bare `!`, which is FACTORIAL and a perfectly ordinary value:
+ * `desolve(y'=y, y(0)=5!, x, y)` is answered `120*exp(x)`, and a lone `!` in this
+ * class cost it its mark while the sentence above called the class a comparison.
+ * `<=`, `>=` and `==` need no entry of their own — the bare `<`, `>` and `=`
+ * already match them.
+ *
  * Word-bounded for `and`/`or` so an identifier whose NAME contains one — `or_1`,
  * `random_or_not` — is still a value; `_` is a word character, so those do not
  * match. Case-insensitive because the engine's own word form is.
  */
-const NOT_A_VALUE = /[=<>!&|]|\u2227|\u2228|\b(?:and|or)\b/i;
+const NOT_A_VALUE = /[=<>&|]|!=|\u2227|\u2228|\b(?:and|or)\b/i;
 
 /** A condition split into its derivative order, its point and its value. */
 interface OdeCondition {

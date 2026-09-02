@@ -224,6 +224,13 @@ describe('verifyOdeSolution', () => {
     // fallback asks `simplify`, which is a stronger simplification and not a
     // smaller number, so the mark is still only given where it is proven.
     ["y'=y", 'exp(ln(2)/3)*exp(x)', "(y'=y) and (y(0)=2^(1/3))"],
+    // A factorial value. `desolve(y'=y, y(0)=5!, x, y)` is a real request answered
+    // `120*exp(x)`, and a bare `!` in the rule that refuses comparisons cost it its
+    // mark — `!` is factorial, and only `!=` is a comparison.
+    ["y'=y", '120*exp(x)', "(y'=y) and (y(0)=5!)"],
+    // Exactly as many conditions as the cap allows, so the bound is pinned from
+    // both sides: nine of these declines, eight is still certified.
+    ["y'=y", 'exp(x)', `(y'=y)${' and (y(0)=1)'.repeat(8)}`],
   ])(
     'verifies %s satisfied by %s together with the conditions in %s',
     async (equation, answer, conditionSource) => {
