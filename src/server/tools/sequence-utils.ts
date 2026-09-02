@@ -137,7 +137,13 @@ export function checkQuadratic(terms: number[]): SequenceResult | null {
     }
 
     const parts: string[] = [];
-    if (A !== 0) parts.push(A === 1 ? 'n²' : A === -1 ? '-n²' : `${A}n²`);
+    if (A !== 0) {
+      let aTerm: string;
+      if (A === 1) aTerm = 'n²';
+      else if (A === -1) aTerm = '-n²';
+      else aTerm = `${A}n²`;
+      parts.push(aTerm);
+    }
     if (B !== 0) parts.push(B > 0 && parts.length > 0 ? `+${B}n` : `${B}n`);
     if (C !== 0) parts.push(C > 0 && parts.length > 0 ? `+${C}` : `${C}`);
 

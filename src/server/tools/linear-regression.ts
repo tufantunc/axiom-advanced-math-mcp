@@ -44,10 +44,15 @@ function formatPolynomial(coeffs: number[], variable = 'x'): string {
   for (let i = coeffs.length - 1; i >= 0; i--) {
     const c = coeffs[i];
     if (Math.abs(c) < 1e-12) continue;
-    const sign = terms.length > 0 ? (c >= 0 ? ' + ' : ' - ') : c < 0 ? '-' : '';
+    let sign: string;
+    if (terms.length === 0) sign = c < 0 ? '-' : '';
+    else sign = c >= 0 ? ' + ' : ' - ';
     const absC = Math.abs(c);
     const coefStr = absC === 1 && i > 0 ? '' : absC.toPrecision(6);
-    const varStr = i === 0 ? '' : i === 1 ? variable : `${variable}^${i}`;
+    let varStr: string;
+    if (i === 0) varStr = '';
+    else if (i === 1) varStr = variable;
+    else varStr = `${variable}^${i}`;
     terms.push(`${sign}${coefStr}${varStr}`);
   }
   return terms.join('') || '0';

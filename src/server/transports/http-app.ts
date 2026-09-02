@@ -249,12 +249,10 @@ export function createHttpApp(options: HttpAppOptions): Hono {
   // never calls next()), so POST requests are answered before this ever
   // runs.
   app.all('/mcp', (c) => {
-    const reason =
-      c.req.method === 'GET'
-        ? 'no SSE stream is offered by this stateless server'
-        : c.req.method === 'DELETE'
-          ? 'there are no sessions to terminate'
-          : 'the method is not supported';
+    let reason: string;
+    if (c.req.method === 'GET') reason = 'no SSE stream is offered by this stateless server';
+    else if (c.req.method === 'DELETE') reason = 'there are no sessions to terminate';
+    else reason = 'the method is not supported';
     c.header('Allow', 'POST');
     return c.json(jsonRpcError(-32000, `Method not allowed: ${reason}`), 405);
   });
