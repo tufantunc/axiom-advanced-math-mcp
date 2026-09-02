@@ -19,8 +19,10 @@ async function polynomialFit(
   degree: number
 ): Promise<{ coeffs: number[]; yHat: number[] }> {
   const Arows = x.map((xi) => Array.from({ length: degree + 1 }, (_, j) => xi ** j));
-  const Astr = `[${Arows.map((row) => `[${row.join(',')}]`).join(',')}]`;
-  const bstr = `[${y.map((yi) => `[${yi}]`).join(',')}]`;
+  const Aentries = Arows.map((row) => `[${row.join(',')}]`).join(',');
+  const Astr = `[${Aentries}]`;
+  const bentries = y.map((yi) => `[${yi}]`).join(',');
+  const bstr = `[${bentries}]`;
 
   // `evalf`, and a strict per-component parse. Bare `lsq` returns EXACT
   // RATIONALS — `[[1/2],[9/14]]` — and parseFloat read those as [1, 9], so

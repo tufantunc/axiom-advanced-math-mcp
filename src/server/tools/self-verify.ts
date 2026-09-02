@@ -181,7 +181,8 @@ export async function verifyOdeSystem(
     return undefined;
   }
   const solution = raw.slice(1, -1);
-  const rhs = `(${matrix})*(${solution})${constants ? `+(${constants})` : ''}`;
+  const constantTerm = constants ? `+(${constants})` : '';
+  const rhs = `(${matrix})*(${solution})${constantTerm}`;
   try {
     // Exact, or no verdict. There is no sound numeric version of this check.
     //

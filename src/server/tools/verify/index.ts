@@ -201,7 +201,8 @@ async function verifyNumeric(
         if (Math.abs(numResult) < 1e-6) {
           passCount++;
         } else {
-          failures.push(`At ${vars.map((v) => `${v}=${val}`).join(', ')}: diff = ${numResult}`);
+          const where = vars.map((v) => `${v}=${val}`).join(', ');
+          failures.push(`At ${where}: diff = ${numResult}`);
         }
       } catch {
         // Skip points that cause evaluation errors
