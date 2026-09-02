@@ -525,7 +525,7 @@ export function extractOde(problem: string): RouteResult {
       // only a residual check can ask; the system path has one in verifyOdeSystem
       // and this path does not.
       const escaped = variable.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
-      const mentionsVariable = new RegExp(`\\b${escaped}\\b`).test(rest[i]);
+      const mentionsVariable = new RegExp(String.raw`\b${escaped}\b`).test(rest[i]);
       return mentionsVariable ? ({ kind: 'unsupported' } as const) : role;
     });
     const conditions = rest.filter((_, i) => effectiveRoles[i].kind === 'condition');

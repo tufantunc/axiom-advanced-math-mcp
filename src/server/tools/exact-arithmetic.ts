@@ -34,7 +34,7 @@ export async function tryExactResult(
     return {
       exact: `${num}/${den}`,
       decimal: numericResult,
-      latex: den === 1 ? String(num) : `${sign}\\frac{${absNum}}{${den}}`,
+      latex: den === 1 ? String(num) : String.raw`${sign}\frac{${absNum}}{${den}}`,
     };
   }
 

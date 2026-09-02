@@ -286,7 +286,7 @@ export async function verifyOdeSystem(
  */
 function startsAt(text: string, i: number, operators: RegExp, word: RegExp): boolean {
   if (operators.test(text.slice(i))) return true;
-  if (/[A-Za-z0-9_]/.test(text[i - 1] ?? ' ')) return false;
+  if (/\w/.test(text[i - 1] ?? ' ')) return false;
   return word.test(text.slice(i));
 }
 
@@ -307,9 +307,9 @@ function startsAt(text: string, i: number, operators: RegExp, word: RegExp): boo
  * Giac refuses `or` inside desolve anyway. It is declined below instead of cut.
  */
 const CONJUNCTION_OPERATOR = /^(?:&&|\u2227)/;
-const CONJUNCTION_WORD = /^and(?![A-Za-z0-9_])/i;
+const CONJUNCTION_WORD = /^and(?!\w)/i;
 const JOIN_OPERATOR = /^(?:&&|\|\||\u2227|\u2228)/;
-const JOIN_WORD = /^(?:and|or)(?![A-Za-z0-9_])/i;
+const JOIN_WORD = /^(?:and|or)(?!\w)/i;
 
 const startsConjunction = (text: string, i: number): boolean =>
   startsAt(text, i, CONJUNCTION_OPERATOR, CONJUNCTION_WORD);
@@ -475,25 +475,25 @@ export async function verifyOdeSolution(
   const substituted = equationOnly
     .replaceAll(
       new RegExp(
-        `\\b(?:diff|derive|deriver)\\s*\\(\\s*${fn}\\s*\\(\\s*${v}\\s*\\)\\s*,\\s*${v}\\s*,\\s*(\\d+)\\s*\\)`,
+        String.raw`\b(?:diff|derive|deriver)\s*\(\s*${fn}\s*\(\s*${v}\s*\)\s*,\s*${v}\s*,\s*(\d+)\s*\)`,
         'g'
       ),
       `diff(${sub},${variable},$1)`
     )
     .replaceAll(
       new RegExp(
-        `\\b(?:diff|derive|deriver)\\s*\\(\\s*${fn}\\s*\\(\\s*${v}\\s*\\)\\s*,\\s*${v}\\s*\\)`,
+        String.raw`\b(?:diff|derive|deriver)\s*\(\s*${fn}\s*\(\s*${v}\s*\)\s*,\s*${v}\s*\)`,
         'g'
       ),
       `diff(${sub},${variable})`
     )
-    .replaceAll(new RegExp(`\\bd${fn}\\s*/\\s*d${v}\\b`, 'g'), `diff(${sub},${variable})`)
+    .replaceAll(new RegExp(String.raw`\bd${fn}\s*/\s*d${v}\b`, 'g'), `diff(${sub},${variable})`)
     .replaceAll(
-      new RegExp(`\\b${fn}('+)(?!['\\s]*\\()`, 'g'),
+      new RegExp(String.raw`\b${fn}('+)(?!['\s]*\()`, 'g'),
       (_m, primes: string) => `diff(${sub},${variable},${primes.length})`
     )
-    .replaceAll(new RegExp(`\\b${fn}\\s*\\(\\s*${v}\\s*\\)`, 'g'), sub)
-    .replaceAll(new RegExp(`\\b${fn}\\b(?!\\s*\\()(?!')`, 'g'), sub);
+    .replaceAll(new RegExp(String.raw`\b${fn}\s*\(\s*${v}\s*\)`, 'g'), sub)
+    .replaceAll(new RegExp(String.raw`\b${fn}\b(?!\s*\()(?!')`, 'g'), sub);
   // Nothing was substituted, so there is nothing to check — an equation this does
   // not understand must not become an accusation.
   if (substituted === equationOnly) return undefined;
@@ -503,7 +503,7 @@ export async function verifyOdeSolution(
   // answer and a correct `cos(x)` was refuted. Checking the substituted TEXT rather
   // than the residual is what makes this independent of the engine — a leftover the
   // engine erases cannot be seen downstream, only here.
-  if (new RegExp(`\\b${fn}\\b`).test(substituted)) return undefined;
+  if (new RegExp(String.raw`\b${fn}\b`).test(substituted)) return undefined;
 
   try {
     const residual = (await evaluate(`normal(${toZeroForm(substituted)})`)).trim();
@@ -512,7 +512,7 @@ export async function verifyOdeSolution(
     }
     // Kept as a second net: the engine can introduce the name itself, e.g. as
     // `(function_diff(y))(x)`, where nothing was left unsubstituted going in.
-    if (new RegExp(`\\b${fn}\\b`).test(residual)) return undefined;
+    if (new RegExp(String.raw`\b${fn}\b`).test(residual)) return undefined;
     // The free constants have to go too, or nothing with a `c_0` in it can ever be
     // disproved. `desolve(y''=-y, y'(x)=0)` answers a disguised `c_1/sin(x)`,
     // which is not a solution; its residual is plainly nonzero but still mentions

@@ -248,7 +248,7 @@ export async function calculusHandler(args: Record<string, unknown>) {
       const unfinished =
         detectFailure(`Result: ${result}`) !== null ||
         /poly1\[|ilaplace\(/.test(result) ||
-        /(^|[^A-Za-z_0-9])infinity([^A-Za-z_0-9]|$)/.test(result);
+        /(^|\W)infinity(\W|$)/.test(result);
       // Reachable again. This branch was removed when verifyOdeSystem could only
       // say ✓ or nothing; it can now prove failure for an exact system, and a
       // disproved answer must not ship — `[y'=z, z'=-y+sqrt(x)]` was going out as
@@ -305,7 +305,7 @@ export async function calculusHandler(args: Record<string, unknown>) {
       const branches = splitTopLevel(stripEnclosingBrackets(resultText), ',');
       const everyBranchInfinite =
         resultText.length > 0 &&
-        branches.every((b) => /(^|[^A-Za-z_0-9])infinity([^A-Za-z_0-9]|$)/.test(b));
+        branches.every((b) => /(^|\W)infinity(\W|$)/.test(b));
       const failure =
         detectFailure(`Result: ${resultText}`) ??
         (everyBranchInfinite ? 'non-finite result' : null);

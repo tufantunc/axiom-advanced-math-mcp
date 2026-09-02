@@ -296,7 +296,7 @@ async function checkForcingTerm(
   // rather than whether the denominator involves the variable refused
   // `1/(a+1)` and `x/(a+b)` — all three solve, and the message told the caller
   // they had a pole in x that is not there.
-  const poleFunction = new RegExp(`\\b(tan|cotan|tanh)\\s*\\([^)]*\\b${variable}\\b`);
+  const poleFunction = new RegExp(String.raw`\b(tan|cotan|tanh)\s*\([^)]*\b${variable}\b`);
   if (denominatorSymbols > 0 || constantEntries.some((c) => poleFunction.test(c))) {
     return {
       error:

@@ -166,7 +166,7 @@ export function giacNumber(raw: string): number | null {
   // function answers only "is the reply a number".
   return Number.isNaN(value) ? null : value;
 }
-const COMPLEX_TERM = new RegExp(`^(.*?)([+-]?(?:${GIAC_NUMBER}\\*?)?)i$`);
+const COMPLEX_TERM = new RegExp(String.raw`^(.*?)([+-]?(?:${GIAC_NUMBER}\*?)?)i$`);
 
 /**
  * Parses one Giac complex literal into its real and imaginary parts.
