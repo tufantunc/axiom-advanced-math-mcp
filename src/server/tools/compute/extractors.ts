@@ -715,10 +715,20 @@ export function extractOde(problem: string): RouteResult {
   // `[y'=y, y(0)=50000!]` killed the worker and the call queued behind it — and
   // "the same claim spelled two ways getting opposite verdicts" is the defect
   // this file's comments already cite three times.
+  //
+  // Gated on not being a system for the same reason the verb path's trailing
+  // arguments are: calculus.ts words every `condition_refusal` as "cannot solve
+  // this equation", and a verbless system got that wording where the same list
+  // with the verb got "cannot solve this system". A system's conditions are
+  // members of the list either way, so validateSystemShape re-checks them under
+  // the identical rule before its first engine call and nothing is lost.
   const implicitEquation = problem.trim();
-  const implicitRefusal = odeMemberConditions(implicitEquation)
-    .map((member) => conditionBoundError(member))
-    .find((reason) => reason !== undefined);
+  const implicitRefusal =
+    parseOdeSystem(implicitEquation) !== null
+      ? undefined
+      : odeMemberConditions(implicitEquation)
+          .map((member) => conditionBoundError(member))
+          .find((reason) => reason !== undefined);
   return {
     handler: 'calculus',
     args: {

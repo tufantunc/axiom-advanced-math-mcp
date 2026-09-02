@@ -933,8 +933,8 @@ describe("an initial condition's cost is bounded, not only its size", () => {
     ["desolve(y'=y and y(0)=1, x, y)", /^Result: exp\(x\)$/m],
     ["desolve([y'=z, z'=-y, y(0)=1, z(0)=0], x)", /^Result: \[\[cos\(x\),-sin\(x\)\]\]$/m],
     ["desolve([y'=z, z'=-y], y(0)=1, z(0)=0, x)", /^Result: \[\[cos\(x\),-sin\(x\)\]\]$/m],
-    // A factorial is not itself suspicious. The bound is on its argument, and
-    // 1000! — a 2,568-digit number — is the largest one this admits.
+    // A factorial is not itself suspicious. The bound is on the DIGITS the
+    // condition's factorials denote together, which these are nowhere near.
     ["desolve(y'=y, y(0)=5!, x, y)", /^Result: 120\*exp\(x\)$/m],
     ["desolve(y'=y, y(0)=20!, x, y)", /^Result: 2432902008176640000\*exp\(x\)$/m],
     // A bare symbol denotes no literal, and Giac leaves it unevaluated, so it is
@@ -972,12 +972,16 @@ describe("an initial condition's cost is bounded, not only its size", () => {
   // implausibleMagnitude is applied to every system equation's RIGHT-HAND SIDE
   // too, not only to conditions, so a symbol ending in digits had to survive
   // there as well: `y'=z*k2000!` was refused as a right-hand side of implausible
-  // magnitude. Pinned on the Result line, not the whole response, whose
-  // `Command:` line echoes the caller's own `k2000!` back.
+  // magnitude. Pinned on the whole solution, not just on the symbol appearing:
+  // matching the response echoes the caller's own `k2000!` back off the
+  // `Command:` line, and even `/^Result: .*k2000!/` passes on a wrong answer
+  // that happens to mention it.
   it('does not refuse a symbol ending in digits on a system right-hand side', async () => {
     const r = await computeHandler({ problem: "desolve([y'=z*k2000!, z'=-y], x)" });
     expect(r.isError, text(r)).toBe(false);
-    expect(text(r)).toMatch(/^Result: .*k2000!/m);
+    expect(text(r)).toMatch(
+      /^Result: \[\[\(c_0\*√\(k2000!\)\*cos\(√\(k2000!\)\*x\)\+c_1\*k2000!\*sin\(√\(k2000!\)\*x\)\)\/√\(k2000!\),\(-c_0\*sin\(√\(k2000!\)\*x\)\+c_1\*√\(k2000!\)\*cos\(√\(k2000!\)\*x\)\)\/√\(k2000!\)\]\]$/m
+    );
   });
 
   // A digit run that is only the TAIL of a token is not the operand. Reading it
@@ -1101,4 +1105,97 @@ describe("an initial condition's cost is bounded, not only its size", () => {
       expect(after.isError, text(after)).toBe(false);
     }
   );
+
+  // Giac maps factorial over a LIST, so `[50000]!` denotes the same
+  // 213,237-digit number `50000!` does. `]` was neither a bracket the leftward
+  // read followed nor a token character, so it yielded no operand at all, was
+  // charged zero digits, and killed the worker through all three channels —
+  // including the right-hand side, which the same guard covers.
+  it.each([
+    "desolve(y'=y, y(0)=[50000]!, x, y)",
+    "desolve([y'=z, z'=-y, y(0)=[50000]!, z(0)=0], x)",
+    "desolve([y'=[50000]!*z, z'=-y], x)",
+  ])('refuses the list-form %s', async (problem) => {
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/a factorial of 50000/);
+    expect(text(r)).not.toMatch(/memory access|worker exited|RuntimeError/);
+    const after = await computeHandler({ problem: "desolve(y'=y, y(0)=2, x, y)" });
+    expect(after.isError, text(after)).toBe(false);
+  });
+
+  // A `!` whose operand this cannot read at all must reach the unreadable branch
+  // rather than vanish. The previous version dropped it silently, on the
+  // strength of a comment asserting the only cases left were another `!` or an
+  // operator — and `]` was neither, which is how the rows above got through.
+  it('refuses a factorial whose operand it cannot read at all', async () => {
+    const r = await computeHandler({ problem: "desolve(y'=y, y(0)={50000}!, x, y)" });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/a factorial this cannot bound/);
+  });
+
+  // The two magnitude axes have to compose, and did not: `10^9!` is `10^(9!)`,
+  // ten characters denoting 362,881 digits, and neither saw it — the exponent
+  // clause read the digit run `9` and stopped before the `!`, while the
+  // factorial clause read the operand `9` and charged six digits. Measured, it
+  // killed the worker and the next caller got "Giac worker exited (code 1)".
+  it.each([
+    "desolve(y'=y, y(0)=10^9!, x, y)",
+    "desolve(y'=y, y(0)=10^(9!), x, y)",
+    "desolve([y'=z, z'=-y, y(0)=10^9!, z(0)=0], x)",
+  ])('refuses the exponent-of-a-factorial %s', async (problem) => {
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/an exponent this cannot bound \(9!\)/);
+    expect(text(r)).not.toMatch(/memory access|worker exited|RuntimeError/);
+    const after = await computeHandler({ problem: "desolve(y'=y, y(0)=2, x, y)" });
+    expect(after.isError, text(after)).toBe(false);
+  });
+
+  // The cost of refusing rather than evaluating, recorded because the hazard is
+  // not monotonic: `10^(20!)` is far larger than the trapping `10^(9!)` and
+  // merely stays symbolic, so it answered before that clause and does not now.
+  // Pinned so the trade is visible if anyone narrows the clause later.
+  it('refuses a symbolic-only exponent of a factorial, which is the cost', async () => {
+    const r = await computeHandler({ problem: "desolve(y'=y, y(0)=10^(20!), x, y)" });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/an exponent this cannot bound \(20!\)/);
+  });
+
+  // The per-condition bound is not a per-COMMAND bound: ode-system.ts joins a
+  // system's conditions into one `exact([...])` and evaluates it twice, so nine
+  // at the ceiling would be 27,000 digits in one call against a lowest measured
+  // kill of 27,753. Each condition here is inside the bound on its own.
+  it('bounds a system’s conditions where it joins them, not only one at a time', async () => {
+    const equations = Array.from({ length: 9 }, (_, i) => `v${i}'=v${(i + 1) % 9}`);
+    const conditions = Array.from({ length: 9 }, (_, i) => `v${i}(0)=1142!`);
+    const r = await computeHandler({
+      problem: `desolve([${[...equations, ...conditions].join(', ')}], x)`,
+    });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/initial conditions of implausible magnitude together/);
+    expect(text(r)).toMatch(/factorials denoting 26982 digits together/);
+    // And one of them alone is admitted, so this cannot be the per-condition
+    // bound firing.
+    const alone = await computeHandler({ problem: "desolve(y'=y, y(0)=1142!, x, y)" });
+    expect(alone.isError, text(alone)).toBe(false);
+  });
+
+  // A verbless SYSTEM must be worded as a system. calculus.ts words every
+  // condition_refusal as "cannot solve this equation", so the implicit route has
+  // to leave a system's conditions to validateSystemShape exactly as the verb
+  // path's trailing arguments do — otherwise the same claim gets opposite
+  // wording depending on whether the caller typed `desolve(`.
+  it('words a verbless system refusal as a system', async () => {
+    const verbless = await computeHandler({ problem: "[y'=z, z'=-y, y(0)=50000!, z(0)=0]" });
+    const verb = await computeHandler({
+      problem: "desolve([y'=z, z'=-y, y(0)=50000!, z(0)=0], x)",
+    });
+    for (const r of [verbless, verb]) {
+      expect(r.isError, text(r)).toBe(true);
+      expect(text(r)).toMatch(/^Error: solve_ode cannot solve this system — it gives /m);
+    }
+    const tail = (s: string): string => s.slice(s.indexOf(' — it '));
+    expect(tail(text(verbless))).toBe(tail(text(verb)));
+  });
 });

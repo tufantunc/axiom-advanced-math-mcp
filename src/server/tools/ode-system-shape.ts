@@ -126,6 +126,13 @@ const MAX_CONDITION_DEPTH = 100;
  * shape while the fold survived to 9000!. So it tracks the command and the
  * worker's heap state, not just the number.
  *
+ * The factor of nine is PER CONDITION, which is not the same as per command: the
+ * system path joins its conditions and sends them together, so nine at the
+ * ceiling would be 27,000 digits in one call and a factor of 1.03. That is why
+ * validateSystemShape checks the joined text as well — the arithmetic is in the
+ * comment there, along with the measurement that the worst case reachable today
+ * still answers.
+ *
  * It also costs nothing real. `1000!` is 2,568 digits and still answers, which
  * is already an order of magnitude more digits than the 280 characters the
  * condition TEXT is allowed to be; `y(0)=5!`, `y(0)=20!` and `y(0)=100!` are
@@ -587,6 +594,34 @@ export function validateSystemShape(
     if (unbounded !== undefined) return { error: unbounded };
   }
 
+  // And once more over the JOINED text, because that is the shape ode-system.ts
+  // actually sends: its conditions scan builds `[${conditions.join(',')}]` and
+  // evaluates it twice. conditionBoundError is per condition, so nine of them at
+  // the ceiling denote 9 × 3,000 = 27,000 digits in one command, against a
+  // lowest measured kill of 27,753 — a factor of 1.03 where the per-condition
+  // bound claims nine.
+  //
+  // Measured, that worst case does NOT trap today: `exact([v0(0)=1142!, …,
+  // v8(0)=1142!])` at 26,982 digits answers in 129ms with the worker alive. This
+  // is here because the cliff moves with the command and the worker's heap
+  // state, which is the same reason the per-condition bound is not set just
+  // under it — a 3% margin on a moving cliff is not a bound.
+  //
+  // Only the magnitude axis, not length or depth: the joined text is longer than
+  // any single condition by construction, so MAX_CONDITION_CHARS cannot be
+  // applied to it, and ode-system.ts has MAX_PROBE_CHARS and MAX_COMMAND_CHARS
+  // for the finished command's length.
+  if (system.conditions.length > 1) {
+    const together = implausibleMagnitude(`[${system.conditions.join(',')}]`);
+    if (together !== undefined) {
+      return {
+        error:
+          `gives initial conditions of implausible magnitude together (${together}) — ` +
+          'initial conditions are ordinary numbers',
+      };
+    }
+  }
+
   if (parsedConditions.length === 0) return { functions, rhss };
   const read = readConditions(parsedConditions, functions);
   if ('error' in read) return read;
@@ -717,13 +752,39 @@ function implausibleMagnitude(text: string): string | undefined {
     if (/^\d+$/.test(exponent.trim()) && Number(exponent.trim()) > 1_000) {
       return `an exponent of ${exponent.trim()}`;
     }
+    // The digit run is the whole exponent only if nothing binds tighter after
+    // it, and `!` does. `10^9!` is `10^(9!)` — 10 characters denoting 362,881
+    // digits — and neither bound saw it: this one read the exponent as the run
+    // `9` and stopped, while the factorial bound below read the operand as `9`
+    // and charged six digits. Measured, it killed the worker and the next caller
+    // got "Giac worker exited (code 1)".
+    //
+    // Refused rather than evaluated, which is this function's standing rule for
+    // an exponent it cannot read, and the right rule here because the hazard is
+    // NOT monotonic in the exponent: `10^(9!)` is 10^362880 and traps, while
+    // `10^(20!)` is far larger and merely stays symbolic
+    // (`exp(2432902008176640000*ln(10))`, worker alive). Admitting only what is
+    // safe would mean admitting a window, so both are refused.
+    //
+    // The measured cost is `2^3!` — 2^6 — and `10^(20!)`, which answered before
+    // this clause. An exponent written as a factorial is not ordinary-number
+    // input, and these are the only shapes it takes away.
+    if (power[1] === undefined && /^\s*!/.test(text.slice(at + exponent.length))) {
+      return `an exponent this cannot bound (${`${exponent}!`.slice(0, 20)})`;
+    }
     // A NESTED exponent, which reading a digit run cannot bound: `10^(10^5)` was
     // captured as "10" and "5" and passed, and it is the same 10^100000 this
     // exists to stop. `+` and `-` count too — `10^(50000+50000)` is the example
     // an earlier version of this comment wrongly claimed was already caught.
-    if (/[\^+-]/.test(exponent) && !/^\s*-?\d+\s*$/.test(exponent)) {
+    // `!` too, and for the same reason one step along: `10^(9!)` is 362,881
+    // digits with no run over 1,000 in it.
+    if (/[\^+\-!]/.test(exponent) && !/^\s*-?\d+\s*$/.test(exponent)) {
       const digits = exponent.match(/\d+/g) ?? [];
-      if (exponent.includes('^') || digits.some((d) => Number(d) > 1_000)) {
+      if (
+        exponent.includes('^') ||
+        exponent.includes('!') ||
+        digits.some((d) => Number(d) > 1_000)
+      ) {
         return `an exponent this cannot bound (${exponent.slice(0, 20)})`;
       }
     }
@@ -756,9 +817,18 @@ function implausibleMagnitude(text: string): string | undefined {
   if (digits > MAX_FACTORIAL_DIGITS) {
     // Named by its argument when there is only one, because that is what the
     // caller can act on; by the total when the size was composed, because then
-    // no single factorial is the thing that is too big.
-    return biggest !== '' && digits === factorialDigits(Math.ceil(Number(biggest)))
-      ? `a factorial of ${biggest}, which denotes a ${digits}-digit number`
+    // no single factorial is the thing that is too big. factorialDigits is at
+    // least 1 and monotonic, so equality here implies exactly one literal
+    // operand — a symbol contributes nothing and cannot make two look like one.
+    //
+    // Both halves are truncated. The right-hand-side channel reaches this with
+    // no length bound in front of it, where a 200-digit operand rendered the
+    // count as `1.9956570551809676e+202` and a 308-digit one as `Infinity`, in a
+    // 465-character message.
+    if (!Number.isFinite(digits)) return 'a factorial too large to count the digits of';
+    const single = biggest !== '' && digits === factorialDigits(Math.ceil(Number(biggest)));
+    return single
+      ? `a factorial of ${biggest.slice(0, 20)}, which denotes a ${digits}-digit number`
       : `factorials denoting ${digits} digits together`;
   }
   return undefined;
@@ -775,12 +845,20 @@ function implausibleMagnitude(text: string): string | undefined {
  *
  * The postfix operand is read LEFTWARD, and reading only a digit run there is
  * not enough in either direction. `(8!)!` is 40320! and traps, with no digit run
- * longer than one character — so a `)` is followed back to its opening bracket
- * and then over any name in front of it, which is what makes `factorial(9)!`
- * legible as a factorial of 362,880 rather than of 9. Enclosing brackets are
- * then stripped so `(1000)!` reads as the literal it is, while `(2+3)!` stays
- * unreadable and is refused by the caller above — the conservative end, matching
- * how that function already treats an exponent it cannot read.
+ * longer than one character — so a closing bracket is followed back to its
+ * opener and then over any name in front of it, which is what stops
+ * `factorial(9)!` being read as a factorial of 9. Enclosing brackets are then
+ * stripped so `(1000)!` reads as the literal it is, while `(2+3)!` and
+ * `factorial(9)!` stay unreadable and are refused by the caller above — the
+ * conservative end, matching how that function already treats an exponent it
+ * cannot read.
+ *
+ * ALL THREE closing brackets, because Giac maps factorial over a list and `]`
+ * was neither a bracket this followed nor a token character: `y(0)=[50000]!`
+ * yielded no operand at all, was charged zero digits, and killed the worker with
+ * the same 213,237-digit number `y(0)=50000!` is refused for. That is why the
+ * fall-through at the bottom is now enumerated rather than assumed — the comment
+ * that assumed it is what hid this.
  *
  * And a whole TOKEN is read, not a digit run, because a run that stops at the
  * first non-digit is the tail of a longer token as often as it is the token:
@@ -802,6 +880,7 @@ function implausibleMagnitude(text: string): string | undefined {
 function factorialArguments(text: string): string[] {
   const operands: string[] = [];
   const isTokenChar = (c: string): boolean => /[A-Za-z0-9_.]/.test(c);
+  const OPENER: Record<string, string> = { ')': '(', ']': '[', '}': '{' };
   for (let i = 0; i < text.length; i += 1) {
     // Bounded on the left, or the name is only a suffix: the scan tries every
     // index, so without this `myfactorial(50000)` matched at offset 2 and a
@@ -815,14 +894,15 @@ function factorialArguments(text: string): string[] {
         if (text[j] === '(') depth += 1;
         else if (text[j] === ')') depth -= 1;
       }
-      // `j - 1` is one past the closing bracket only when the group closed.
-      // Unbalanced, the loop runs off the end with depth still positive and that
-      // slice dropped the operand's last character, so `factorial(10000` was
-      // read as 1000 and passed — truncation makes an out-of-bounds argument
-      // look in-bounds, which is the one direction a bound must never fail in.
+      // When the group closes, the loop leaves `j` one past the closing bracket,
+      // so `j - 1` IS that bracket and the slice stops just before it. Unbalanced,
+      // the loop instead runs off the end with depth still positive and `j - 1`
+      // drops the operand's last character — `factorial(10000` was read as 1000
+      // and passed, and truncation making an out-of-bounds argument look
+      // in-bounds is the one direction a bound must never fail in.
       //
-      // So the unbalanced case takes the whole tail. The point is only that it
-      // is never SHORTENED; the tail is then classified like any other operand,
+      // So the unbalanced case takes the whole tail. The point is only that the
+      // operand is never SHORTENED; the tail is then classified like any other,
       // which means `factorial(10000` is bounded as the literal 10000 while
       // `factorial(1000]` is refused as unreadable. Either is fine — neither
       // understates the operand.
@@ -836,17 +916,19 @@ function factorialArguments(text: string): string[] {
     let end = i - 1;
     while (end >= 0 && /\s/.test(text[end])) end -= 1;
     if (end < 0) continue;
-    if (text[end] === ')') {
+    const closer = text[end];
+    if (OPENER[closer] !== undefined) {
+      const opener = OPENER[closer];
       let depth = 0;
       let start = end;
       for (; start >= 0; start -= 1) {
-        if (text[start] === ')') depth += 1;
-        else if (text[start] === '(') {
+        if (text[start] === closer) depth += 1;
+        else if (text[start] === opener) {
           depth -= 1;
           if (depth === 0) break;
         }
       }
-      // An unbalanced `)` leaves start at -1; take the whole prefix, which is
+      // An unbalanced closer leaves start at -1; take the whole prefix, which is
       // unreadable as a literal and so refused rather than silently ignored.
       let from = start;
       while (from > 0 && isTokenChar(text[from - 1])) from -= 1;
@@ -859,8 +941,13 @@ function factorialArguments(text: string): string[] {
       let start = end;
       while (start >= 0 && isTokenChar(text[start])) start -= 1;
       operands.push(text.slice(start + 1, end + 1));
+      continue;
     }
-    // Anything else — another `!`, or an operator — has no operand to read here.
+    // A chained `!` is the one operand deliberately skipped, measured harmless
+    // above. EVERYTHING else reaches the caller's unreadable branch rather than
+    // vanishing: the previous version dropped it silently on the strength of a
+    // comment claiming an operator was all that was left, and `]` was not.
+    if (closer !== '!') operands.push(closer);
   }
   return operands;
 }
