@@ -129,6 +129,24 @@ function validateParams(operation: string, args: Record<string, unknown>): strin
       return null;
     case 'solve_ode': {
       if (!args.equation) return "'equation' is required for solve_ode";
+      // Before validateExpression and before any engine call, because the whole
+      // point of the bound is that the text never reaches the CAS: on ed5917e
+      // `desolve(y'=y, y(0)=50000!, x, y)` came back "memory access out of
+      // bounds" having killed the shared worker, and a call queued behind it got
+      // "Giac worker exited (code 1)".
+      //
+      // Checked ahead of `unsupported_argument` because the equation is argument
+      // zero and a condition folded into it outranks anything found among the
+      // trailing arguments — the extractor sets both when the same argument is at
+      // fault, and this is the one that says what is actually wrong.
+      //
+      // Worded for one equation. The system path reaches the identical rule
+      // through validateSystemShape and words it "cannot solve this system", so
+      // the two prefixes are the only difference between them.
+      const conditionRefusal = args.condition_refusal;
+      if (typeof conditionRefusal === 'string') {
+        return `solve_ode cannot solve this equation — it ${conditionRefusal}`;
+      }
       // Refused, not ignored. The extractor folds the arguments it recognises —
       // identifiers name the variable and the function, `y(0)=1` shapes are
       // conditions — and reports the first it does not, because dropping one is

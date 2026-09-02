@@ -58,10 +58,12 @@ const MAX_SYSTEM_EQUATIONS = 9;
  * below the worst measured, and costs nothing: a real initial condition is a
  * number and rarely passes thirty characters.
  *
- * This bound is also the ONLY thing guarding the channel. The factorial shape
- * does not throw — `exact([y(0)=1!!!…])` RETURNS a normal-looking answer and
- * leaves the worker dead — so nothing downstream notices: `isFatalWasmTrap` is
- * never consulted, and the try/catch around the call never runs.
+ * This bound is the only thing guarding the CHAINED-factorial shape below —
+ * `y(0)=1!!!…`, whose every operand after the first is another `!` and so is not
+ * a literal MAX_FACTORIAL_ARGUMENT can read. That shape does not throw either:
+ * `exact([y(0)=1!!!…])` RETURNS a normal-looking answer and leaves the worker
+ * dead, so nothing downstream notices — `isFatalWasmTrap` is never consulted,
+ * and the try/catch around the call never runs.
  */
 const MAX_CONDITION_CHARS = 280;
 
@@ -78,6 +80,41 @@ const MAX_CONDITION_CHARS = 280;
  * is the one that does not take the worker down.
  */
 const MAX_CONDITION_DEPTH = 100;
+
+/**
+ * Ceiling on the argument of a factorial in caller text.
+ *
+ * A third axis, because neither of the two above expresses it: `y(0)=50000!` is
+ * six characters of value, nests zero deep, and kills the shared worker. It is
+ * not an exponent either, so the guard below did not see it — measured on
+ * ed5917e, `desolve(y'=y, y(0)=50000!, x, y)` came back "memory access out of
+ * bounds" and a call queued behind it got "Giac worker exited (code 1)", and
+ * `desolve([y'=z, z'=-y, y(0)=50000!, z(0)=0], x)` reached the conditions scan in
+ * ode-system.ts, killed the worker there, and reported its own death as a
+ * refusal while the next unrelated request came back "the CAS was unavailable".
+ *
+ * Measured on a FRESH worker, one value per process, in all three shapes this
+ * text reaches (`50000!` alone, `exact([y(0)=50000!,z(0)=0])` as the conditions
+ * scan sends it, and `desolve((y'=y) and (y(0)=50000!),x,y)` as the
+ * single-equation path folds it): `7500!` answers with a 25,823-character result
+ * and `8000!` traps. Inside one already-warm worker the cliff moved down — 8000!
+ * in the `exact` shape and 9000! in the fold — so it tracks the worker's heap
+ * state rather than sitting at a fixed number.
+ *
+ * 1000 therefore keeps a factor of eight below the lowest kill, where
+ * MAX_CONDITION_CHARS keeps two: a moving cliff earns more headroom than a fixed
+ * one. It also still costs nothing. `1000!` is a 2,568-digit number, so the
+ * largest value this admits already denotes something an order of magnitude
+ * longer than the 280 characters the condition TEXT is allowed to be, and no
+ * initial condition anyone means is bigger — `y(0)=5!`, `y(0)=20!` and
+ * `y(0)=100!` all still answer.
+ *
+ * Equal to the exponent bound below by coincidence, not by measurement: that one
+ * is 1,000 because `10^100000` traps, this one because `8000!` does. They must
+ * not be merged — borrowing a number measured for a different shape is the
+ * mistake MAX_CONDITION_CHARS' own docblock records.
+ */
+const MAX_FACTORIAL_ARGUMENT = 1_000;
 
 /**
  * The shape of an initial condition: `y(0)=1`.
@@ -256,6 +293,43 @@ export interface OdeSystem {
 }
 
 /**
+ * The classified members of a bracketed ODE argument.
+ *
+ * Shared by parseOdeSystem and odeMemberConditions so the two cannot disagree
+ * about what a member IS. They would have: parseOdeSystem returns null below the
+ * two-derivative threshold, so the single-equation path needs the members of a
+ * list it does not call a system, and reading them with a second splitter is how
+ * this file's earlier pairs of readers came to know different spellings.
+ *
+ * Normalized here because this path does NOT go through evalWithLatex, which is
+ * where every other Giac call gets unicodeToAscii. Without it `y'=2·z` reached
+ * the probe as typed and was refused as "not linear", while the single-equation
+ * path solved the same glyph.
+ */
+function odeMembers(equation: string): Member[] {
+  return splitTopLevel(stripEnclosingBrackets(unicodeToAscii(equation)), ',').map(classify);
+}
+
+/**
+ * The initial conditions written as MEMBERS of a bracketed ODE argument.
+ *
+ * For the path that does NOT get validateSystemShape: `[y'=2*x, y(0)=1]` is one
+ * equation, parseOdeSystem returns null for it, and its condition is inside the
+ * equation argument rather than beside it — so the conditions the caller wrote
+ * are invisible to a guard that only looks at the trailing arguments. Measured,
+ * `desolve([y'=y, y(0)=50000!], x, y)` is the comma form's request with brackets
+ * and killed the shared worker exactly the same way.
+ *
+ * Returns members, not a verdict: whether an unbounded one is refused is the
+ * caller's business, and conditionBoundError is the rule.
+ */
+export function odeMemberConditions(equation: string): string[] {
+  return odeMembers(equation)
+    .filter((m): m is Extract<Member, { kind: 'condition' }> => m.kind === 'condition')
+    .map((m) => m.text);
+}
+
+/**
  * The system in a bracketed ODE argument, or null when it is not one.
  *
  * A bracketed list is also how initial conditions are written, so "more than one
@@ -263,12 +337,7 @@ export interface OdeSystem {
  * members whose left side is a derivative NOT applied to a point count.
  */
 export function parseOdeSystem(equation: string): OdeSystem | null {
-  // Normalized here because this path does NOT go through evalWithLatex, which
-  // is where every other Giac call gets unicodeToAscii. Without it `y'=2·z`
-  // reached the probe as typed and was refused as "not linear", while the
-  // single-equation path solved the same glyph.
-  equation = unicodeToAscii(equation);
-  const members = splitTopLevel(stripEnclosingBrackets(equation), ',').map(classify);
+  const members = odeMembers(equation);
   const equations = members.filter(
     (m): m is Extract<Member, { kind: 'equation' }> => m.kind === 'equation'
   );
@@ -469,46 +538,87 @@ export function validateSystemShape(
       return { error: `has a member "${condition.slice(0, 60)}" that is not of the form y(0)=1` };
     }
     parsedConditions.push(parsed);
-    // Length AND depth, both bounded here because the conditions reach an engine
-    // call with nothing else measuring them: MAX_PROBE_CHARS and MAX_COMMAND_CHARS,
-    // both in ode-system.ts, bound the probe and the finished command and run only
-    // after this function has returned.
-    //
-    // Two shapes, because they trap differently and neither bound catches the
-    // other. Measured on `exact([y(0)=1*2*2*…,z(0)=0])`, a FLAT condition answers
-    // at 1,015 characters and traps at 1,415, killing the worker; further up it
-    // exhausts the JS stack instead, which left the worker running and corrupted
-    // rather than recycled. A NESTED one traps at 2,415 characters — inside any
-    // length bound that would allow the flat case — which is why depth is
-    // measured separately.
-    if (condition.length > MAX_CONDITION_CHARS) {
-      return {
-        error:
-          `gives an initial condition of ${condition.length} characters, above the ` +
-          `${MAX_CONDITION_CHARS} this tool accepts`,
-      };
-    }
-    if (nestingDepth(condition) > MAX_CONDITION_DEPTH) {
-      return {
-        error:
-          `gives an initial condition nested ${nestingDepth(condition)} deep, above ` +
-          `the ${MAX_CONDITION_DEPTH} this tool accepts`,
-      };
-    }
-    const oversized = implausibleMagnitude(condition);
-    if (oversized !== undefined) {
-      return {
-        error:
-          `gives an initial condition of implausible magnitude (${oversized}) — ` +
-          'initial conditions are ordinary numbers',
-      };
-    }
+    // Bounded here because the conditions reach an engine call with nothing else
+    // measuring them: MAX_PROBE_CHARS and MAX_COMMAND_CHARS, both in
+    // ode-system.ts, bound the probe and the finished command and run only after
+    // this function has returned.
+    const unbounded = conditionBoundError(condition);
+    if (unbounded !== undefined) return { error: unbounded };
   }
 
   if (parsedConditions.length === 0) return { functions, rhss };
   const read = readConditions(parsedConditions, functions);
   if ('error' in read) return read;
   return { functions, rhss, conditions: read };
+}
+
+/**
+ * Every bound this tool puts on ONE initial condition, or undefined.
+ *
+ * Exported because TWO paths hand condition text to the engine and they had
+ * nothing in common. Systems reach it through validateSystemShape above; a
+ * single equation reaches it through extractOde in compute/extractors.ts, which
+ * folds `y(0)=1` into the `desolve` command and — until this existed — bounded
+ * nothing at all. `desolve(y'=y, y(0)=50000!, x, y)` killed the shared worker
+ * and a call queued behind it came back "Giac worker exited (code 1)".
+ *
+ * One function rather than one number each, because the three axes have to be
+ * applied together to mean anything and this file's history is of two readers
+ * that knew different rules. The phrasing is a verb phrase so both call sites'
+ * prefixes ("cannot solve this system — it …", "cannot solve this equation —
+ * it …") read as sentences.
+ *
+ * All three measurements TRANSFER to the single-equation path — checked in the
+ * shape it actually builds, `desolve((y'=y) and (y(0)=…),x,y)`, rather than
+ * assumed:
+ *
+ *   - LENGTH. A flat `y(0)=1*2*2*…` answers at 1,006 characters and traps at
+ *     1,406, within nine characters of the `exact([…])` figures the constant was
+ *     measured from. The other two flat shapes are more forgiving here than
+ *     there (`9/9/9/…` survives to 1,006 where it traps at 606 in `exact`), so
+ *     280 is at or below every cliff on both paths.
+ *   - MAGNITUDE. Identical: the trap is in evaluating the number, not in the
+ *     command around it, and `50000!` and `8000!` behave the same in all three
+ *     shapes.
+ *   - DEPTH is the one that does NOT carry its own weight here, and saying so is
+ *     the point of measuring it. This shape is far more fragile — `sqrt(1+…)` at
+ *     depth 100 kills the worker outright, where `exact([…])` refuses it
+ *     gracefully — but that condition is 806 characters, so MAX_CONDITION_CHARS
+ *     already refuses it. Inside 280 characters nothing reached the cliff:
+ *     138 nested grouping parentheses, 46 nested `sqrt(`, and `sqrt(1+…)` at
+ *     depth 34 all answer. So on this path the depth check is a parity bound —
+ *     kept so the two paths cannot drift into different rules, not because it is
+ *     load-bearing.
+ */
+export function conditionBoundError(condition: string): string | undefined {
+  // Two shapes, because they trap differently and neither bound catches the
+  // other. Measured on `exact([y(0)=1*2*2*…,z(0)=0])`, a FLAT condition answers
+  // at 1,015 characters and traps at 1,415, killing the worker; further up it
+  // exhausts the JS stack instead, which left the worker running and corrupted
+  // rather than recycled. A NESTED one traps at 2,415 characters — inside any
+  // length bound that would allow the flat case — which is why depth is
+  // measured separately.
+  if (condition.length > MAX_CONDITION_CHARS) {
+    return (
+      `gives an initial condition of ${condition.length} characters, above the ` +
+      `${MAX_CONDITION_CHARS} this tool accepts`
+    );
+  }
+  const depth = nestingDepth(condition);
+  if (depth > MAX_CONDITION_DEPTH) {
+    return (
+      `gives an initial condition nested ${depth} deep, above ` +
+      `the ${MAX_CONDITION_DEPTH} this tool accepts`
+    );
+  }
+  const oversized = implausibleMagnitude(condition);
+  if (oversized !== undefined) {
+    return (
+      `gives an initial condition of implausible magnitude (${oversized}) — ` +
+      'initial conditions are ordinary numbers'
+    );
+  }
+  return undefined;
 }
 
 /**
@@ -523,12 +633,18 @@ export function validateSystemShape(
  * channel it was written for, a later round read that as a statement of where
  * the hazard lives, and the right-hand sides went unguarded because of it.
  *
- * Large EXPONENTS only, which is the shape measured to be dangerous — a long
- * literal is MAX_COMMAND_CHARS' job, and this had no branch for one despite an
- * earlier version of this text claiming otherwise. A parenthesised exponent is
- * caught (`10^(50000+50000)` refuses on its first operand), a symbolic one is
- * not, and this is a bound on an observed shape rather than a proof about
+ * Two OPERATORS, `^` and `!`, which are the shapes measured to be dangerous — a
+ * long literal is MAX_COMMAND_CHARS' job, and this had no branch for one despite
+ * an earlier version of this text claiming otherwise. A parenthesised exponent
+ * is caught (`10^(50000+50000)` refuses on its first operand), a symbolic one is
+ * not, and this is a bound on observed shapes rather than a proof about
  * magnitude in general.
+ *
+ * A NAMED function that computes a huge value is emphatically not covered, and
+ * cannot be by anything shaped like this: measured, `comb(100000,50000)` returns
+ * a 30,101-character answer and leaves the worker dead, and `perm(50000,25000)`
+ * and `sum(k!,k,1,20000)` trap outright. That is the COST channel the conditions
+ * scan already records as open, not a gap this function is close to closing.
  */
 function implausibleMagnitude(text: string): string | undefined {
   // Every `^`, not only the ones whose exponent is a readable literal. Reading a
@@ -570,7 +686,100 @@ function implausibleMagnitude(text: string): string | undefined {
       }
     }
   }
+  for (const argument of factorialArguments(text)) {
+    const literal = argument.trim();
+    if (/^\d+$/.test(literal)) {
+      if (Number(literal) > MAX_FACTORIAL_ARGUMENT) return `a factorial of ${literal}`;
+      continue;
+    }
+    // A bare symbol denotes no literal and Giac does not evaluate it — measured,
+    // `n!` comes back as the two characters `n!` and the worker survives — so it
+    // is left alone rather than refused. Anything else is refused, because a
+    // group can hide any magnitude behind digits this cannot read: `(8!)!` is
+    // 40320! and kills the worker with no run longer than one digit in it, and
+    // `factorial(9)!` hides the same thing behind a function name.
+    if (/^[A-Za-z_]\w*$/.test(literal)) continue;
+    return `a factorial this cannot bound (${literal.slice(0, 20)})`;
+  }
   return undefined;
+}
+
+/**
+ * The operand of every factorial in `text`, as written.
+ *
+ * Both spellings, in one list, because they are the same operator and giving
+ * them different verdicts is this file's most-repeated defect — DERIVATIVE_CALL
+ * above exists because `diff` was listed and `derive` was not. Giac's `fact` is
+ * NOT a third spelling: measured, `fact(50000)` comes back unevaluated in eleven
+ * characters and the worker survives.
+ *
+ * The postfix operand is read LEFTWARD, and reading only a digit run there is not
+ * enough: `(8!)!` is 40320! and traps, with no digit run longer than one
+ * character. So a `)` is followed back to its opening bracket and then over any
+ * function name in front of it, which is what makes `factorial(9)!` legible as a
+ * factorial of 362,880 rather than of 9. Enclosing brackets are then stripped so
+ * `(1000)!` reads as the literal it is, while `(2+3)!` stays unreadable and is
+ * refused by the caller above — the conservative end, matching how that function
+ * already treats an exponent it cannot read.
+ *
+ * A `!` whose operand is another `!` is skipped, deliberately: at the largest
+ * inner value MAX_FACTORIAL_ARGUMENT admits, Giac leaves the outer one
+ * unapplied — measured, `1000!!` answers `(402387…)!` in 2,571 characters with
+ * the worker alive. MAX_CONDITION_CHARS is what bounds a long chain of them.
+ */
+function factorialArguments(text: string): string[] {
+  const operands: string[] = [];
+  const isIdentifierChar = (c: string): boolean => /[A-Za-z0-9_]/.test(c);
+  for (let i = 0; i < text.length; i += 1) {
+    const named = /^factorial\s*\(/.exec(text.slice(i));
+    if (named) {
+      const from = i + named[0].length;
+      let depth = 1;
+      let j = from;
+      for (; j < text.length && depth > 0; j += 1) {
+        if (text[j] === '(') depth += 1;
+        else if (text[j] === ')') depth -= 1;
+      }
+      operands.push(stripEnclosingBrackets(text.slice(from, j - 1)));
+      i = from - 1;
+      continue;
+    }
+    if (text[i] !== '!') continue;
+    let end = i - 1;
+    while (end >= 0 && /\s/.test(text[end])) end -= 1;
+    if (end < 0) continue;
+    if (/\d/.test(text[end])) {
+      let start = end;
+      while (start >= 0 && /\d/.test(text[start])) start -= 1;
+      operands.push(text.slice(start + 1, end + 1));
+      continue;
+    }
+    if (text[end] === ')') {
+      let depth = 0;
+      let start = end;
+      for (; start >= 0; start -= 1) {
+        if (text[start] === ')') depth += 1;
+        else if (text[start] === '(') {
+          depth -= 1;
+          if (depth === 0) break;
+        }
+      }
+      // An unbalanced `)` leaves start at -1; take the whole prefix, which is
+      // unreadable as a literal and so refused rather than silently ignored.
+      let from = start;
+      while (from > 0 && isIdentifierChar(text[from - 1])) from -= 1;
+      operands.push(stripEnclosingBrackets(text.slice(Math.max(from, 0), end + 1)));
+      continue;
+    }
+    // An identifier operand: read leftward so `n!` and `factorial(n)` agree.
+    if (isIdentifierChar(text[end])) {
+      let start = end;
+      while (start >= 0 && isIdentifierChar(text[start])) start -= 1;
+      operands.push(text.slice(start + 1, end + 1));
+    }
+    // Anything else — another `!`, or an operator — has no operand to read here.
+  }
+  return operands;
 }
 
 /**

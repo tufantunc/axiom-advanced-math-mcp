@@ -3,6 +3,8 @@ import {
   parseOdeSystem,
   differentiatedFunction,
   isDerivativeEquation,
+  conditionBoundError,
+  odeMemberConditions,
 } from '../ode-system-shape.js';
 import { coerceTestData } from '../hypothesis-testing.js';
 import {
@@ -501,7 +503,10 @@ export function extractOde(problem: string): RouteResult {
     // It runs here, after inference, because that is the first point at which the
     // independent variable is known. A symbolic endpoint is still a point:
     // `y(L)=0` and `y(pi)=0` fold and answer correctly, and must.
-    const effectiveRoles = roles.map((role, i) => {
+    // Annotated, because one branch below carries a `reason` and the rest do
+    // not: without it the union has no such property and the first refusal's
+    // reason cannot be read back off the positional list.
+    const effectiveRoles: { kind: string; reason?: string }[] = roles.map((role, i) => {
       if (role.kind !== 'condition') return role;
       // The WHOLE argument, point and value alike. Giac reads a folded condition
       // that mentions the integration variable anywhere as a second EQUATION, and
@@ -526,7 +531,22 @@ export function extractOde(problem: string): RouteResult {
       // and this path does not.
       const escaped = variable.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
       const mentionsVariable = new RegExp(`\\b${escaped}\\b`).test(rest[i]);
-      return mentionsVariable ? ({ kind: 'unsupported' } as const) : role;
+      if (mentionsVariable) return { kind: 'unsupported' } as const;
+      // The same three bounds the system path puts on a condition, from the same
+      // function, because this argument is about to be folded into a `desolve`
+      // command and nothing else measures it. MAX_EXPRESSION_LENGTH bounds the
+      // whole `problem` at 8,192, and a condition traps this shape at 1,406
+      // characters — and `y(0)=50000!` traps it at six, which no length bound
+      // expresses. Measured on ed5917e: `desolve(y'=y, y(0)=50000!, x, y)` came
+      // back "memory access out of bounds", and a call already queued behind it
+      // got "Giac worker exited (code 1)".
+      //
+      // Reported as unsupported so it rides the SAME positional channel as every
+      // other refusal here and is named in the caller's own argument order; the
+      // reason travels with it so the message says what is actually wrong rather
+      // than claiming this does not understand the shape, which it does.
+      const unbounded = conditionBoundError(rest[i]);
+      return unbounded === undefined ? role : ({ kind: 'unsupported', reason: unbounded } as const);
     });
     const conditions = rest.filter((_, i) => effectiveRoles[i].kind === 'condition');
     // Only the first two identifiers are read on the single-equation path, so a
@@ -536,16 +556,42 @@ export function extractOde(problem: string): RouteResult {
     // `desolve([y'=z, z'=-y], x, y, z)` names its unknowns redundantly and was
     // answered, and verified, on main.
     let identifiersSeen = 0;
-    const unsupported: string[] = rest.filter((_, i) => {
+    // Indices, not texts, so the reason attached to the first refusal in the
+    // caller's own order can be recovered with it. Reading the reason off a
+    // separate scan would be a second pass over the same roles, and two passes
+    // that can disagree about which argument is "first" is exactly the ordering
+    // guarantee this list exists to keep.
+    const refused: number[] = [];
+    rest.forEach((_, i) => {
       const role = effectiveRoles[i];
-      if (role.kind === 'unsupported') return true;
-      if (isSystem) return false;
+      if (role.kind === 'unsupported') {
+        refused.push(i);
+        return;
+      }
+      if (isSystem) return;
       if (role.kind === 'identifier' || role.kind === 'function') {
         identifiersSeen += 1;
-        return identifiersSeen > 2;
+        if (identifiersSeen > 2) refused.push(i);
       }
-      return false;
     });
+    const unsupported: string[] = refused.map((i) => rest[i]);
+    // A condition written as a MEMBER of the equation argument gets the same
+    // bound as one written beside it: `desolve([y'=y, y(0)=50000!], x, y)` is the
+    // comma form's request with brackets, and killed the worker the same way.
+    // Only when this is not a system — a system's conditions go through
+    // validateSystemShape, which applies the identical rule and words its
+    // refusal for a system, and a second copy here would be the unreachable
+    // duplicate that file's own comments warn about.
+    //
+    // The equation is argument ZERO, so this outranks anything found in `rest`
+    // and keeps the caller's own order.
+    const memberRefusal = isSystem
+      ? undefined
+      : odeMemberConditions(trimmedEquation)
+          .map((member) => conditionBoundError(member))
+          .find((reason) => reason !== undefined);
+    const refusalReason =
+      memberRefusal ?? (refused.length > 0 ? effectiveRoles[refused[0]].reason : undefined);
 
     // Two shapes, because the equation has two and only one of them survives an
     // ` and ` suffix.
@@ -571,15 +617,32 @@ export function extractOde(problem: string): RouteResult {
     // condition's text cannot be mistaken for the unknown function or the
     // independent variable.
     //
-    // No new length bound, and not because MAX_EXPRESSION_LENGTH is adequate —
-    // it is 8192 and ode-system-shape.ts records conditions trapping the engine
-    // at 1,415 characters, which is why that channel bounds itself at 280. The
-    // reason is parity: this exact text already reaches this exact `desolve`
-    // through the equation argument on main, and kills the worker there the same
-    // way. What does measure it is compute/schema.ts's MAX_EXPRESSION_LENGTH on
-    // the whole `problem` — 8192, far above the ~1,415-character trap — so the
-    // channel is bounded, not closed, and calculus.ts now actively tells callers
-    // to use it. Applying MAX_CONDITION_CHARS here is the open follow-up.
+    // Every condition folded in has been through conditionBoundError, whichever
+    // side of the comma the caller wrote it on — as a trailing argument in the
+    // roles pass above, or as a member of a bracketed list in `memberRefusal`
+    // below. That closes the channel this comment used to record as an open
+    // follow-up.
+    //
+    // Three sibling channels into the same `desolve` are NOT closed, and each is
+    // measured rather than assumed. All three kill the shared worker on ed5917e
+    // and still do:
+    //
+    //   - `desolve(y'=y and y(0)=50000!, x, y)` — the condition written inside the
+    //     equation argument as Giac's own boolean, which nothing here parses into
+    //     members.
+    //   - `y'=y and y(0)=50000!` — the same, through the implicit route at the
+    //     bottom of this function, which builds no command of its own.
+    //   - `desolve(y'=50000!*y, y(0)=1, x, y)` — the equation's own right-hand
+    //     side, which is not a condition at all.
+    //
+    // They are left because bounding them means bounding the whole equation
+    // argument, which is a different measurement with a real false-refusal
+    // surface: the system path needed its own MAX_COMMAND_CHARS (800) for its own
+    // command shape, and the length that traps this one is not the length that
+    // traps that one. What bounds them today is compute/schema.ts's
+    // MAX_EXPRESSION_LENGTH on the whole `problem` — 8192, above both the
+    // ~1,415-character flat-condition trap and the six characters of `50000!` —
+    // so those channels are bounded, not closed.
     // An empty equation is refused by validateParams, and folding onto it built a
     // non-empty string that slipped past that check — `desolve(, y(0)=1)` reached
     // the worker and came back blaming the CAS.
@@ -602,6 +665,13 @@ export function extractOde(problem: string): RouteResult {
         variable,
         function_name,
         ...(unsupported.length > 0 ? { unsupported_argument: unsupported[0] } : {}),
+        // Carried separately from `unsupported_argument` because the two say
+        // different things: that one means this router could not read the
+        // argument, this one means it read it perfectly and the value is out of
+        // bounds. Reporting an oversized condition as not-understood would have
+        // told the caller to rewrite a shape that was already correct.
+        // Extractor-written; not caller-settable.
+        ...(refusalReason !== undefined ? { condition_refusal: refusalReason } : {}),
       },
     };
   }
