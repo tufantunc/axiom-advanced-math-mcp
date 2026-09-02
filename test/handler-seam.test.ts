@@ -543,6 +543,12 @@ describe('spellings the router has to tell apart', () => {
     ["desolve(y'=y && y(0)=1, x, y)", /^Result: exp\(x\)$/m],
     ["desolve(y'=y AND y(0)=1, x, y)", /^Result: exp\(x\)$/m],
     ["desolve(y'=y ∧ y(0)=1, x, y)", /^Result: exp\(x\)$/m],
+    // UNSPACED. `&&` and `∧` are operators and need no separator — the spaced rows
+    // above are green either way and prove nothing about the operator path.
+    ["desolve(y'=y&&y(0)=1, x, y)", /^Result: exp\(x\)$/m],
+    ["desolve(y'=y∧y(0)=1, x, y)", /^Result: exp\(x\)$/m],
+    // The word form still needs its boundary, or `and` matches inside an identifier.
+    ["desolve(y'=command_k*y, x, y)", /command_k/],
   ])('%s is answered, not accused by the residual check', async (problem, expected) => {
     // Giac's own IVP syntax without a space. The residual check cuts the equation
     // at the first top-level `and` before substituting, and its detector required
@@ -574,6 +580,15 @@ describe('spellings the router has to tell apart', () => {
     // than certifying, which is the difference the one-bare-equation invariant made.
     ["desolve(y'=y ∧ y(x)=5, x, y)"],
     ["desolve(y'=y ∧ y(0)=x^2, x, y)"],
+    // The whole family, unspaced. 26 of 26 measured results shipped a non-solution
+    // at isError:false, separated from a refusal by one space character.
+    ["desolve(y'=y&&y(x)=5, x, y)"],
+    ["desolve(y'=y&& y(x)=5, x, y)"],
+    ["desolve(y'=y&&y(0)=x^2, x, y)"],
+    ["desolve(y'=y&&&y(x)=5, x, y)"],
+    ["desolve(y'=y∧y(x)=5, x, y)"],
+    ["desolve(y''=-y&&y(x)=5, x, y)"],
+    ["y'=y&&y(x)=5"],
   ])('%s is refused by the residual check', async (problem) => {
     // A condition written INSIDE the equation walks past the argument guard, which
     // only scans the trailing arguments. These are the families the residual check

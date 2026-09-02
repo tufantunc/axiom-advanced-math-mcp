@@ -351,9 +351,7 @@ export async function calculusHandler(args: Record<string, unknown>) {
           (expr) => giacEngine.evaluate(expr).then((r) => String(r))
         );
         if (verdict?.verified === false) {
-          return formatErrorResponse(
-            `solve_ode cannot solve this equation — the CAS returned an answer that ${verdict.detail}`
-          );
+          return formatErrorResponse(`solve_ode cannot solve this equation — ${verdict.detail}`);
         }
       }
     }

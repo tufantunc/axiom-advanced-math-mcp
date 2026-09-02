@@ -98,6 +98,28 @@ describe('verifyOdeSolution', () => {
   });
 
   it.each([
+    // A join the cut did not recognise leaves the caller's condition sitting in the
+    // equation, and every measured instance of that shipped a non-solution. So this
+    // refuses rather than declining: "I could not check" ships, and this is not that
+    // — it is "there is something here that is not the equation".
+    //
+    // The part no join spelling can walk past. It does not ask what the join was,
+    // only whether what is left is one equation, so `et`, `⋀` or whatever the next
+    // round would have found lands here instead of in a shipped answer.
+    ["y'=y or y(0)=1", 'exp(x)'],
+    ["y'=y || y(0)=1", 'exp(x)'],
+    // Two top-level `=` is not one equation, whatever joined them.
+    ["y'=y=1", 'exp(x)'],
+    // Stripping the brackets can EXPOSE a join the cut could not see: inside the
+    // member's own parentheses it is not top-level, and once they come off it is.
+    ["[(y'=y and y(0)=1), q]", 'exp(x)'],
+  ])('refuses %s rather than shipping it unchecked', async (equation, answer) => {
+    const verdict = await verifyOdeSolution(equation, 'y', 'x', answer, evaluate);
+    expect(verdict?.verified).toBe(false);
+    expect(verdict?.detail).toMatch(/carries more than one equation or condition/);
+  });
+
+  it.each([
     // Nothing to substitute: not this function's equation to judge.
     ['z_1=w_2', 'exp(x)'],
     // A branch set — which branch the caller meant is a different question.
@@ -113,26 +135,6 @@ describe('verifyOdeSolution', () => {
     ["y' (x)=y(x)", 'c_0*exp(x)'],
     ["y''(x)=-y(x)", 'cos(x)'],
     ["y''(x)+y(x)=0", 'cos(x)'],
-    // A disjunction is not cut — the first term is not "the equation", so refuting
-    // an answer to the second branch would be wrong. Giac refuses `or` in desolve
-    // anyway, so this cannot arise from the compute route.
-    ["y'=y or y(0)=1", 'exp(x)'],
-    ["y'=y || y(0)=1", 'exp(x)'],
-    // Two top-level `=` is not one equation. This row pins the OUTCOME, not the
-    // line that produces it: removing the `=` count leaves it green, because the
-    // later guards decline these anyway. The count is the half of the check that
-    // does not depend on knowing a join spelling, so it is redundant against every
-    // spelling currently known and is kept for one that is not — recorded here
-    // rather than implied, since a row that passes either way proves nothing about
-    // the line it appears to test.
-    ["y'=y=1", 'exp(x)'],
-    // Stripping the brackets can EXPOSE a join the cut could not see: inside the
-    // member's own parentheses it is not top-level, and once they come off it is.
-    // The assertion after the cut is what catches that; without it this would be
-    // substituted into as though it were a bare equation. (`(y'=y and y(0)=1)`
-    // alone does NOT reach it — the outer strip runs before the cut, so the join is
-    // already top-level and gets cut normally.)
-    ["[(y'=y and y(0)=1), q]", 'exp(x)'],
     // Too large to hand back to the engine.
     ["y'=y", `exp(x)*(${'1+'.repeat(2100)}1)`],
   ])('returns no verdict for %s / %s', async (equation, answer) => {

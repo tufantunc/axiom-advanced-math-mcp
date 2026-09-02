@@ -274,6 +274,35 @@ export async function verifyOdeSystem(
  * correctly — was accused the same way.
  */
 /**
+ * Whether a join begins at `i`, with the boundary rule each FORM needs.
+ *
+ * The word form needs a boundary before it, or `and` matches inside `command`. An
+ * operator does not, and requiring one is what made this miss the spelling `&&`
+ * and `∧` are normally written in: `y'=y&&y(x)=5` was never cut, the conjunction
+ * stayed in the equation, and 26 of 26 measured results shipped a non-solution at
+ * isError:false. One space was the whole difference, and every `&&` test row had
+ * one.
+ *
+ * Shared by the cut and the backstop so they cannot disagree about what a join
+ * LOOKS like. They still disagree about what to DO with one, which is the point.
+ */
+function startsAt(text: string, i: number, operators: RegExp, word: RegExp): boolean {
+  if (operators.test(text.slice(i))) return true;
+  if (/[A-Za-z0-9_]/.test(text[i - 1] ?? ' ')) return false;
+  return word.test(text.slice(i));
+}
+
+const CONJUNCTION_OPERATOR = /^(?:&&|\u2227)/;
+const CONJUNCTION_WORD = /^and(?![A-Za-z0-9_])/i;
+const JOIN_OPERATOR = /^(?:&&|\|\||\u2227|\u2228)/;
+const JOIN_WORD = /^(?:and|or)(?![A-Za-z0-9_])/i;
+
+const startsConjunction = (text: string, i: number): boolean =>
+  startsAt(text, i, CONJUNCTION_OPERATOR, CONJUNCTION_WORD);
+const startsJoin = (text: string, i: number): boolean =>
+  startsAt(text, i, JOIN_OPERATOR, JOIN_WORD);
+
+/**
  * A conjunction, which is Giac's IVP spelling: the first term is the equation.
  *
  * So are `&&` and `∧` (U+2227), and case does not matter for the word form —
@@ -289,7 +318,6 @@ export async function verifyOdeSystem(
  * "the equation" — refuting an answer to the second branch would be wrong — and
  * Giac refuses `or` inside desolve anyway. It is declined below instead of cut.
  */
-const CONJUNCTION = /^(?:and(?![A-Za-z0-9_])|&&|\u2227)/i;
 
 function beforeTopLevelConjunction(text: string): string {
   let depth = 0;
@@ -297,11 +325,7 @@ function beforeTopLevelConjunction(text: string): string {
     const ch = text[i];
     if (ch === '(' || ch === '[' || ch === '{') depth++;
     else if (ch === ')' || ch === ']' || ch === '}') depth--;
-    else if (
-      depth === 0 &&
-      !/[A-Za-z0-9_]/.test(text[i - 1] ?? ' ') &&
-      CONJUNCTION.test(text.slice(i))
-    ) {
+    else if (depth === 0 && startsConjunction(text, i)) {
       return text.slice(0, i);
     }
   }
@@ -337,13 +361,7 @@ function isOneBareEquation(text: string): boolean {
     const ch = text[i];
     if (ch === '(' || ch === '[' || ch === '{') depth++;
     else if (ch === ')' || ch === ']' || ch === '}') depth--;
-    else if (
-      depth === 0 &&
-      !/[A-Za-z0-9_]/.test(text[i - 1] ?? ' ') &&
-      /^(?:and(?![A-Za-z0-9_])|or(?![A-Za-z0-9_])|&&|\|\||\u2227|\u2228)/i.test(text.slice(i))
-    ) {
-      return false;
-    }
+    else if (depth === 0 && startsJoin(text, i)) return false;
   }
   return true;
 }
@@ -412,7 +430,31 @@ export async function verifyOdeSolution(
   // is declined rather than risked: substituting into a leftover boolean refused
   // correct answers AND certified a non-solution, depending on whether the boolean
   // survived normalisation or collapsed to a truth value.
-  if (equationOnly.length === 0 || !isOneBareEquation(equationOnly)) return undefined;
+  if (equationOnly.length === 0) return undefined;
+  // Two different declines, and conflating them is what let this family ship.
+  //
+  // "I could not check" — an unknown derivative spelling, an answer too large,
+  // an answer that mentions the function — is a no-verdict, and a no-verdict
+  // ships. That is right: the answer is probably fine and nothing here knows
+  // otherwise.
+  //
+  // "This text carries something that is not the equation" is a different
+  // statement. A join the cut did not recognise leaves the caller's condition
+  // sitting in the equation, and every measured instance of that shipped a
+  // non-solution — 26 of 26 for the unspaced operators alone. So it refuses.
+  //
+  // This is the part no join spelling can walk past: it does not ask what the
+  // join was, only whether what is left is one equation. `et`, `⋀`, or whatever
+  // the next round would have found lands here rather than in a shipped answer.
+  if (!isOneBareEquation(equationOnly)) {
+    return {
+      verified: false,
+      method,
+      detail:
+        `the equation as written carries more than one equation or condition ` +
+        `(${equationOnly}), so the answer could not be checked against it`,
+    };
+  }
 
   const fn = functionName.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
   const v = variable.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
@@ -494,7 +536,7 @@ export async function verifyOdeSolution(
     return {
       verified: false,
       method,
-      detail: `does not satisfy ${equationOnly}; residual ${residual}`,
+      detail: `the CAS returned an answer that does not satisfy ${equationOnly}; residual ${residual}`,
     };
   } catch {
     return undefined;
