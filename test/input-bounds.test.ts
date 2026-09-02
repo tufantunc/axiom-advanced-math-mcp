@@ -311,8 +311,8 @@ describe('the data a test runs on is the shape it claims', () => {
     [{ sample1: [1, 2, 'x'], mu0: 2 }, /sample1 must be a list of finite numbers/],
     [{ sample1: 'abcd', mu0: 2 }, /sample1 must be a list of finite numbers/],
     [{ sample1: [1, 2, 3], sample2: [1, 'y'] }, /sample2 must be a list of finite numbers/],
-    [{ sample1: [1, 2, 3], mu0: [9, 9] }, /mu0 must be a finite number/],
-    [{ sample1: [1, 2, 3], mu0: '5' }, /mu0 must be a finite number/],
+    [{ sample1: [1, 2, 3], mu0: [9, 9] }, /mu0 must be a finite number, got \[9,9\]/],
+    [{ sample1: [1, 2, 3], mu0: '5' }, /mu0 must be a finite number, got "5"/],
     [{ groups: [[1, 2], 'x'] }, /groups must be a list of lists of finite numbers/],
   ])('rejects malformed data (%#)', async (data, expected) => {
     const r = await hypothesisTestingHandler({
