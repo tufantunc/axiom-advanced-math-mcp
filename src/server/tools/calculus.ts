@@ -1,6 +1,7 @@
 import { formatErrorResponse } from './response-formatter.js';
 import { validateExpression } from './expression-validator.js';
 import { evalWithLatex } from './giac-eval.js';
+import type { VerificationResult } from './self-verify.js';
 import { detectFailure } from './compute/silent-failure.js';
 import { splitTopLevel } from './output-cleanup.js';
 import { stripEnclosingBrackets } from './compute/arg-parsing.js';
@@ -173,20 +174,21 @@ export async function calculusHandler(args: Record<string, unknown>) {
     // A rewritten system is checked against Y' = A*Y + b. The shape guards below
     // catch an answer that is visibly not one (`[]`, `undef`, `poly1[`); this
     // catches one that looks entirely ordinary and simply is not a solution.
-    const verify = isIndefiniteIntegral
-      ? (result: string) =>
-          verifyIntegrate(args.expression as string, args.variable as string, result)
-      : system
-        ? (result: string) =>
-            verifyOdeSystem(
-              system.matrix,
-              system.constants,
-              system.variable,
-              result,
-              (expr: string) => giacEngine.evaluate(expr),
-              system.condition
-            )
-        : undefined;
+    let verify: ((result: string) => Promise<VerificationResult | undefined>) | undefined;
+    if (isIndefiniteIntegral) {
+      verify = (result: string) =>
+        verifyIntegrate(args.expression as string, args.variable as string, result);
+    } else if (system) {
+      verify = (result: string) =>
+        verifyOdeSystem(
+          system.matrix,
+          system.constants,
+          system.variable,
+          result,
+          (expr: string) => giacEngine.evaluate(expr),
+          system.condition
+        );
+    }
     // Through `notes`, not appended to the formatted content: formatToolResponse
     // owns line order and puts notes before the "The answer is" summary. Pushed
     // onto content it landed after the sentence presenting the answer, which for
@@ -315,13 +317,16 @@ export async function calculusHandler(args: Record<string, unknown>) {
         // supplied none, that their conditions could not all be satisfied, and sent
         // them looking in the wrong place for a Giac limitation.
         const foldedConditions = args.equation !== args.original_equation;
-        const why =
-          failure === 'empty result'
-            ? foldedConditions
-              ? 'the CAS returned no solution, which for an initial-value problem ' +
-                'usually means the conditions cannot all be satisfied'
-              : 'the CAS returned no solution for this equation'
-            : `the CAS returned ${failure}`;
+        let why: string;
+        if (failure === 'empty result' && foldedConditions) {
+          why =
+            'the CAS returned no solution, which for an initial-value problem ' +
+            'usually means the conditions cannot all be satisfied';
+        } else if (failure === 'empty result') {
+          why = 'the CAS returned no solution for this equation';
+        } else {
+          why = `the CAS returned ${failure}`;
+        }
         return formatErrorResponse(`solve_ode cannot solve this equation — ${why}`);
       }
       // The residual check, and the reason the guards above are not the defence.

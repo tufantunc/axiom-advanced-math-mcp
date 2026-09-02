@@ -197,8 +197,10 @@ export function parseComplexTerm(term: string): { re: number; im: number } {
 
   const [, realPart, imaginaryPart] = match;
   const coefficient = imaginaryPart.replace(/\*$/, '');
-  const im =
-    coefficient === '' || coefficient === '+' ? 1 : coefficient === '-' ? -1 : Number(coefficient);
+  let im: number;
+  if (coefficient === '' || coefficient === '+') im = 1;
+  else if (coefficient === '-') im = -1;
+  else im = Number(coefficient);
   const re = realPart === '' ? 0 : Number(realPart);
   if (!Number.isFinite(re) || !Number.isFinite(im)) {
     throw new TypeError(`unparseable complex term: ${term}`);

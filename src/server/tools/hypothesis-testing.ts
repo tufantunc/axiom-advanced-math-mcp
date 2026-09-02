@@ -17,6 +17,13 @@ function std(data: number[], sampleStd = true): number {
   return Math.sqrt(variance(data, sampleStd));
 }
 
+/** The H₁ comparator for an alternative hypothesis, shared by every t-test report. */
+function altSymbol(alternative: string): string {
+  if (alternative === 'two_sided') return '≠';
+  if (alternative === 'less') return '<';
+  return '>';
+}
+
 function formatTestConclusion(pValue: number, significance: number, detail = ''): string {
   if (Number.isNaN(pValue)) return 'Could not determine significance';
   const action = pValue < significance ? '✗ Reject H₀' : '✓ Fail to reject H₀';
@@ -142,7 +149,7 @@ async function oneSampleT(
 
   return [
     `Test: ${report.name}`,
-    `H₀: ${report.parameter} = ${mu0}  |  H₁: ${report.parameter} ${alternative === 'two_sided' ? '≠' : alternative === 'less' ? '<' : '>'} ${mu0}`,
+    `H₀: ${report.parameter} = ${mu0}  |  H₁: ${report.parameter} ${altSymbol(alternative)} ${mu0}`,
     ``,
     `Sample mean: ${xbar.toFixed(6)}`,
     `Sample std:  ${s.toFixed(6)}`,
@@ -208,7 +215,7 @@ async function twoSampleT(
 
   return [
     `Test: Two-sample Welch's t-test`,
-    `H₀: μ₁ = μ₂  |  H₁: μ₁ ${alternative === 'two_sided' ? '≠' : alternative === 'less' ? '<' : '>'} μ₂`,
+    `H₀: μ₁ = μ₂  |  H₁: μ₁ ${altSymbol(alternative)} μ₂`,
     ``,
     `Sample 1: mean = ${m1.toFixed(6)}, std = ${s1.toFixed(6)}, n = ${n1}`,
     `Sample 2: mean = ${m2.toFixed(6)}, std = ${s2.toFixed(6)}, n = ${n2}`,

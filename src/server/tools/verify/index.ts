@@ -459,15 +459,19 @@ async function handleIdentityVerification(
   // One strategy succeeding is enough to call the claim checked: with
   // `method: 'both'`, symbolic can legitimately fail on a claim numeric
   // settles. Only when neither produced anything is the verdict meaningless.
+  let explanation: string;
+  if (!anyEvaluated) {
+    explanation = `Could not evaluate the claim: ${lhs} = ${rhs}`;
+  } else if (verified) {
+    explanation = `Identity verified: ${lhs} = ${rhs}`;
+  } else {
+    explanation = `Identity NOT verified: ${lhs} ≠ ${rhs}`;
+  }
   return {
     verified,
     evaluated: anyEvaluated,
     confidence,
-    explanation: anyEvaluated
-      ? verified
-        ? `Identity verified: ${lhs} = ${rhs}`
-        : `Identity NOT verified: ${lhs} ≠ ${rhs}`
-      : `Could not evaluate the claim: ${lhs} = ${rhs}`,
+    explanation,
     checks_performed: checks,
   };
 }
@@ -499,15 +503,19 @@ async function handleSolutionVerification(
     checks.push(`Symbolic after substitution: ${symbolic.detail}`);
   }
 
+  let explanation: string;
+  if (!solution.evaluated) {
+    explanation = `Could not evaluate ${equation} at ${variable}=${value}`;
+  } else if (solution.verified) {
+    explanation = `Verified: ${variable}=${value} satisfies ${equation}`;
+  } else {
+    explanation = `NOT verified: ${variable}=${value} does not satisfy ${equation}`;
+  }
   return {
     verified: solution.verified,
     evaluated: solution.evaluated,
     confidence: solution.verified ? 'high' : 'medium',
-    explanation: solution.evaluated
-      ? solution.verified
-        ? `Verified: ${variable}=${value} satisfies ${equation}`
-        : `NOT verified: ${variable}=${value} does not satisfy ${equation}`
-      : `Could not evaluate ${equation} at ${variable}=${value}`,
+    explanation,
     checks_performed: checks,
   };
 }
@@ -528,11 +536,14 @@ export function formatVerifyResponse(
 
   // UNKNOWN, not FALSE, when nothing could be checked: reporting a malformed
   // claim as FALSE tells a reader the mathematics was refuted.
-  const verdict = !result.evaluated
-    ? 'UNKNOWN — could not be checked'
-    : result.verified
-      ? 'TRUE ✓'
-      : 'FALSE ✗';
+  let verdict: string;
+  if (!result.evaluated) {
+    verdict = 'UNKNOWN — could not be checked';
+  } else if (result.verified) {
+    verdict = 'TRUE ✓';
+  } else {
+    verdict = 'FALSE ✗';
+  }
 
   const lines: string[] = [
     `Verified: ${verdict}`,

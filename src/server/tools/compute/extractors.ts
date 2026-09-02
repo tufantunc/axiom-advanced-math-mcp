@@ -1010,11 +1010,13 @@ export function extractGeometry(problem: string): RouteResult {
       // reading the first spelling only left the second destructuring a
       // number, which surfaced as the raw "line1 is not iterable".
       args['points'] = [parsed[0]];
-      args['line1'] = Array.isArray(parsed[1])
-        ? parsed[1]
-        : parsed.slice(1, 4).every((n) => typeof n === 'number')
-          ? parsed.slice(1, 4)
-          : undefined;
+      if (Array.isArray(parsed[1])) {
+        args['line1'] = parsed[1];
+      } else if (parsed.slice(1, 4).every((n) => typeof n === 'number')) {
+        args['line1'] = parsed.slice(1, 4);
+      } else {
+        args['line1'] = undefined;
+      }
     } else {
       args['points'] = parsePointList(inner) ?? parsed;
     }
