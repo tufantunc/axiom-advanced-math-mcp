@@ -370,20 +370,25 @@ export async function calculusHandler(args: Record<string, unknown>) {
       // already paid for that once by re-parsing the caller's argument to recover
       // a boolean.
       //
-      // What that changes HERE is nothing, and the reason is worth stating so the
-      // next reader does not go looking for the effect. This path reads only
-      // `verified === false`, and a missed condition never produces one — see
-      // everyConditionHolds for why no sound disproof of a condition is available
-      // — so the answer ships exactly as before. Unlike the system path, this one
-      // does not hand a `verify` callback to evalWithLatex either, so there is no
-      // `Verified:` line for a withheld mark to disappear from. What the argument
-      // buys is that the ✓ this function returns can no longer mean "solves the
-      // equation, conditions unexamined": the next consumer of that value gets a
-      // certificate for the whole IVP or none. Displaying it is the open
-      // follow-up, and it needs its own guard work: a `verify` callback runs inside
-      // the evalWithLatex call near the top of this handler, which is before the
-      // `[]`, `GIAC_ERROR` and `infinity` guards at the head of this block — and
-      // those are what turn an unsolvable IVP into a clean refusal today.
+      // That last argument is INERT TODAY, and this says so rather than leaving a
+      // reader to discover it. Delete it and no test fails and no caller sees a
+      // difference: this path reads only `verified === false`, a missed condition
+      // never produces one (see everyConditionHolds for why no sound disproof of a
+      // condition is available), and unlike the system path this one hands no
+      // `verify` callback to evalWithLatex, so there is no `Verified:` line for a
+      // withheld mark to disappear from. It is not dead code in the sense of
+      // unreachable — verifyOdeSolution reads it on every solve_ode request, and
+      // removing it makes 16 rows of verify-ode-solution.test.ts fail — but its
+      // effect stops at a return value nothing consumes.
+      //
+      // It ships anyway because it fixes what the ✓ MEANS. Without it that value
+      // can only ever say "solves the equation, conditions unexamined", and the
+      // next consumer of it would inherit exactly the defect this change removes.
+      // Displaying it is the open follow-up, and it needs its own guard work: a
+      // `verify` callback runs inside the evalWithLatex call near the top of this
+      // handler, which is before the `[]`, `GIAC_ERROR` and `infinity` guards at
+      // the head of this block — and those are what turn an unsolvable IVP into a
+      // clean refusal today.
       const original = args.original_equation;
       if (typeof original === 'string' && original.length > 0) {
         const verdict = await verifyOdeSolution(

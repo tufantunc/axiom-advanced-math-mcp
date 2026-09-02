@@ -438,17 +438,20 @@ function escapeForRegExp(name: string): string {
 /**
  * A comparison or a boolean, in either spelling the engine accepts.
  *
- * `!=` rather than a bare `!`, which is FACTORIAL and a perfectly ordinary value:
- * `desolve(y'=y, y(0)=5!, x, y)` is answered `120*exp(x)`, and a lone `!` in this
- * class cost it its mark while the sentence above called the class a comparison.
- * `<=`, `>=` and `==` need no entry of their own — the bare `<`, `>` and `=`
- * already match them.
+ * No `!` of any kind, and the fix was the DELETION rather than a replacement. A
+ * bare `!` is FACTORIAL and a perfectly ordinary value — `desolve(y'=y, y(0)=5!,
+ * x, y)` is answered `120*exp(x)`, and having `!` in this class cost that its
+ * mark. The obvious repair was to narrow it to `!=`, and that alternative was
+ * DEAD: every string containing `!=` contains `=`, which `[=<>&|]` already
+ * matches, so it changed nothing and only made this docblock argue for a
+ * character that did no work. It went the way `<=`, `>=` and `==` did, for the
+ * identical reason — the bare `<`, `>` and `=` already match them.
  *
  * Word-bounded for `and`/`or` so an identifier whose NAME contains one — `or_1`,
  * `random_or_not` — is still a value; `_` is a word character, so those do not
  * match. Case-insensitive because the engine's own word form is.
  */
-const NOT_A_VALUE = /[=<>&|]|!=|\u2227|\u2228|\b(?:and|or)\b/i;
+const NOT_A_VALUE = /[=<>&|]|\u2227|\u2228|\b(?:and|or)\b/i;
 
 /** A condition split into its derivative order, its point and its value. */
 interface OdeCondition {
@@ -535,11 +538,20 @@ const MAX_VERIFIABLE_CONDITIONS = 8;
  * with an extreme case and the loss lands on ordinary ones. Over 513 requests
  * through computeHandler, 435 answers used to carry the mark; as committed 358 keep
  * it and 77 do not, and only ONE of those 77 is the 1e10 case above. The rest are
- * 58 float-rounding residuals below 1e-6 — `desolve(y'=y, y(0.5)=2, x, y)` leaves
- * 7.8e-12, and whether a float cancels exactly is a coin flip — and 18 residuals
- * that are not numeric at all (an `erf`, an `i`, a surviving `c_1`). A further 16
- * were lost before the `simplify` fallback below was added and are now inside the
- * 358. The remaining 77 are the price of "✓ only where proven", they are invisible
+ * 58 float-rounding residuals below 1e-6 and 18 residuals that are not numeric at
+ * all (an `erf`, an `i`, a surviving `c_1`). A further 16 were lost before the
+ * `simplify` fallback below was added and are now inside the 358.
+ *
+ * What triggers a rounding loss is a rounded float COEFFICIENT in the answer, NOT
+ * a float in the condition, and the difference matters because the two look alike
+ * from the caller's side. `desolve(y'=y, y(1)=1.5, x, y)` has an exact point and
+ * answers `0.551819161757*exp(x)`, which leaves ~1e-13 and loses the mark; so does
+ * `y(2)=1.5`. `y(0)=1.5` answers `1.5*exp(x)` and KEEPS it, because substituting at
+ * 0 recovers the coefficient exactly, and `y(2.5)=1` keeps it because that one
+ * happens to cancel. So the exposure is any answer whose coefficient the engine
+ * printed to twelve digits, and whether it cancels is a coin flip.
+ *
+ * The remaining 77 are the price of "✓ only where proven", they are invisible
  * while nothing displays this mark, and the follow-up that displays it is signing
  * up for them.
  */
