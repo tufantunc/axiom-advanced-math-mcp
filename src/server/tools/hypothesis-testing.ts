@@ -623,7 +623,8 @@ export async function hypothesisTestingHandler(args: Record<string, unknown>) {
     const failure = inBandFailure(lines);
     if (failure) return formatErrorResponse(failure);
 
-    const mainResult = lines[lines.length - 1];
+    const mainResult = lines.at(-1);
+    if (mainResult === undefined) return formatErrorResponse('the test produced no output');
     return formatToolResponse({
       result: mainResult,
       notes: lines,

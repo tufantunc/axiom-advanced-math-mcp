@@ -433,7 +433,7 @@ export function validateSystemShape(
   // "solved" as Y'=0, answering the constant [[c_0,c_1]] with isError:false.
   // The emitted command even carried the literal nonsense `0(t)`, because subst
   // mapped z->0 inside the application and Giac evaluated it rather than erroring.
-  const stillApplied = new RegExp(`\\b(${functions.join('|')})\\s*\\(`);
+  const stillApplied = new RegExp(String.raw`\b(${functions.join('|')})\s*\(`);
   const offender = rhss.find((r) => stillApplied.test(r));
   if (offender !== undefined) {
     const name = stillApplied.exec(offender)?.[1] ?? 'a function';

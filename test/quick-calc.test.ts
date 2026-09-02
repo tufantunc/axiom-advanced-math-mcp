@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { QuickCalcService } from '../src/server/tools/quick-calc-service.js';
 import { quickCalcHandler } from '../src/server/tools/quick-calc.js';
 import { tryExactResult } from '../src/server/tools/exact-arithmetic.js';
@@ -458,6 +458,32 @@ describe('tiny non-zero results are not snapped to zero', () => {
     const out = text(r);
     expect(out).toMatch(/^Result: 1\/2500000000$/m);
     expect(out).toMatch(/^Decimal: 4e-10$/m);
+  });
+
+  it('an irrational is not certified with a large-denominator convergent', async () => {
+    // sin(pi/5)'s double happens to carry a best rational inside the 1e-9
+    // window — 4456/7581 — which the fraction path once certified as exact
+    // while the symbolic truth waited one branch below. Large denominators
+    // are no longer trusted on the double alone; the engine names the value.
+    const r = await quickCalcHandler({ expression: 'sin(pi/5)' });
+    const out = text(r);
+    expect(out).not.toContain('4456/7581');
+    expect(out).toMatch(/Result: .*\*.*√5.*\+10.*\/4|Result: √/m);
+  });
+
+  it('intentional small fractions keep their no-engine fast path', async () => {
+    // 22/7 and 355/113 are deliberate rational inputs with denominators an
+    // order of magnitude apart; both must stay exact fractions — and must not
+    // consult the engine. The value assertions alone cannot see the boundary
+    // being lowered (Giac echoes the fraction, byte-identical output); only
+    // the spy distinguishes the fast path from a round trip.
+    const spy = vi.spyOn(giacEngine, 'evaluate');
+    const a = await quickCalcHandler({ expression: '22/7' });
+    expect(text(a)).toMatch(/^Result: 22\/7$/m);
+    const b = await quickCalcHandler({ expression: '355/113' });
+    expect(text(b)).toMatch(/^Result: 355\/113$/m);
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
   });
 
   it('sin(pi) still answers 0 — now Giac-verified, with the float noise in Decimal', async () => {
