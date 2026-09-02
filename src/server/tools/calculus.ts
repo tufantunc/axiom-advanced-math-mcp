@@ -376,10 +376,22 @@ export async function calculusHandler(args: Record<string, unknown>) {
       // never produces one (see everyConditionHolds for why no sound disproof of a
       // condition is available), and unlike the system path this one hands no
       // `verify` callback to evalWithLatex, so there is no `Verified:` line for a
-      // withheld mark to disappear from. It is not dead code in the sense of
-      // unreachable — verifyOdeSolution reads it on every solve_ode request, and
-      // removing it makes 16 rows of verify-ode-solution.test.ts fail — but its
-      // effect stops at a return value nothing consumes.
+      // withheld mark to disappear from.
+      //
+      // Two mutations, two different referents, and an earlier version of this
+      // paragraph gave both answers at once by borrowing one's number for the
+      // other. Measured here, separately:
+      //
+      //   delete THIS argument at the call site  -> 0 of 1907 rows fail
+      //   make the FUNCTION ignore the parameter
+      //     (odeClauses(equation) instead of
+      //      odeClauses(conditionSource ?? equation))  -> 16 rows fail
+      //
+      // So the SEMANTICS of the parameter are pinned from inside self-verify.ts;
+      // what no row pins is the WIRING here. That distinction is the whole point
+      // of this paragraph — it is the only thing protecting a line with no test —
+      // and reading the 16 as cover for the wiring would tell the next maintainer
+      // the line is guarded when it is not.
       //
       // It ships anyway because it fixes what the ✓ MEANS. Without it that value
       // can only ever say "solves the equation, conditions unexamined", and the
