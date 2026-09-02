@@ -126,12 +126,11 @@ const MAX_CONDITION_DEPTH = 100;
  * shape while the fold survived to 9000!. So it tracks the command and the
  * worker's heap state, not just the number.
  *
- * The factor of nine is PER CONDITION, which is not the same as per command: the
- * system path joins its conditions and sends them together, so nine at the
- * ceiling would be 27,000 digits in one call and a factor of 1.03. That is why
- * validateSystemShape checks the joined text as well — the arithmetic is in the
- * comment there, along with the measurement that the worst case reachable today
- * still answers.
+ * The factor of nine is PER CONDITION, which is not the same as per command:
+ * both paths join their conditions into one call, so nine at the ceiling would
+ * be 27,000 digits together and a factor of 1.03. That is what
+ * conditionsTogetherError is for, and its docblock carries the arithmetic and
+ * the measurement that the worst case reachable today still answers.
  *
  * It also costs nothing real. `1000!` is 2,568 digits and still answers, which
  * is already an order of magnitude more digits than the 280 characters the

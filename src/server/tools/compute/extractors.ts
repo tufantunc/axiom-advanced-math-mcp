@@ -606,10 +606,10 @@ export function extractOde(problem: string): RouteResult {
     const memberRefusal = memberConditions
       .map((member) => conditionBoundError(member))
       .find((reason) => reason !== undefined);
-    // And the conditions TOGETHER, which is the same headroom argument
-    // validateSystemShape makes about the text it joins: conditionBoundError is
-    // per condition, so a member list can carry any number of them each inside
-    // the bound and denote their sum in one command. Nothing here caps the
+    // And the conditions TOGETHER, through the same function the system path
+    // uses so the two cannot drift: conditionBoundError is per condition, so a
+    // member list can carry any number of them each inside the bound and denote
+    // their sum in the one command this folds. Nothing here caps the
     // count the way MAX_SYSTEM_EQUATIONS caps a system's, so the admitted total
     // is bounded only by MAX_EXPRESSION_LENGTH — `desolve([y'=y, y(0)=1142!
     // ×40], x, y)` is 501 characters and denotes 119,920 digits against a lowest
@@ -617,10 +617,9 @@ export function extractOde(problem: string): RouteResult {
     //
     // Measured, that does NOT trap today: both the identical-condition and the
     // distinct-point forms answer with the worker alive, because desolve
-    // short-circuits before evaluating every member. This is here for the same
-    // reason its twin is, and through the SAME function, so the two paths cannot
-    // drift into different rules. Its docblock carries the arithmetic and the
-    // measurement.
+    // short-circuits before evaluating every member. A margin that holds only
+    // because of a short-circuit is not a bound, which is the argument
+    // conditionsTogetherError's docblock makes in full.
     //
     // Over every condition the fold will include, members and trailing
     // arguments alike, because they all reach the one command.
