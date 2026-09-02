@@ -15,13 +15,19 @@ export async function geometryHandler(args: Record<string, unknown>) {
       case 'distance': {
         if (points.length < 2) return formatErrorResponse('distance requires at least 2 points');
         const [[x1, y1], [x2, y2]] = points;
-        const d = Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2);
+        const d = Math.hypot(x2 - x1, y2 - y1);
         const exactSquared = (x2 - x1) ** 2 + (y2 - y1) ** 2;
+        // The squared sum overflows above ~1e154 while hypot stays finite —
+        // a "d = √(Infinity)" derivation beside a finite answer contradicts
+        // itself, so that note switches to the form actually computed.
+        const derivation = Number.isFinite(exactSquared)
+          ? `d = √(${formatNumber(exactSquared)})`
+          : `d = hypot(${formatNumber(x2 - x1)}, ${formatNumber(y2 - y1)})`;
         return formatToolResponse({
           result: formatNumber(d),
           notes: [
             `Distance between (${x1},${y1}) and (${x2},${y2})`,
-            `d = √(${formatNumber(exactSquared)})`,
+            derivation,
           ],
         });
       }
@@ -111,7 +117,7 @@ export async function geometryHandler(args: Record<string, unknown>) {
         for (let i = 0; i < n; i++) {
           const [xi, yi] = points[i];
           const [xj, yj] = points[(i + 1) % n];
-          perimeter += Math.sqrt((xj - xi) ** 2 + (yj - yi) ** 2);
+          perimeter += Math.hypot(xj - xi, yj - yi);
         }
         return formatToolResponse({
           result: formatNumber(perimeter),
@@ -156,7 +162,7 @@ export async function geometryHandler(args: Record<string, unknown>) {
           return formatErrorResponse('point_line_distance requires points[0] and line1');
         const [px, py] = points[0];
         const [a, b, c] = line1;
-        const d = Math.abs(a * px + b * py + c) / Math.sqrt(a * a + b * b);
+        const d = Math.abs(a * px + b * py + c) / Math.hypot(a, b);
         return formatToolResponse({
           result: formatNumber(d),
           notes: [
@@ -173,8 +179,8 @@ export async function geometryHandler(args: Record<string, unknown>) {
         const [a1, b1] = line1;
         const [a2, b2] = line2;
         const dot = a1 * a2 + b1 * b2;
-        const mag1 = Math.sqrt(a1 * a1 + b1 * b1);
-        const mag2 = Math.sqrt(a2 * a2 + b2 * b2);
+        const mag1 = Math.hypot(a1, b1);
+        const mag2 = Math.hypot(a2, b2);
         if (mag1 < 1e-12 || mag2 < 1e-12)
           return formatErrorResponse('Degenerate line (zero magnitude)');
         const cosAngle = Math.max(-1, Math.min(1, dot / (mag1 * mag2)));

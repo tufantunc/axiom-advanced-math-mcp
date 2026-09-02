@@ -50,4 +50,24 @@ describe('geometry3d vectors', () => {
     const r = await vectorHandler({ operation: 'distance3d', lists: [[0, 0], [1, 1, 1]] });
     expect(r.isError).toBe(true);
   });
+
+  // The vnorm hypot conversion is invisible at typical magnitudes — these
+  // overflow-scale pins are what actually guard it. The sqrt(vdot(v,v)) form
+  // answers Infinity for both (verified during review of the conversion).
+  it('distance3d stays finite at 1e200 components', async () => {
+    const r = await vectorHandler({ operation: 'distance3d', lists: [[0, 0, 0], [1e200, 0, 0]] });
+    expect(r.isError).toBe(false);
+    expect(text(r)).toMatch(/Result: 1e\+200/);
+    expect(text(r)).not.toContain('Infinity');
+  });
+
+  it('vector_norm stays finite at 1e200 components', async () => {
+    const r = await vectorHandler({
+      operation: 'vector_norm',
+      lists: [[1e200, 1e200, 1e200]],
+    });
+    expect(r.isError).toBe(false);
+    expect(text(r)).toMatch(/Result: 1\.7320\d*e\+200/);
+    expect(text(r)).not.toContain('Infinity');
+  });
 });

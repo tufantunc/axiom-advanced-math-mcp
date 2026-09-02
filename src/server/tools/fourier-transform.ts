@@ -44,7 +44,7 @@ export async function fourierTransformHandler(args: Record<string, unknown>) {
         lines.push(`  [${k}] f=${freq}  ${reStr} ${imStr}`);
 
         if (outputMagnitude) {
-          const mag = Math.sqrt(re * re + im * im);
+          const mag = Math.hypot(re, im);
           magLines.push(`  [${k}] f=${freq}  |X| = ${mag.toFixed(6)}`);
         }
       }

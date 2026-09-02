@@ -31,6 +31,32 @@ describe('fourier_transform', () => {
       expect(result.content[0].text).toMatch(/4\.0+/);
     });
 
+    it('pins the magnitude line of an impulse spectrum', async () => {
+      // An impulse [1, 0, 0, 0] has a flat unit spectrum: |X| = 1 everywhere,
+      // including bin 0. This is the line the Math.hypot conversion touches.
+      const result = await fourierTransformHandler({
+        mode: 'fft',
+        data: [1, 0, 0, 0],
+        output_magnitude: true,
+      });
+      expect(result.isError).toBe(false);
+      expect(result.content[0].text).toMatch(/\[0\].*\|X\| = 1\.000000/);
+    });
+
+    it('magnitude stays finite for overflow-scale samples', async () => {
+      // The unit impulse above agrees under both the sqrt and hypot forms;
+      // this fixture is the one that distinguishes them — sqrt(re²+im²)
+      // overflows to Infinity where Math.hypot computes 2e+200.
+      const result = await fourierTransformHandler({
+        mode: 'fft',
+        data: [1e200, 1e200],
+        output_magnitude: true,
+      });
+      expect(result.isError).toBe(false);
+      expect(result.content[0].text).toMatch(/\[0\].*\|X\| = 2e\+200/);
+      expect(result.content[0].text).not.toContain('Infinity');
+    });
+
     it('should include sample rate info when provided', async () => {
       const result = await fourierTransformHandler({
         mode: 'fft',

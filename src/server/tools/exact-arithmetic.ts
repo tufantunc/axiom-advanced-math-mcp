@@ -13,13 +13,21 @@ export async function tryExactResult(
 ): Promise<ExactResult | null> {
   if (!Number.isFinite(numericResult)) return null;
 
+  // Snapping is for float noise around a real integer — 0.9999999999999999 is
+  // 1. But a tiny non-zero value also rounds to 0 within the 1e-9 window, and
+  // claiming `0` for it is a wrong answer with the truth relegated to the
+  // decimal line (`sech(23.4)` answered "Result: 0"). Exactly-zero still snaps.
   const rounded = Math.round(numericResult);
-  if (Math.abs(numericResult - rounded) < 1e-9) {
+  if (Math.abs(numericResult - rounded) < 1e-9 && (rounded !== 0 || numericResult === 0)) {
     return { exact: String(rounded), decimal: numericResult };
   }
 
+  // With the snap refused, a tiny value reaches floatToFraction, whose best
+  // bounded-denominator approximation is 0/1 — the same wrong claim wearing a
+  // fraction bar ("Result: 0/1"). A zero numerator for a non-zero value is
+  // "no fraction", not "the fraction 0/1".
   const frac = floatToFraction(numericResult);
-  if (frac) {
+  if (frac && !(frac[0] === 0 && numericResult !== 0)) {
     const [num, den] = frac;
     const absNum = Math.abs(num);
     const sign = num < 0 ? '-' : '';
@@ -40,10 +48,22 @@ export async function tryExactResult(
         giacExpr = giacExpr.replaceAll(/(\d+(?:\.\d*)?)\s*°/g, '($1*pi/180)');
       }
       const giacResult = await giacEngine.evaluate(giacExpr);
+      // An exact form is symbolic or an integer — a float is not exact. A bare
+      // non-integer float from Giac is either the same value re-rendered
+      // ('2e-9' -> '2e-09') or a ~12-digit computation passing itself off as
+      // exact while the true double waits on the decimal line; a symbolic form
+      // carrying a float literal is an echo of an input Giac declined to
+      // evaluate ('nthRoot(1.2345678e-05,3)').
+      const trimmed = giacResult.trim();
+      const bareNumber = /^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/.test(trimmed);
+      const bareInteger = /^[+-]?\d+$/.test(trimmed);
+      const carriesFloat = /\d\.\d|\d[eE][+-]?\d/.test(trimmed);
+      const isExactForm = bareNumber ? bareInteger : !carriesFloat;
       if (
         giacResult &&
         giacResult !== 'undef' &&
         !giacResult.startsWith('Error') &&
+        isExactForm &&
         giacResult !== String(numericResult) &&
         giacResult !== numericResult.toFixed(15)
       ) {

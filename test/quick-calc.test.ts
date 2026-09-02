@@ -370,3 +370,154 @@ describe('degree expressions', () => {
     expect(exact?.exact).toBe('√3/2');
   });
 });
+
+// quick_calc must render `precision` exactly like to_decimal: the worker's
+// verbatim formatting, not a Number() round-trip of it.
+describe('quick_calc renders precision like to_decimal', () => {
+  beforeAll(async () => {
+    await giacEngine.initialize();
+  }, 60000);
+
+  function text(r: { content: { text: string }[] }): string {
+    return r.content.map((c) => c.text).join('\n');
+  }
+
+  it('the exact-form Decimal line honours precision', async () => {
+    const r = await quickCalcHandler({ expression: '2/3', precision: 3 });
+    expect(r.isError).toBe(false);
+    const out = text(r);
+    expect(out).toContain('Result: 2/3');
+    expect(out).toMatch(/^Decimal: 0\.667$/m);
+    expect(out).not.toContain('0.6666666666666666');
+  });
+
+  it('an exponent rendering survives on the Result line', async () => {
+    // This fixture once reached the exact path via Giac's bare-float
+    // '1.234e-06' (Result: the float, Decimal: the precision rendering). The
+    // exact-acceptance policy refuses bare floats now, so it lands on the
+    // fallback line — which must still show the worker's precision rendering,
+    // exponent form included, never the Number()-round-tripped 0.00000123.
+    const r = await quickCalcHandler({ expression: '0.000001234', precision: 3 });
+    expect(r.isError).toBe(false);
+    const out = text(r);
+    expect(out).toMatch(/^Result: 1\.23e-6$/m);
+    expect(out).not.toContain('0.000001234');
+    expect(out).not.toContain('0.00000123');
+  });
+
+  it('truncates a repeating sum and keeps the full double without precision', async () => {
+    const withP = await quickCalcHandler({ expression: '0.1+0.2', precision: 5 });
+    expect(text(withP)).toMatch(/^Decimal: 0\.3$/m);
+    const without = await quickCalcHandler({ expression: '0.1+0.2' });
+    expect(text(without)).toMatch(/^Decimal: 0\.30000000000000004$/m);
+  });
+});
+
+// A tiny non-zero value used to be snapped to `0` by the integer branch
+// (anything under 1e-19 rounds to 0 within the 1e-9 window), and once that
+// snap was refused, floatToFraction claimed the same value as 0/1. Both
+// degenerate exacts are refused now; the truth reaches the result line.
+describe('tiny non-zero results are not snapped to zero', () => {
+  beforeAll(async () => {
+    await giacEngine.initialize();
+  }, 60000);
+
+  function text(r: { content: { text: string }[] }): string {
+    return r.content.map((c) => c.text).join('\n');
+  }
+
+  it('a tiny literal renders as itself, not 0 and not 0/1', async () => {
+    const r = await quickCalcHandler({ expression: '4e-10' });
+    expect(r.isError).toBe(false);
+    const out = text(r);
+    expect(out).toMatch(/^Result: 4e-10$/m);
+    expect(out).not.toContain('0/1');
+    expect(out).not.toMatch(/^Result: 0$/m);
+  });
+
+  it('a tiny negative literal keeps its sign', async () => {
+    const r = await quickCalcHandler({ expression: '-4e-10' });
+    expect(text(r)).toMatch(/^Result: -4e-10$/m);
+  });
+
+  it('a tiny computed value shows the true magnitude, not zero', async () => {
+    // sech(23.4) ≈ 1.4e-10; the old snap answered "Result: 0". Giac's own
+    // float for it is no longer accepted as an exact form (floats are not
+    // exact), so the honest worker double reaches the Result line directly.
+    const r = await quickCalcHandler({ expression: 'sech(23.4)' });
+    expect(r.isError).toBe(false);
+    const out = text(r);
+    expect(out).toMatch(/^Result: 1\.375748725426922e-10$/m);
+    expect(out).not.toMatch(/^Result: 0$/m);
+  });
+
+  it('a genuinely tiny rational gets its real fraction from Giac', async () => {
+    // floatToFraction caps denominators at 10000 and cannot express 1/2.5e9;
+    // Giac can, and does.
+    const r = await quickCalcHandler({ expression: '1/2500000000' });
+    const out = text(r);
+    expect(out).toMatch(/^Result: 1\/2500000000$/m);
+    expect(out).toMatch(/^Decimal: 4e-10$/m);
+  });
+
+  it('sin(pi) still answers 0 — now Giac-verified, with the float noise in Decimal', async () => {
+    const r = await quickCalcHandler({ expression: 'sin(pi)' });
+    const out = text(r);
+    expect(out).toMatch(/^Result: 0$/m);
+    expect(out).toMatch(/^Decimal: 1\.2246\d*e-16$/m);
+  });
+
+  it('an exact zero still snaps to 0', async () => {
+    const r = await quickCalcHandler({ expression: 'sin(0)' });
+    expect(text(r)).toMatch(/^Result: 0$/m);
+    // And at the seam: the `|| numericResult === 0` allowance in the snap
+    // condition is what keeps this returning {exact, decimal} rather than
+    // null. The rendered output is byte-identical either way (the fallback
+    // also prints Result: 0), so only this direct call can pin the path.
+    expect(await tryExactResult('sin(0)', 0)).toEqual({ exact: '0', decimal: 0 });
+  });
+});
+
+// The Giac branch's exact badge: symbolic or integral only. A float —
+// whether a reformatted echo or a coarse 12-digit computation — and a
+// float-carrying unevaluated echo are not exact forms.
+describe('the Giac exact form must be symbolic or integral', () => {
+  beforeAll(async () => {
+    await giacEngine.initialize();
+  }, 60000);
+
+  it('accepts a bare integer Giac result', async () => {
+    expect((await tryExactResult('sin(pi)', Math.sin(Math.PI)))?.exact).toBe('0');
+    // cos(3*pi/2) is snap-refused noise (-1.8e-16) that Giac resolves to the
+    // integer 0 — unlike 20!, which the integer snap answers before the Giac
+    // branch ever runs, making its pin a wrong-reason pass for this policy.
+    expect((await tryExactResult('cos(3*pi/2)', Math.cos((3 * Math.PI) / 2)))?.exact).toBe('0');
+  });
+
+  it('accepts float-free symbolic forms', async () => {
+    expect((await tryExactResult('sin(60°)', Math.sin(Math.PI / 3)))?.exact).toBe('√3/2');
+    expect((await tryExactResult('sqrt(2)', Math.SQRT2))?.exact).toBe('√2');
+    expect((await tryExactResult('log(2)', Math.log(2)))?.exact).toBe('ln(2)');
+    expect((await tryExactResult('exp(-30)', Math.exp(-30)))?.exact).toBe('1/exp(30)');
+    expect((await tryExactResult('1/2500000000', 4e-10))?.exact).toBe('1/2500000000');
+  });
+
+  it('rejects a bare non-integer float — echo or coarse computation', async () => {
+    expect(await tryExactResult('sin(1.5)', Math.sin(1.5))).toBeNull();
+    expect(await tryExactResult('2e-9', 2e-9)).toBeNull();
+    expect(await tryExactResult('sech(23.4)', 1 / Math.cosh(23.4))).toBeNull();
+  });
+
+  it('rejects a float-carrying unevaluated echo', async () => {
+    expect(await tryExactResult('std([1e-05,2e-05])', 5e-6)).toBeNull();
+    expect(await tryExactResult('nthRoot(1.2345678e-05,3)', 0.00231)).toBeNull();
+  });
+
+  it('the honest double reaches the surface when the float exact is refused', async () => {
+    const r = await quickCalcHandler({ expression: 'sin(1.5)' });
+    expect(r.isError).toBe(false);
+    expect(r.content.map((c) => c.text).join('\n')).toMatch(
+      /^Result: 0\.9974949866040544$/m
+    );
+  });
+});
