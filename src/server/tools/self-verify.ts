@@ -1,7 +1,6 @@
 import { giacEngine } from '../giac/index.js';
 import { MAX_ENGINE_DEPTH } from './giac-eval.js';
-import { nestingDepth } from './output-cleanup.js';
-import { isPrintedZero, splitTopLevel } from './output-cleanup.js';
+import { nestingDepth, isPrintedZero, splitTopLevel } from './output-cleanup.js';
 import { stripEnclosingBrackets } from './compute/arg-parsing.js';
 
 /** Largest answer this will substitute back; a huge one is its own hazard. */
@@ -293,7 +292,7 @@ export async function verifyOdeSystem(
 function joinAt(text: string, i: number, operators: RegExp, word: RegExp): number | undefined {
   const asOperator = operators.exec(text.slice(i));
   if (asOperator) return asOperator[0].length;
-  if (/[A-Za-z0-9_]/.test(text[i - 1] ?? ' ')) return undefined;
+  if (/\w/.test(text[i - 1] ?? ' ')) return undefined;
   return word.exec(text.slice(i))?.[0].length;
 }
 
@@ -412,17 +411,26 @@ function odeClauses(text: string): string[] {
   const parts: string[] = [];
   let depth = 0;
   let start = 0;
-  for (let i = 0; i < t.length; i++) {
+  let i = 0;
+  while (i < t.length) {
     const ch = t[i];
-    if (ch === '(' || ch === '[' || ch === '{') depth++;
-    else if (ch === ')' || ch === ']' || ch === '}') depth--;
-    else if (depth === 0) {
+    if (ch === '(' || ch === '[' || ch === '{') {
+      depth++;
+      i++;
+    } else if (ch === ')' || ch === ']' || ch === '}') {
+      depth--;
+      i++;
+    } else if (depth === 0) {
       const width = ch === ',' ? 1 : conjunctionAt(t, i);
       if (width !== undefined) {
         parts.push(t.slice(start, i));
         start = i + width;
-        i = start - 1;
+        i = start;
+      } else {
+        i++;
       }
+    } else {
+      i++;
     }
   }
   if (parts.length === 0) return [t];
@@ -495,14 +503,14 @@ function readCondition(
   variable: string
 ): OdeCondition | undefined {
   const shape = new RegExp(
-    `^${escapeForRegExp(functionName)}('*)\\s*\\(\\s*([^(){}\\[\\],]*?)\\s*\\)\\s*=\\s*(.+)$`
+    String.raw`^${escapeForRegExp(functionName)}('*)\s*\(\s*([^(){}\[\],]*?)\s*\)\s*=\s*(.+)$`
   );
   const parsed = shape.exec(clause.trim());
   if (!parsed) return undefined;
   const [, primes, point, value] = parsed;
   if (point.length === 0) return undefined;
   if (NOT_A_VALUE.test(point) || NOT_A_VALUE.test(value)) return undefined;
-  const mentionsVariable = new RegExp(`\\b${escapeForRegExp(variable)}\\b`);
+  const mentionsVariable = new RegExp(String.raw`\b${escapeForRegExp(variable)}\b`);
   if (mentionsVariable.test(point) || mentionsVariable.test(value)) return undefined;
   return { order: primes.length, point, value };
 }
