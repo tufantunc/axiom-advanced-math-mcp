@@ -63,6 +63,10 @@ const CAPABILITIES: [string, RegExp][] = [
   // Number theory
   ['ifactor(2310)', /^Result: 2\*3\*5\*7\*11$/m],
   ['analyze(28)', /Divisor sum: 56/],
+  // The classification verdicts are mathematics, not decoration: 28 is not a
+  // square, and nothing else in the suite would notice the No branch dying.
+  ['analyze(28)', /^Perfect square: No$/m],
+  ['analyze(36)', /^Perfect square: Yes \(6²\)$/m],
   // Combinatorics
   ['C(10,3)', /^Result: 120$/m],
   ['multinomial(5, [2,2,1])', /^Result: 30$/m],
@@ -93,6 +97,8 @@ const CAPABILITIES: [string, RegExp][] = [
   // A polygon given as one bracketed list arrived double-nested — read as a
   // single vertex, so a four-vertex call was "fewer than 3 vertices".
   ['area_polygon([[0,0],[4,0],[4,3],[0,3]])', /^Result: 12$/m],
+  // The vertex note is the only per-call trace of what was actually parsed.
+  ['area_polygon([[0,0],[4,0],[4,3],[0,3]])', /Vertices: \(0,0\), \(4,0\), \(4,3\), \(0,3\)/],
   ['area_polygon([0,0],[4,0],[4,3],[0,3])', /^Result: 12$/m],
   ['area_polygon(vertices=[[0,0],[4,0],[4,3],[0,3]])', /^Result: 12$/m],
   ['perimeter_polygon([[0,0],[4,0],[4,3],[0,3]])', /^Result: 14$/m],
