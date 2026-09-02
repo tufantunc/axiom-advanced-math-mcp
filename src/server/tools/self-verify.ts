@@ -323,7 +323,7 @@ function startsAt(text: string, i: number, operators: RegExp, word: RegExp): boo
  * match, so a two-character reading of `&&&` left a stray `&` at the head of the
  * next clause, which matched no condition and cost a correct answer its mark — on
  * a spelling this docblock has recorded the engine accepting since the round that
- * added `\u2227`.
+ * added `∧`.
  */
 const CONJUNCTION_OPERATOR = /^(?:&&+|\u2227)/;
 const CONJUNCTION_WORD = /^and(?![A-Za-z0-9_])/i;
@@ -401,8 +401,11 @@ function isOneBareEquation(text: string): boolean {
  *
  * `or` is deliberately NOT a separator, for the same reason it is not a
  * conjunction above: its terms are alternatives, not a list of things that all
- * hold. So `y(0)=1 or y(0)=2` survives whole into one clause, matches no condition
- * shape, and is declined by readCondition rather than being read as two claims.
+ * hold. So `y(0)=1 or y(0)=2` survives whole into ONE clause rather than being
+ * split into two claims — and that is all this function guarantees. It does not
+ * fail readCondition's shape: point `0`, value `1 or y(0)=2`. What declines it is
+ * readCondition's rule against a boolean value, and that rule rather than this
+ * paragraph is what covers the parenthesised spelling `y(0)=(1 or 2)`.
  */
 function odeClauses(text: string): string[] {
   const t = stripEnclosingBrackets(text.trim()).trim();
