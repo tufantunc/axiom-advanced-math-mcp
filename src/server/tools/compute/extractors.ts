@@ -1,4 +1,9 @@
 import type { RouteResult } from './types.js';
+import {
+  parseOdeSystem,
+  differentiatedFunction,
+  isDerivativeEquation,
+} from '../ode-system-shape.js';
 import { coerceTestData } from '../hypothesis-testing.js';
 import {
   extractFnArgs,
@@ -31,19 +36,6 @@ function guessVariable(expr: string): string {
     if (!constants.has(v)) return v;
   }
   return 'x';
-}
-
-/**
- * The unknown function in an ODE: the name that appears differentiated.
- *
- * Matches Lagrange notation (`y'`, `f''`) and Leibniz notation (`dy/dx`), which
- * are the two spellings looksLikeOde already recognises in the router.
- */
-function differentiatedName(equation: string): string | undefined {
-  const lagrange = /\b([A-Za-z]\w*)'/.exec(equation);
-  if (lagrange) return lagrange[1];
-  const leibniz = /\bd([A-Za-z]\w*)\s*\/\s*d[A-Za-z]/.exec(equation);
-  return leibniz?.[1];
 }
 
 /**
@@ -250,6 +242,87 @@ export function extractTaylor(problem: string): RouteResult {
   };
 }
 
+/**
+ * An initial or boundary condition as a caller writes it beside the equation:
+ * `y(0)=1`, `y'(0)=0`, `y''(1)=3`.
+ *
+ * Primes are part of the shape, unlike CONDITION_FORM in ode-system-shape.ts.
+ * That one guards the system path, which rewrites to Y' = A*Y + b and is
+ * first-order by construction, so `y'(0)` cannot arise there; a single equation
+ * can be any order. Sharing one regex would have to loosen that path to suit
+ * this one.
+ *
+ * Requiring the `=` is what keeps a bare call — `ifactor(2^257-1)` — from being
+ * read as a condition and folded into the command.
+ *
+ * The point is a single argument: `\(\s*[^),]*\s*\)`, not `\([^)]*\)`. The looser
+ * group accepted `y(0,1)=1`, folded it, and Giac answered as though the caller
+ * had written `y(0)=1` — a confident answer to a different problem.
+ */
+const SINGLE_ODE_CONDITION = /^[A-Za-z_]\w*'*\s*\(\s*[^),]*\s*\)\s*=\s*(.+)$/;
+
+/**
+ * A condition's right-hand side must be a VALUE, not a proposition.
+ *
+ * `.+` admitted a top-level boolean, and parenthesising the join — correct on
+ * its own terms — turned that from a Giac error into a silent loss:
+ * `(y'=y) and (y(0)=1 or y(0)=2)` is accepted, the condition is ignored, and
+ * `c_0*exp(x)` ships with isError:false. That is the very shape this extractor
+ * was changed to remove. `y(0)=1==1` answered -exp(x) the same way.
+ */
+const CONDITION_VALUE_IS_A_PROPOSITION = /\b(and|or)\b|[=<>!]=|[<>]/;
+
+function isCondition(part: string): boolean {
+  // An equation is not a condition, and the test is the one parseOdeSystem uses,
+  // so a spelling it reads as a derivative cannot be folded in as a condition.
+  // `diff(z)=5` satisfies the shape below — identifier, one argument, `=`, value
+  // — and folding it turned `[y'=y]` into a two-equation system and
+  // `[y'=z, z'=-y]` into a three-component one, answers to systems the caller
+  // never wrote, carrying verification marks honest about the wrong system.
+  if (isDerivativeEquation(part)) return false;
+  const rhs = SINGLE_ODE_CONDITION.exec(part)?.[1];
+  return rhs !== undefined && !CONDITION_VALUE_IS_A_PROPOSITION.test(rhs);
+}
+
+/**
+ * The unknowns of a SYSTEM, named as Giac's own third argument: `[y,z]`, or
+ * `[y(x),z(x)]`.
+ *
+ * Ignorable when it MATCHES, refused when it does not — the membership rule is
+ * at the use site. For a real system parseOdeSystem derives the function list
+ * from the equations and `function_name` is never read, so naming the unknowns
+ * correctly is redundant rather than wrong; naming different ones states an arity
+ * or a set the system does not have, and `[q]` must reach the same verdict as
+ * `q(x)` or the same claim spelled two ways gets opposite answers. Refusing it took previously-correct,
+ * self-verified calls to a hard error — four rows below cover them.
+ *
+ * What this does NOT restore is the spelling prompts/index.ts advertises,
+ * `desolve([eq1,eq2],[f,g])` with no variable argument. Recognising the list
+ * leaves `named` empty, so the variable falls to independentVariable(), which
+ * picks one of the unknowns and the call is refused as "uses z as both the
+ * independent variable and an unknown function" — on main too. Accepting the
+ * list is necessary for the variable-supplied spellings and not sufficient for
+ * that one; making it answerable means excluding the system's own function names
+ * from independentVariable's candidates, which is a separate change.
+ */
+const UNKNOWNS_LIST =
+  /^\[\s*[A-Za-z]\w*(\s*\(\s*[A-Za-z]\w*\s*\))?(\s*,\s*[A-Za-z]\w*(\s*\(\s*[A-Za-z]\w*\s*\))?)*\s*\]$/;
+
+const BARE_IDENTIFIER = /^[A-Za-z]\w*$/;
+
+/**
+ * The unknown function written applied: `y(x)`.
+ *
+ * The canonical spelling in the dialects whose verbs this router advertises —
+ * `dsolve` is Maple's and SymPy's — and already caller idiom in this repo, whose
+ * own fixtures use `diff(y(x),x)`. Dropping it used to work by accident:
+ * inference recovered the same function name from the equation. Classifying it
+ * as unsupported turned `desolve(y'=y, y(x))`, correct on main, into a refusal.
+ *
+ * Both identifiers are bare, so `ifactor(2^257-1)` stays out.
+ */
+const APPLIED_FUNCTION = /^([A-Za-z]\w*)\s*\(\s*[A-Za-z]\w*\s*\)$/;
+
 export function extractOde(problem: string): RouteResult {
   if (/^(desolve|dsolve|odesolve|solve_ode)\s*\(/i.test(problem.trim())) {
     const inner = extractFnArgs(problem);
@@ -268,11 +341,137 @@ export function extractOde(problem: string): RouteResult {
     // as the function broke the other spelling just as quietly: `desolve(y'=2*x,
     // x)` became `[1/2]`. The equation settles it — the unknown function is the
     // one that appears differentiated.
-    const named = parts.slice(1).filter((part) => /^[A-Za-z]\w*$/.test(part.trim()));
-    const differentiated = differentiatedName(equation);
+    // Every trailing argument is used or refused. They used to be filtered down
+    // to the bare identifiers and the rest discarded, so `desolve(y'=y, y(0)=1)`
+    // emitted `desolve(y'=y,x,y)` and answered `c_0*exp(x)` — the general
+    // solution — with isError:false. The correct answer is exp(x). The condition
+    // the caller wrote never reached the engine, and nothing said so.
+    const rest = parts
+      .slice(1)
+      .map((part) => part.trim())
+      .filter((part) => part.length > 0);
+    // `y(x)` names the function by its identifier, so it joins the identifiers
+    // rather than forming a fourth category.
+    const trimmedEquation = equation.trim();
+    // A bracketed equation is a SYSTEM, and the two paths have different rules
+    // about the trailing arguments, so this has to be known before they are
+    // classified.
+    // The MEMBERS parseOdeSystem will read, not the caller's outer punctuation.
+    // stripEnclosingBrackets peels `(` and `[` alike, and repeatedly, so the list
+    // it reaches is not always the one the outer brackets name: keying the fold
+    // off `startsWith('[')` appended ` and …` after `(y'=z, z'=-y)` — a real
+    // system — and inserted inside the outer bracket of `[[y'=z, z'=-y]]`, one
+    // level above the members. Both then parsed as non-systems downstream and
+    // were refused, where main answered and verified them.
+    const strippedEquation = stripEnclosingBrackets(trimmedEquation);
+    // A member LIST takes conditions as further members; a lone equation joins
+    // them with `and`. This is the syntax question asked correctly — a top-level
+    // comma after stripping, rather than the punctuation that happened to be
+    // outermost.
+    //
+    // The reason is parseOdeSystem, not Giac. calculus.ts decides whether to take
+    // the Y' = A*Y + b path by parsing this text, and it only reads conditions
+    // that are MEMBERS of the list. `[y'=z, z'=-y] and y(0)=1` parses as no system
+    // at all, which is how appending once cost the matrix rewrite, the components
+    // note and the verification, and answered `[]`.
+    //
+    // Not a Giac constraint: measured through giacEngine, `and` carries a list
+    // perfectly well — `desolve(([y''=-y, y(0)=1]) and (y'(0)=0),x,y)` answers
+    // cos(x), the same as the list spelling. Two earlier versions of this comment
+    // claimed otherwise, first that Giac drops a derivative condition in list form
+    // and then that `and` cannot hold a comma; both were measured false. The one
+    // spelling Giac really does drop is `diff(y(x),x)(0)=0`, and this never folds
+    // it because SINGLE_ODE_CONDITION rejects its inner comma.
+    const isMemberList = splitArgs(strippedEquation).length > 1;
+    const fold = (members: string[]): string =>
+      isMemberList
+        ? `[${strippedEquation}, ${members.join(', ')}]`
+        : `(${strippedEquation}) and (${members.join(') and (')})`;
+    // `y(x)` names the FUNCTION — it cannot be an independent variable — so that
+    // fact is carried rather than re-derived below.
+    // The system parser's reader, not a second one. Two readers that knew
+    // different spellings is why the `diff(y(x),x)` form fell through every rule
+    // keyed on "the equation differentiates something else".
+    const differentiated = differentiatedFunction(equation);
+    // The SAME predicate calculus.ts uses, not the punctuation. The rules used to
+    // key off the brackets, and parseOdeSystem needs two
+    // derivative members — its own docblock says `[y'=2*x, y(0)=1]` is a single
+    // equation. So bracketed non-systems got the system's trailing-argument rules
+    // and the single-equation path's consequences: `desolve([y'=y, y(0)=1], x, y,
+    // zzz)` answered exp(x) and dropped `zzz`, the drop this change exists to
+    // remove, while the unbracketed same request was refused.
+    const parsedSystem = parseOdeSystem(trimmedEquation);
+    const isSystem = parsedSystem !== null;
+
+    const systemFunctions = new Set(parsedSystem?.equations.map((e) => e.fn) ?? []);
+    // Classified by POSITION, so the argument reported back is the first one the
+    // caller wrote rather than the first some filter reached.
+    const roles = rest.map((part) => {
+      const applied = APPLIED_FUNCTION.exec(part)?.[1];
+      if (applied !== undefined) {
+        // A system's unknowns may be named applied, and function_name is unused
+        // on that path, so naming one is redundant rather than wrong. Comparing
+        // against `differentiated` refused them: that helper returns only the
+        // FIRST differentiated name, so for `[y'=z, z'=-y]` every unknown but `y`
+        // looked like a contradiction — `x, y(x)` was accepted and `x, z(x)`
+        // refused for the same system. Membership is the right test, and a name
+        // that is not an unknown of the system is still refused.
+        if (isSystem) {
+          // A system that differentiates the same function twice is refused
+          // downstream by name ("differentiates the same function twice: y, y").
+          // The Set collapses the duplicate, so refusing here preempted that with
+          // a message about the wrong thing.
+          const duplicated = systemFunctions.size !== parsedSystem.equations.length;
+          return systemFunctions.has(applied) || duplicated
+            ? ({ kind: 'unknowns' } as const)
+            : ({ kind: 'unsupported' } as const);
+        }
+        // Single equation: `y(x)` names the function. If the equation
+        // differentiates something else the two disagree and the caller has to
+        // settle it — silently preferring either is how this file's older bugs
+        // read.
+        return differentiated !== undefined && applied !== differentiated
+          ? ({ kind: 'unsupported' } as const)
+          : ({ kind: 'function', name: applied } as const);
+      }
+      if (BARE_IDENTIFIER.test(part)) return { kind: 'identifier', name: part } as const;
+      if (isCondition(part)) return { kind: 'condition' } as const;
+      // Recognised on both paths — gating it on the system made
+      // `desolve(y'=y, [y])`, answered on main, a refusal while
+      // `desolve([y'=y], [y])` was accepted: same mathematics, opposite outcomes
+      // decided by whether the caller bracketed the equation.
+      //
+      // Checked for membership like the applied case, and for the same reason:
+      // without it `q(x)` was refused while `[q]` was accepted and ignored — the
+      // same claim spelled two ways getting opposite verdicts, which is the defect
+      // the applied rule was added to remove. `[y,z,w]` on a two-equation system
+      // states an arity the system does not have, so the sets must match.
+      if (UNKNOWNS_LIST.test(part)) {
+        const names = splitArgs(stripEnclosingBrackets(part)).map(
+          (n) => APPLIED_FUNCTION.exec(n.trim())?.[1] ?? n.trim()
+        );
+        const matches = isSystem
+          ? names.length === systemFunctions.size && names.every((n) => systemFunctions.has(n))
+          : differentiated === undefined || (names.length === 1 && names[0] === differentiated);
+        return matches ? ({ kind: 'unknowns' } as const) : ({ kind: 'unsupported' } as const);
+      }
+      return { kind: 'unsupported' } as const;
+    });
+    const appliedNames = roles.flatMap((r) => (r.kind === 'function' ? [r.name] : []));
+    const bareNames = roles.flatMap((r) => (r.kind === 'identifier' ? [r.name] : []));
+    const named = [...bareNames, ...appliedNames];
     let variable: string;
     let function_name: string;
-    if (named.length >= 2) {
+    if (appliedNames.length > 0) {
+      // `y(x)` settles the function on its own. Deriving it from the equation
+      // instead read `y` as the VARIABLE whenever differentiatedName found no
+      // derivative — which is every `diff(y(x),x)` spelling, since that helper
+      // knows only `y'` and `dy/dx`. `desolve(diff(y(x),x)=y(x), y(x))` built
+      // `desolve(...,y,y)`, Giac answered `[]`, and the new empty-result guard
+      // then reported an unsatisfiable IVP for a call with no conditions.
+      function_name = appliedNames[0];
+      variable = bareNames[0]?.trim() ?? independentVariable(equation, function_name);
+    } else if (named.length >= 2) {
       variable = named[0].trim();
       function_name = named[1].trim();
     } else {
@@ -284,15 +483,145 @@ export function extractOde(problem: string): RouteResult {
         : (only ?? independentVariable(equation, function_name));
     }
 
+    // A condition's POINT must not mention the independent variable. That is a
+    // syntactic proxy for what Giac will read as an equation, not a proof of it —
+    // and the second attempt at it: testing whether the point EQUALS the variable
+    // closed one spelling and left 41 calls shipping non-solutions. `[^),]*` matches `x` as happily as
+    // `0`, so `y(x)=5` and `y'(x)=0` were folded as conditions — and Giac reads
+    // them as EQUATIONS. `desolve(y'=y, y(x)=5)` answered `5/exp(x)*exp(x)`, whose
+    // residual in the caller's own equation is -5, with isError:false; 25 measured
+    // calls answered a non-solution that way.
+    //
+    // isDerivativeEquation cannot catch these and neither could the invariant it
+    // replaced: parseOdeSystem also classifies `y'(x)=0` as a condition, so the
+    // extractor and the parser agree. They agree and are both wrong about what
+    // Giac will do, which is why this test is about the caller's variable rather
+    // than about the parser.
+    //
+    // It runs here, after inference, because that is the first point at which the
+    // independent variable is known. A symbolic endpoint is still a point:
+    // `y(L)=0` and `y(pi)=0` fold and answer correctly, and must.
+    const effectiveRoles = roles.map((role, i) => {
+      if (role.kind !== 'condition') return role;
+      // The WHOLE argument, point and value alike. Giac reads a folded condition
+      // that mentions the integration variable anywhere as a second EQUATION, and
+      // this guard has now been narrowed-then-widened twice for want of saying so:
+      // first it tested whether the point EQUALS the variable, which left
+      // `y(x+0)=5` shipping `5/exp(x)*exp(x)` (residual -5, 41 calls); then it
+      // scanned the point for a mention, which left `y(0)=x^2` shipping
+      // `x^2*exp(x)` (residual 2*x*exp(x), 55 calls) — worse than main, which
+      // dropped the condition and returned a correct general solution.
+      //
+      // Scanning the argument is also simpler than extracting the point first, so
+      // there is nothing traded for the wider cover.
+      //
+      // Word-bounded, so `x_0`, `x0`, `xx` and `X` are still points. The variable
+      // is escaped defensively only: every source of it is BARE_IDENTIFIER or a
+      // single letter from independentVariable, so no metacharacter can reach the
+      // constructor today.
+      //
+      // Syntactic, and therefore a proxy rather than a proof. What actually decides
+      // correctness is whether the answer satisfies the caller's equation, which
+      // only a residual check can ask; the system path has one in verifyOdeSystem
+      // and this path does not.
+      const escaped = variable.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+      const mentionsVariable = new RegExp(`\\b${escaped}\\b`).test(rest[i]);
+      return mentionsVariable ? ({ kind: 'unsupported' } as const) : role;
+    });
+    const conditions = rest.filter((_, i) => effectiveRoles[i].kind === 'condition');
+    // Only the first two identifiers are read on the single-equation path, so a
+    // later one is neither used nor refused unless it is collected here — the
+    // same silent drop this change exists to remove, one bucket over. A SYSTEM is
+    // different: parseOdeSystem ignores function_name entirely, so
+    // `desolve([y'=z, z'=-y], x, y, z)` names its unknowns redundantly and was
+    // answered, and verified, on main.
+    let identifiersSeen = 0;
+    const unsupported: string[] = rest.filter((_, i) => {
+      const role = effectiveRoles[i];
+      if (role.kind === 'unsupported') return true;
+      if (isSystem) return false;
+      if (role.kind === 'identifier' || role.kind === 'function') {
+        identifiersSeen += 1;
+        return identifiersSeen > 2;
+      }
+      return false;
+    });
+
+    // Two shapes, because the equation has two and only one of them survives an
+    // ` and ` suffix.
+    //
+    // A bracketed list is a SYSTEM, and calculus.ts decides that by handing
+    // `equation` to parseOdeSystem. `[y'=z, z'=-y] and y(0)=1` does not parse as
+    // one, so appending pushed the whole request off the Y' = A*Y + b path: no
+    // matrix rewrite, no components note, no verifyOdeSystem — and because
+    // `functions` came back undefined it also skipped the guard that refuses
+    // `[]`. `desolve([y'=z, z'=-y], y(0)=1, z(0)=0, x)` answered `[]` with
+    // isError:false, where main at least returned a verified solution family.
+    // Folding into the list is the shape parseOdeSystem already reads, and it
+    // answers [[cos(x),-sin(x)]] verified.
+    //
+    // A single equation joins with `and`, Giac's own IVP spelling and already a
+    // working route — `desolve(y'=y and y(0)=1, x, y)` answered exp(x) before
+    // this change. Each side is parenthesised because this code, not the caller,
+    // is building a boolean expression: `and` and `or` are the same precedence
+    // and left-associative in Giac, so an unparenthesised splice lets a
+    // condition's own boolean escape its side of the join.
+    //
+    // Inference above reads the ORIGINAL equation, not either of these, so a
+    // condition's text cannot be mistaken for the unknown function or the
+    // independent variable.
+    //
+    // No new length bound, and not because MAX_EXPRESSION_LENGTH is adequate —
+    // it is 8192 and ode-system-shape.ts records conditions trapping the engine
+    // at 1,415 characters, which is why that channel bounds itself at 280. The
+    // reason is parity: this exact text already reaches this exact `desolve`
+    // through the equation argument on main, and kills the worker there the same
+    // way. What does measure it is compute/schema.ts's MAX_EXPRESSION_LENGTH on
+    // the whole `problem` — 8192, far above the ~1,415-character trap — so the
+    // channel is bounded, not closed, and calculus.ts now actively tells callers
+    // to use it. Applying MAX_CONDITION_CHARS here is the open follow-up.
+    // An empty equation is refused by validateParams, and folding onto it built a
+    // non-empty string that slipped past that check — `desolve(, y(0)=1)` reached
+    // the worker and came back blaming the CAS.
+    // A condition that would change the equation's shape was already classified
+    // 'unsupported' in the roles pass, positionally, so it is reported in the
+    // caller's own order. It used to be rejected in a loop here and appended after
+    // every positional entry, which broke that guarantee by construction.
+    const withConditions =
+      conditions.length === 0 || trimmedEquation.length === 0 ? equation : fold(conditions);
+
     return {
       handler: 'calculus',
-      args: { operation: 'solve_ode', equation, variable, function_name },
+      args: {
+        operation: 'solve_ode',
+        equation: withConditions,
+        // The caller's equation before any condition was folded in, so the
+        // residual check substitutes into what they actually wrote rather than
+        // into the command this built. Extractor-written; not caller-settable.
+        original_equation: equation,
+        variable,
+        function_name,
+        ...(unsupported.length > 0 ? { unsupported_argument: unsupported[0] } : {}),
+      },
     };
   }
   // Implicit ODE: contains y', y'', dy/dx
+  //
+  // `original_equation` here too, or the residual check is inert on this spelling
+  // and the families it demonstrably catches keep shipping: `y'=y and y(x)=5`
+  // answered 5/exp(x)*exp(x) while `desolve(y'=y and y(x)=5, x, y)` — the same
+  // request with a verb — was refused. The variable and function are hardcoded on
+  // this path, and the verifier is handed those same values, so the substitution
+  // cannot disagree with the command.
   return {
     handler: 'calculus',
-    args: { operation: 'solve_ode', equation: problem.trim(), variable: 'x', function_name: 'y' },
+    args: {
+      operation: 'solve_ode',
+      equation: problem.trim(),
+      original_equation: problem.trim(),
+      variable: 'x',
+      function_name: 'y',
+    },
   };
 }
 
