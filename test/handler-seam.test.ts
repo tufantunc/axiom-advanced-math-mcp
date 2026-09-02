@@ -881,7 +881,7 @@ describe('spellings the router has to tell apart', () => {
       // normalize lifts the line into envelope.warnings and compute/index.ts
       // prepends warnings, so the same 190-character sentence printed twice.
       const t = text(await computeHandler({ problem: '1/0' }));
-      expect((t.match(/result is infinite/g) ?? []).length).toBe(1);
+      expect(t.match(/result is infinite/g) ?? []).toHaveLength(1);
     });
 
     it('reaches a JSON consumer through envelope.warnings', async () => {

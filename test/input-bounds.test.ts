@@ -779,8 +779,8 @@ describe('a burst is shed rather than queued without limit', () => {
       // The overflow must be refused as busy — not left to wait and then be
       // reported as an oversized computation, which is what the single
       // enqueue-time budget did.
-      expect(refused.length).toBe(3);
-      expect(settled.filter((s) => s.status === 'fulfilled').length).toBe(3);
+      expect(refused).toHaveLength(3);
+      expect(settled.filter((s) => s.status === 'fulfilled')).toHaveLength(3);
     } finally {
       await host.dispose();
     }
