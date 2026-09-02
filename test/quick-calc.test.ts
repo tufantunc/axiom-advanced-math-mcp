@@ -460,6 +460,26 @@ describe('tiny non-zero results are not snapped to zero', () => {
     expect(out).toMatch(/^Decimal: 4e-10$/m);
   });
 
+  it('an irrational is not certified with a large-denominator convergent', async () => {
+    // sin(pi/5)'s double happens to carry a best rational inside the 1e-9
+    // window — 4456/7581 — which the fraction path once certified as exact
+    // while the symbolic truth waited one branch below. Large denominators
+    // are no longer trusted on the double alone; the engine names the value.
+    const r = await quickCalcHandler({ expression: 'sin(pi/5)' });
+    const out = text(r);
+    expect(out).not.toContain('4456/7581');
+    expect(out).toMatch(/Result: .*\*.*√5.*\+10.*\/4|Result: √/m);
+  });
+
+  it('intentional small fractions keep their no-engine fast path', async () => {
+    // 22/7 and 355/113 are deliberate rational inputs with denominators an
+    // order of magnitude apart; both must stay exact fractions.
+    const a = await quickCalcHandler({ expression: '22/7' });
+    expect(text(a)).toMatch(/^Result: 22\/7$/m);
+    const b = await quickCalcHandler({ expression: '355/113' });
+    expect(text(b)).toMatch(/^Result: 355\/113$/m);
+  });
+
   it('sin(pi) still answers 0 — now Giac-verified, with the float noise in Decimal', async () => {
     const r = await quickCalcHandler({ expression: 'sin(pi)' });
     const out = text(r);

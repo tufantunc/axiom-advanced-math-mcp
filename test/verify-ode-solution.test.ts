@@ -153,6 +153,19 @@ describe('verifyOdeSolution', () => {
     expect(out).toBeUndefined();
   });
 
+  it('does not treat an identifier as the join keyword', async () => {
+    // `and_1`/`and0` are identifiers, not conjunctions: the word-boundary guard
+    // after `and` must keep refusing word characters. Weakening it to
+    // letters-only (a review mutation) split here and certified the fragments;
+    // unsplit, the equation is honestly refused as unreadable rather than
+    // checked against something the caller did not write.
+    for (const equation of ["y'=y and_1*y(0)=1", "y'=y and0*y(0)=1"]) {
+      const out = await verifyOdeSolution(equation, 'y', 'x', 'exp(x)', evaluate);
+      expect(out, equation).toMatchObject({ verified: false });
+      expect(out?.detail, equation).toContain('could not be checked');
+    }
+  });
+
   /**
    * The conditions, which the equation's residual says nothing about.
    *

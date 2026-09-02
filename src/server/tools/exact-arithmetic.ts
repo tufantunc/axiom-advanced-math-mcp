@@ -27,7 +27,16 @@ export async function tryExactResult(
   // fraction bar ("Result: 0/1"). A zero numerator for a non-zero value is
   // "no fraction", not "the fraction 0/1".
   const frac = floatToFraction(numericResult);
-  if (frac && !(frac[0] === 0 && numericResult !== 0)) {
+  // And a fraction with a large denominator proves nothing: every double has
+  // a best bounded-denominator rational, and sin(pi/5)'s happens to sit inside
+  // the 1e-9 window as 4456/7581 — certified "exact" while the symbolic truth
+  // waited one branch below. Intentional fractions run small (2/3, 22/7,
+  // 355/113); those are trusted on the double alone and keep the no-engine
+  // fast path. Anything above this bound falls through to the engine, which
+  // either names the value symbolically (or echoes the caller's own huge
+  // fraction) or declines — and a decline claims nothing.
+  const TRUSTED_FRACTION_DENOMINATOR = 1000;
+  if (frac && frac[1] <= TRUSTED_FRACTION_DENOMINATOR && !(frac[0] === 0 && numericResult !== 0)) {
     const [num, den] = frac;
     const absNum = Math.abs(num);
     const sign = num < 0 ? '-' : '';
