@@ -1129,14 +1129,18 @@ describe("an initial condition's cost is bounded, not only its size", () => {
   // strength of a comment asserting the only cases left were another `!` or an
   // operator — and `]` was neither, which is how the rows above got through.
   //
-  // `{50000}!` goes through the brace branch and `[[50000]]!` through the
-  // bracket one — both are real kills. `"50000"!` is the shape that reaches the
-  // final fall-through, and it is measured HARMLESS at the engine level
-  // (`[y(0)=(("50000")!),…]`, worker alive), so that row pins defence in depth
-  // rather than a demonstrated kill. It is pinned anyway: without it the
-  // fall-through is dead code, and a dead branch here is exactly what a later
-  // reader deletes for free — after which the next unreadable operand vanishes
-  // silently, which is how `]` got through in the first place.
+  // `[[50000]]!` is the demonstrated kill here — stripEnclosingBrackets peels
+  // repeatedly, so it reads as 50000 — and `(1,50000)!` is another, refused as
+  // unreadable. The other two rows pin defence in depth, and are labelled as
+  // such rather than as kills: `{50000}!` is `undef!` with the worker alive,
+  // because Giac does not map factorial over a SET the way it does over a list,
+  // and `"50000"!` answers symbolically. `}` in fact never yields a readable
+  // operand, since stripEnclosingBrackets peels `(` and `[` but not braces.
+  //
+  // They are pinned anyway: without them those branches are dead code, and a
+  // dead branch here is exactly what a later reader deletes for free — after
+  // which the next unreadable operand vanishes silently, which is how `]` got
+  // through in the first place.
   it.each([
     ["desolve(y'=y, y(0)={50000}!, x, y)", /a factorial this cannot bound/],
     ["desolve(y'=y, y(0)=[[50000]]!, x, y)", /a factorial of 50000/],
@@ -1212,5 +1216,80 @@ describe("an initial condition's cost is bounded, not only its size", () => {
     }
     const tail = (s: string): string => s.slice(s.indexOf(' — it '));
     expect(tail(text(verbless))).toBe(tail(text(verb)));
+  });
+
+  // `!` binds tighter than `^` even THROUGH a bracket — measured, `2^(3)!` is
+  // 64 — so every one of these denotes the same 10^362880 the bare `10^9!` does.
+  // The first version of that clause was gated on the bare form and only looked
+  // for a `!` written INSIDE a grouped exponent, which left all of these
+  // admitted and killing the worker. Each is checked with a surviving
+  // neighbour, because the two rows that already existed used only the bare
+  // spellings and so passed while the clause covered half its axis.
+  it.each([
+    "desolve(y'=y, y(0)=10^(9)!, x, y)",
+    "desolve(y'=y, y(0)=10^((9))!, x, y)",
+    "desolve(y'=y, y(0)=10^[9]!, x, y)",
+    "desolve(y'=y, y(0)=10^ (9)!, x, y)",
+    "desolve(y'=y, y(0)=10^(9) !, x, y)",
+    "desolve(y'=y, y(0)=1/10^(9)!, x, y)",
+    "desolve(y'=y, y(0)=10^+9!, x, y)",
+    "desolve(y'=y, y(0)=10^-9!, x, y)",
+    "desolve(y'=y, y(0)=3^(9)!, x, y)",
+    // Worse than a trap: this one ANSWERS 40,321 characters and leaves the
+    // worker to fail the call after it.
+    "desolve(y'=y, y(0)=10^(8)!, x, y)",
+    "desolve([y'=z, z'=-y, y(0)=10^(9)!, z(0)=0], x)",
+    "desolve([y'=10^(9)!*z, z'=-y], x)",
+  ])('refuses the bracketed exponent-of-a-factorial %s', async (problem) => {
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/an exponent this cannot bound/);
+    expect(text(r)).not.toMatch(/memory access|worker exited|RuntimeError|table index/);
+    const after = await computeHandler({ problem: "desolve(y'=y, y(0)=2, x, y)" });
+    expect(after.isError, text(after)).toBe(false);
+    expect(text(after)).toMatch(/^Result: 2\*exp\(x\)$/m);
+  });
+
+  // Reading the sign, which the `!` lookahead needed, made the magnitude clause
+  // miss a signed literal: `/^\d+$/` does not match `+50000`, and the nested
+  // check skips whatever reads as a plain signed integer. `10^+50000` fell
+  // between the two and killed the worker with "table index is out of bounds".
+  // `[`-delimited exponents were never recognised at all.
+  it.each([
+    ["desolve(y'=y, y(0)=10^+50000, x, y)", /an exponent of \+50000/],
+    ["desolve(y'=y, y(0)=10^-50000, x, y)", /an exponent of -50000/],
+    ["desolve(y'=y, y(0)=10^[50000], x, y)", /an exponent of 50000/],
+  ])('refuses %s, whose exponent used to read as empty', async (problem, reason) => {
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(reason);
+    expect(text(r)).not.toMatch(/memory access|worker exited|RuntimeError|table index/);
+    const after = await computeHandler({ problem: "desolve(y'=y, y(0)=2, x, y)" });
+    expect(after.isError, text(after)).toBe(false);
+  });
+
+  // And the ordinary signed exponents the clause above must not take with it.
+  it.each([
+    ["desolve(y'=y, y(0)=10^-9, x, y)", /^Result: 1\/1000000000\*exp\(x\)$/m],
+    ["desolve(y'=y, y(0)=10^\\+9, x, y)", /^Result: 1000000000\*exp\(x\)$/m],
+    ["desolve(y'=y, y(0)=2^\\(3\\+4\\), x, y)", /^Result: 128\*exp\(x\)$/m],
+    ["desolve(y'=y, y(0)=1\\/2^10, x, y)", /^Result: 1\/1024\*exp\(x\)$/m],
+  ])('still answers %s', async (problem, expected) => {
+    const r = await computeHandler({ problem: problem.replaceAll('\\', '') });
+    expect(r.isError, text(r)).toBe(false);
+    expect(text(r)).toMatch(expected);
+  });
+
+  // The single-equation path's twin of the joined-conditions check, through the
+  // same function. Each condition here is inside the per-condition bound; ten of
+  // them denote 29,980 digits in the one command the fold builds.
+  it('bounds the single-equation path’s conditions together as well', async () => {
+    const conditions = Array.from({ length: 10 }, (_, i) => `y(${i})=1142!`).join(', ');
+    const r = await computeHandler({ problem: `desolve(y'=y, ${conditions}, x, y)` });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/initial conditions of implausible magnitude together/);
+    expect(text(r)).toMatch(/factorials denoting 29980 digits together/);
+    const alone = await computeHandler({ problem: "desolve(y'=y, y(0)=1142!, x, y)" });
+    expect(alone.isError, text(alone)).toBe(false);
   });
 });

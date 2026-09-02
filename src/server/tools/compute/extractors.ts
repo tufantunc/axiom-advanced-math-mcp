@@ -4,6 +4,7 @@ import {
   differentiatedFunction,
   isDerivativeEquation,
   conditionBoundError,
+  conditionsTogetherError,
   odeMemberConditions,
 } from '../ode-system-shape.js';
 import { coerceTestData } from '../hypothesis-testing.js';
@@ -601,13 +602,34 @@ export function extractOde(problem: string): RouteResult {
     //
     // The equation is argument ZERO, so this outranks anything found in `rest`
     // and keeps the caller's own order.
-    const memberRefusal = isSystem
-      ? undefined
-      : odeMemberConditions(trimmedEquation)
-          .map((member) => conditionBoundError(member))
-          .find((reason) => reason !== undefined);
+    const memberConditions = isSystem ? [] : odeMemberConditions(trimmedEquation);
+    const memberRefusal = memberConditions
+      .map((member) => conditionBoundError(member))
+      .find((reason) => reason !== undefined);
+    // And the conditions TOGETHER, which is the same headroom argument
+    // validateSystemShape makes about the text it joins: conditionBoundError is
+    // per condition, so a member list can carry any number of them each inside
+    // the bound and denote their sum in one command. Nothing here caps the
+    // count the way MAX_SYSTEM_EQUATIONS caps a system's, so the admitted total
+    // is bounded only by MAX_EXPRESSION_LENGTH — `desolve([y'=y, y(0)=1142!
+    // ×40], x, y)` is 501 characters and denotes 119,920 digits against a lowest
+    // measured kill of 27,753.
+    //
+    // Measured, that does NOT trap today: both the identical-condition and the
+    // distinct-point forms answer with the worker alive, because desolve
+    // short-circuits before evaluating every member. This is here for the same
+    // reason its twin is, and through the SAME function, so the two paths cannot
+    // drift into different rules. Its docblock carries the arithmetic and the
+    // measurement.
+    //
+    // Over every condition the fold will include, members and trailing
+    // arguments alike, because they all reach the one command.
+    const allConditions = [...memberConditions, ...conditions];
+    const togetherRefusal = isSystem ? undefined : conditionsTogetherError(allConditions);
     const refusalReason =
-      memberRefusal ?? (refused.length > 0 ? effectiveRoles[refused[0]].reason : undefined);
+      memberRefusal ??
+      (refused.length > 0 ? effectiveRoles[refused[0]].reason : undefined) ??
+      togetherRefusal;
 
     // Two shapes, because the equation has two and only one of them survives an
     // ` and ` suffix.

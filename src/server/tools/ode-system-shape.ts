@@ -594,33 +594,9 @@ export function validateSystemShape(
     if (unbounded !== undefined) return { error: unbounded };
   }
 
-  // And once more over the JOINED text, because that is the shape ode-system.ts
-  // actually sends: its conditions scan builds `[${conditions.join(',')}]` and
-  // evaluates it twice. conditionBoundError is per condition, so nine of them at
-  // the ceiling denote 9 × 3,000 = 27,000 digits in one command, against a
-  // lowest measured kill of 27,753 — a factor of 1.03 where the per-condition
-  // bound claims nine.
-  //
-  // Measured, that worst case does NOT trap today: `exact([v0(0)=1142!, …,
-  // v8(0)=1142!])` at 26,982 digits answers in 129ms with the worker alive. This
-  // is here because the cliff moves with the command and the worker's heap
-  // state, which is the same reason the per-condition bound is not set just
-  // under it — a 3% margin on a moving cliff is not a bound.
-  //
-  // Only the magnitude axis, not length or depth: the joined text is longer than
-  // any single condition by construction, so MAX_CONDITION_CHARS cannot be
-  // applied to it, and ode-system.ts has MAX_PROBE_CHARS and MAX_COMMAND_CHARS
-  // for the finished command's length.
-  if (system.conditions.length > 1) {
-    const together = implausibleMagnitude(`[${system.conditions.join(',')}]`);
-    if (together !== undefined) {
-      return {
-        error:
-          `gives initial conditions of implausible magnitude together (${together}) — ` +
-          'initial conditions are ordinary numbers',
-      };
-    }
-  }
+  // And once more over the conditions TOGETHER — see conditionsTogetherError.
+  const together = conditionsTogetherError(system.conditions);
+  if (together !== undefined) return { error: together };
 
   if (parsedConditions.length === 0) return { functions, rhss };
   const read = readConditions(parsedConditions, functions);
@@ -699,6 +675,44 @@ export function conditionBoundError(condition: string): string | undefined {
 }
 
 /**
+ * The magnitude bound on a group of conditions taken TOGETHER, or undefined.
+ *
+ * conditionBoundError is per condition, and a per-condition bound is not a
+ * per-command one. Both paths join their conditions into a single command:
+ * ode-system.ts's conditions scan builds `[${conditions.join(',')}]` and
+ * evaluates it twice, and the single-equation path folds every condition into
+ * one `desolve`. So nine conditions at the ceiling denote 9 × 3,000 = 27,000
+ * digits in one call, against a lowest measured kill of 27,753 — a factor of
+ * 1.03 where MAX_FACTORIAL_DIGITS claims nine.
+ *
+ * Measured, neither worst case traps today. `exact([v0(0)=1142!, …, v8(0)=1142!])`
+ * at 26,982 digits answers in 129ms with the worker alive, and the
+ * single-equation form with forty conditions answers because desolve
+ * short-circuits before evaluating every member. This exists because the cliff
+ * MOVES with the command and the worker's heap state — a 3% margin, or one that
+ * holds only because of a short-circuit, is not a bound — and because one
+ * function is the only way the two paths cannot drift into different rules.
+ *
+ * Only the magnitude axis, not length or depth: the joined text is longer and
+ * deeper than any single condition by construction, so MAX_CONDITION_CHARS and
+ * MAX_CONDITION_DEPTH cannot be applied to it. Length is ode-system.ts's
+ * MAX_PROBE_CHARS and MAX_COMMAND_CHARS for a system, and compute/schema.ts's
+ * MAX_EXPRESSION_LENGTH for the whole problem otherwise.
+ *
+ * Fewer than two conditions is not this function's business — one condition is
+ * conditionBoundError's, and repeating that here would word the same refusal
+ * twice.
+ */
+export function conditionsTogetherError(conditions: string[]): string | undefined {
+  if (conditions.length < 2) return undefined;
+  const together = implausibleMagnitude(`[${conditions.join(',')}]`);
+  return together === undefined
+    ? undefined
+    : `gives initial conditions of implausible magnitude together (${together}) — ` +
+        'initial conditions are ordinary numbers';
+}
+
+/**
  * Describes a number in caller text too large to be meant, or undefined.
  *
  * The SIZE of caller text says nothing about the size of the number it denotes:
@@ -733,31 +747,68 @@ function implausibleMagnitude(text: string): string | undefined {
   // The exponent TOKEN, not the rest of the term. `[^),\\s]+` ran past the end of
   // the exponent, so `x^2+x^3` captured "2+x^3", saw a `^` in it and refused an
   // ordinary polynomial — and the verdict flipped on a space, since `x^2 + x^3`
-  // captured just "2". The bare form is a digit run; the parenthesised form is
+  // captured just "2". The bare form is a signed digit run; the bracketed form is
   // the balanced group, which is what a nested exponent hides inside.
-  for (const power of text.matchAll(/\^\s*(\()?/g)) {
+  //
+  // `[` as well as `(`, because Giac takes either and only one was recognised:
+  // `10^[9]` fell to the bare branch, read an empty exponent, and was admitted.
+  // The sign is read too, for the same reason — `10^+50000` read empty and was
+  // admitted where `10^50000` is refused.
+  //
+  // `after` is tracked rather than re-derived from the exponent's length: for a
+  // bracketed group the exponent text stops inside the brackets, so measuring
+  // from it lands before the closing one and cannot see what follows the group.
+  // That is exactly the bug the `!` clause below had.
+  for (const power of text.matchAll(/\^\s*([([])?/g)) {
     const at = (power.index ?? 0) + power[0].length;
     let exponent: string;
+    let after: number;
     if (power[1] === undefined) {
-      exponent = /^\d*/.exec(text.slice(at))?.[0] ?? '';
+      const sign = /^[+-]?/.exec(text.slice(at))?.[0] ?? '';
+      const run = /^\d*/.exec(text.slice(at + sign.length))?.[0] ?? '';
+      exponent = sign + run;
+      after = at + exponent.length;
     } else {
+      const opener = power[1];
+      const closer = opener === '(' ? ')' : ']';
       let depth = 1;
       let i = at;
       for (; i < text.length && depth > 0; i += 1) {
-        if (text[i] === '(') depth += 1;
-        else if (text[i] === ')') depth -= 1;
+        if (text[i] === opener) depth += 1;
+        else if (text[i] === closer) depth -= 1;
       }
       exponent = text.slice(at, i - 1);
+      after = i;
     }
-    if (/^\d+$/.test(exponent.trim()) && Number(exponent.trim()) > 1_000) {
+    // Signed or not, and by MAGNITUDE, because reading the sign is what made
+    // this clause miss it: `/^\d+$/` does not match `+50000`, and the nested
+    // check below skips anything that reads as a plain signed integer on the
+    // grounds that this clause already handled it. So `10^+50000` fell between
+    // the two and killed the worker with "table index is out of bounds", the
+    // next caller getting "Giac worker exited (code 1)". Before the sign was
+    // read at all it was admitted for a different reason — the bare read
+    // returned empty — so this is the same input, refused for the first time.
+    //
+    // The negative side counts too: `10^-50000` is an exact rational with a
+    // 50,001-digit denominator, which is the same work as the positive one.
+    const signed = /^\s*([+-]?)(\d+)\s*$/.exec(exponent);
+    if (signed && Number(signed[2]) > 1_000) {
       return `an exponent of ${exponent.trim()}`;
     }
-    // The digit run is the whole exponent only if nothing binds tighter after
-    // it, and `!` does. `10^9!` is `10^(9!)` — 10 characters denoting 362,881
-    // digits — and neither bound saw it: this one read the exponent as the run
-    // `9` and stopped, while the factorial bound below read the operand as `9`
-    // and charged six digits. Measured, it killed the worker and the next caller
-    // got "Giac worker exited (code 1)".
+    // What was read is the whole exponent only if nothing binds tighter after
+    // it, and `!` does — measured, it binds through a bracket too: `2^(3)!` is
+    // 64, not 2^3 followed by a stray operator. `10^9!` is `10^(9!)`, ten
+    // characters denoting 362,881 digits, and neither bound saw it: this one
+    // read the exponent as the run `9` and stopped, while the factorial bound
+    // below read the operand as `9` and charged six digits. Measured, it killed
+    // the worker and the next caller got "Giac worker exited (code 1)".
+    //
+    // Checked past `after` for EVERY form, which is the correction: gating this
+    // on the bare form left `10^(9)!`, `10^((9))!`, `10^[9]!`, `10^(9) !`,
+    // `10^+9!` and `3^(9)!` admitted and killing the worker through all three
+    // bounded channels, while the clause below only ever saw a `!` written
+    // INSIDE the group. `10^(8)!` is worse than a trap: it answers 40,321
+    // characters and leaves the worker to fail the call after it.
     //
     // Refused rather than evaluated, which is this function's standing rule for
     // an exponent it cannot read, and the right rule here because the hazard is
@@ -769,7 +820,7 @@ function implausibleMagnitude(text: string): string | undefined {
     // The measured cost is `2^3!` — 2^6 — and `10^(20!)`, which answered before
     // this clause. An exponent written as a factorial is not ordinary-number
     // input, and these are the only shapes it takes away.
-    if (power[1] === undefined && /^\s*!/.test(text.slice(at + exponent.length))) {
+    if (/^\s*!/.test(text.slice(after))) {
       return `an exponent this cannot bound (${`${exponent}!`.slice(0, 20)})`;
     }
     // A NESTED exponent, which reading a digit run cannot bound: `10^(10^5)` was
@@ -778,7 +829,7 @@ function implausibleMagnitude(text: string): string | undefined {
     // an earlier version of this comment wrongly claimed was already caught.
     // `!` too, and for the same reason one step along: `10^(9!)` is 362,881
     // digits with no run over 1,000 in it.
-    if (/[\^+\-!]/.test(exponent) && !/^\s*-?\d+\s*$/.test(exponent)) {
+    if (/[\^+\-!]/.test(exponent) && !/^\s*[+-]?\d+\s*$/.test(exponent)) {
       const digits = exponent.match(/\d+/g) ?? [];
       if (
         exponent.includes('^') ||
