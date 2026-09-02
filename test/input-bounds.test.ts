@@ -878,6 +878,27 @@ describe("an initial condition's cost is bounded, not only its size", () => {
     expect(text(r)).not.toMatch(/zzz/);
   });
 
+  // Two oversized conditions, one inside the equation argument and one beside
+  // it, is the only input where the precedence is observable — that row above
+  // reaches the same message either way, so it does not pin this. Reversing the
+  // two makes the second condition the one reported for a request whose first
+  // one is already out of bounds.
+  it('reports the condition inside the equation before one written after it', async () => {
+    const r = await computeHandler({
+      problem: "desolve([y'=y, y(0)=50000!], y(0)=10^100000, x, y)",
+    });
+    expect(r.isError).toBe(true);
+    expect(text(r)).toMatch(/a factorial of 50000/);
+    expect(text(r)).not.toMatch(/an exponent of 100000/);
+    // And the trailing one is still reported when the equation's own is fine,
+    // so this is an ordering assertion rather than the equation simply winning.
+    const other = await computeHandler({
+      problem: "desolve([y'=y, y(0)=1], y(0)=10^100000, x, y)",
+    });
+    expect(other.isError).toBe(true);
+    expect(text(other)).toMatch(/an exponent of 100000/);
+  });
+
   // The false-refusal side, which is the whole cost of a bound like this. Every
   // one of these answers on ed5917e and must keep answering: ordinary numbers,
   // symbolic endpoints, symbolic values, second-order IVPs, BVPs, both system
