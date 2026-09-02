@@ -93,13 +93,18 @@ const MAX_CONDITION_DEPTH = 100;
  * ode-system.ts, killed the worker there, and reported its own death as a
  * refusal while the next unrelated request came back "the CAS was unavailable".
  *
- * Measured on a FRESH worker, one value per process, in all three shapes this
- * text reaches (`50000!` alone, `exact([y(0)=50000!,z(0)=0])` as the conditions
+ * Measured on a FRESH worker, one value per process, in the two shapes this text
+ * actually reaches — `exact([y(0)=50000!,z(0)=0])` as ode-system.ts's conditions
  * scan sends it, and `desolve((y'=y) and (y(0)=50000!),x,y)` as the
- * single-equation path folds it): `7500!` answers with a 25,823-character result
- * and `8000!` traps. Inside one already-warm worker the cliff moved down — 8000!
- * in the `exact` shape and 9000! in the fold — so it tracks the worker's heap
- * state rather than sitting at a fixed number.
+ * single-equation path folds it. In both, `7500!` answers with a
+ * 25,816-character result and `8000!` traps and kills the worker.
+ *
+ * The cliff is not a constant, which is why the bound is not set just under it.
+ * The same value EVALUATED BARE, with no command around it, still answers at
+ * 8000! (27,753 characters), and inside one already-warm worker the cliff moved
+ * the other way — `exact` died at 8000! and the fold at 9000! in a process that
+ * had already answered several large ones. So it tracks both the command and the
+ * worker's heap state.
  *
  * 1000 therefore keeps a factor of eight below the lowest kill, where
  * MAX_CONDITION_CHARS keeps two: a moving cliff earns more headroom than a fixed
@@ -568,26 +573,27 @@ export function validateSystemShape(
  * prefixes ("cannot solve this system — it …", "cannot solve this equation —
  * it …") read as sentences.
  *
- * All three measurements TRANSFER to the single-equation path — checked in the
- * shape it actually builds, `desolve((y'=y) and (y(0)=…),x,y)`, rather than
- * assumed:
+ * All three bounds were RE-MEASURED on the single-equation path rather than
+ * assumed to carry over, in the shape it actually builds,
+ * `desolve((y'=y) and (y(0)=…),x,y)`. Two of them carry their own weight there
+ * and one does not:
  *
  *   - LENGTH. A flat `y(0)=1*2*2*…` answers at 1,006 characters and traps at
  *     1,406, within nine characters of the `exact([…])` figures the constant was
- *     measured from. The other two flat shapes are more forgiving here than
- *     there (`9/9/9/…` survives to 1,006 where it traps at 606 in `exact`), so
- *     280 is at or below every cliff on both paths.
- *   - MAGNITUDE. Identical: the trap is in evaluating the number, not in the
- *     command around it, and `50000!` and `8000!` behave the same in all three
- *     shapes.
+ *     measured from. The worst flat shape there is more forgiving here — `9/9/9/…`
+ *     survives to 1,006 and traps at 1,206, where it traps at 606 in `exact` — so
+ *     280 is at or below every cliff measured on either path.
+ *   - MAGNITUDE. The same in both: `8000!` traps and `7500!` answers in each, so
+ *     the trap is in evaluating the number rather than in the command around it.
  *   - DEPTH is the one that does NOT carry its own weight here, and saying so is
  *     the point of measuring it. This shape is far more fragile — `sqrt(1+…)` at
  *     depth 100 kills the worker outright, where `exact([…])` refuses it
  *     gracefully — but that condition is 806 characters, so MAX_CONDITION_CHARS
- *     already refuses it. Inside 280 characters nothing reached the cliff:
- *     138 nested grouping parentheses, 46 nested `sqrt(`, and `sqrt(1+…)` at
- *     depth 34 all answer. So on this path the depth check is a parity bound —
- *     kept so the two paths cannot drift into different rules, not because it is
+ *     already refuses it. Nothing reachable INSIDE 280 characters got near a
+ *     cliff: at the bound itself, 137 nested grouping parentheses (280
+ *     characters) and 45 nested `sqrt(` (276) both answer, as does `sqrt(1+…)` at
+ *     depth 34 (278). So on this path the depth check is a parity bound — kept so
+ *     the two paths cannot drift into different rules, not because it is
  *     load-bearing.
  */
 export function conditionBoundError(condition: string): string | undefined {
@@ -713,14 +719,24 @@ function implausibleMagnitude(text: string): string | undefined {
  * NOT a third spelling: measured, `fact(50000)` comes back unevaluated in eleven
  * characters and the worker survives.
  *
- * The postfix operand is read LEFTWARD, and reading only a digit run there is not
- * enough: `(8!)!` is 40320! and traps, with no digit run longer than one
- * character. So a `)` is followed back to its opening bracket and then over any
- * function name in front of it, which is what makes `factorial(9)!` legible as a
- * factorial of 362,880 rather than of 9. Enclosing brackets are then stripped so
- * `(1000)!` reads as the literal it is, while `(2+3)!` stays unreadable and is
- * refused by the caller above — the conservative end, matching how that function
- * already treats an exponent it cannot read.
+ * The postfix operand is read LEFTWARD, and reading only a digit run there is
+ * not enough in either direction. `(8!)!` is 40320! and traps, with no digit run
+ * longer than one character — so a `)` is followed back to its opening bracket
+ * and then over any name in front of it, which is what makes `factorial(9)!`
+ * legible as a factorial of 362,880 rather than of 9. Enclosing brackets are
+ * then stripped so `(1000)!` reads as the literal it is, while `(2+3)!` stays
+ * unreadable and is refused by the caller above — the conservative end, matching
+ * how that function already treats an exponent it cannot read.
+ *
+ * And a whole TOKEN is read, not a digit run, because a run that stops at the
+ * first non-digit is the tail of a longer token as often as it is the token:
+ * `1e5!` was read as a factorial of 5, admitting an argument of 100,000 under a
+ * bound of 1,000, while `k2000!` was read as a factorial of 2,000 and refused a
+ * symbol this promises to leave alone — `y'=z*k2000!` came back as a right-hand
+ * side of implausible magnitude. `.` is a token character for the same reason
+ * (`1.0e4!`). Reading the token and letting the caller classify it is also what
+ * makes the two spellings agree, which they did not: `factorial(1e5)` takes the
+ * whole group and was already refused.
  *
  * A `!` whose operand is another `!` is skipped, deliberately: at the largest
  * inner value MAX_FACTORIAL_ARGUMENT admits, Giac leaves the outer one
@@ -729,7 +745,7 @@ function implausibleMagnitude(text: string): string | undefined {
  */
 function factorialArguments(text: string): string[] {
   const operands: string[] = [];
-  const isIdentifierChar = (c: string): boolean => /[A-Za-z0-9_]/.test(c);
+  const isTokenChar = (c: string): boolean => /[A-Za-z0-9_.]/.test(c);
   for (let i = 0; i < text.length; i += 1) {
     const named = /^factorial\s*\(/.exec(text.slice(i));
     if (named) {
@@ -740,7 +756,14 @@ function factorialArguments(text: string): string[] {
         if (text[j] === '(') depth += 1;
         else if (text[j] === ')') depth -= 1;
       }
-      operands.push(stripEnclosingBrackets(text.slice(from, j - 1)));
+      // `j - 1` is one past the closing bracket only when the group closed.
+      // Unbalanced, the loop runs off the end with depth still positive and that
+      // slice dropped the operand's last character — `factorial(10000` read as
+      // 1000 and passed, which is the unsafe direction for a bound. So take the
+      // whole tail instead: unreadable as a literal, and therefore refused.
+      operands.push(
+        depth === 0 ? stripEnclosingBrackets(text.slice(from, j - 1)) : text.slice(from)
+      );
       i = from - 1;
       continue;
     }
@@ -748,12 +771,6 @@ function factorialArguments(text: string): string[] {
     let end = i - 1;
     while (end >= 0 && /\s/.test(text[end])) end -= 1;
     if (end < 0) continue;
-    if (/\d/.test(text[end])) {
-      let start = end;
-      while (start >= 0 && /\d/.test(text[start])) start -= 1;
-      operands.push(text.slice(start + 1, end + 1));
-      continue;
-    }
     if (text[end] === ')') {
       let depth = 0;
       let start = end;
@@ -767,14 +784,15 @@ function factorialArguments(text: string): string[] {
       // An unbalanced `)` leaves start at -1; take the whole prefix, which is
       // unreadable as a literal and so refused rather than silently ignored.
       let from = start;
-      while (from > 0 && isIdentifierChar(text[from - 1])) from -= 1;
+      while (from > 0 && isTokenChar(text[from - 1])) from -= 1;
       operands.push(stripEnclosingBrackets(text.slice(Math.max(from, 0), end + 1)));
       continue;
     }
-    // An identifier operand: read leftward so `n!` and `factorial(n)` agree.
-    if (isIdentifierChar(text[end])) {
+    // One token — a literal, a symbol, or something that is neither and will be
+    // refused as unreadable. Which of the three it is is the caller's rule.
+    if (isTokenChar(text[end])) {
       let start = end;
-      while (start >= 0 && isIdentifierChar(text[start])) start -= 1;
+      while (start >= 0 && isTokenChar(text[start])) start -= 1;
       operands.push(text.slice(start + 1, end + 1));
     }
     // Anything else — another `!`, or an operator — has no operand to read here.

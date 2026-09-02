@@ -545,7 +545,14 @@ export function extractOde(problem: string): RouteResult {
       // other refusal here and is named in the caller's own argument order; the
       // reason travels with it so the message says what is actually wrong rather
       // than claiming this does not understand the shape, which it does.
-      const unbounded = conditionBoundError(rest[i]);
+      //
+      // Not for a SYSTEM: its trailing conditions are folded into the member
+      // list, and calculus.ts then hands that list to validateSystemShape, which
+      // applies this identical rule before its first engine call and words the
+      // refusal for a system. Bounding them here refused
+      // `desolve([y'=z, z'=-y], y(0)=50000!, z(0)=0, x)` — a system — with the
+      // single-equation wording, "cannot solve this equation".
+      const unbounded = isSystem ? undefined : conditionBoundError(rest[i]);
       return unbounded === undefined ? role : ({ kind: 'unsupported', reason: unbounded } as const);
     });
     const conditions = rest.filter((_, i) => effectiveRoles[i].kind === 'condition');

@@ -810,16 +810,24 @@ describe("an initial condition's cost is bounded, not only its size", () => {
     // hole, and merely reported its own worker death as a refusal.
     ["desolve([y'=z, z'=-y, y(0)=50000!, z(0)=0], x)", /a factorial of 50000/],
   ])('refuses %s before the CAS sees it', async (problem, reason) => {
-    const started = Date.now();
     const r = await computeHandler({ problem });
-    expect(r.isError).toBe(true);
+    expect(r.isError, text(r)).toBe(true);
     expect(text(r)).toMatch(reason);
     expect(text(r)).toMatch(/initial conditions are ordinary numbers/);
     // The refusal must be reached without an engine call at all. A guard that
     // fires after the trap is not a guard — the system path's version of this
-    // refused with a clean message having already killed the worker.
+    // refused with a clean, correct message having already killed the worker.
     expect(text(r)).not.toMatch(/memory access|worker exited|RuntimeError/);
-    expect(Date.now() - started).toBeLessThan(1000);
+    // And the shared worker is still usable afterwards, which is the actual
+    // severity: a trap here recycles the one forked engine every caller shares,
+    // and worker-host.ts's recycle() rejects everything already in flight. On
+    // ed5917e the row above this one killed the worker and THIS assertion is
+    // what a clean refusal buys. Asserted rather than inferred from elapsed
+    // time, which was the first version of this check and is a flake under a
+    // loaded runner.
+    const after = await computeHandler({ problem: "desolve(y'=y, y(0)=2, x, y)" });
+    expect(after.isError, text(after)).toBe(false);
+    expect(text(after)).toMatch(/^Result: 2\*exp\(x\)$/m);
   });
 
   // The two axes this channel already had, now applied to the single-equation
@@ -903,39 +911,109 @@ describe("an initial condition's cost is bounded, not only its size", () => {
   // one of these answers on ed5917e and must keep answering: ordinary numbers,
   // symbolic endpoints, symbolic values, second-order IVPs, BVPs, both system
   // spellings, and factorials small enough to mean something.
+  //
+  // Matched against the Result LINE, this file's convention, and not with
+  // `toContain`: the response also carries a `Command:` line echoing the
+  // caller's own text, so `y(pi)=0` and `y(L)=0` — whose answer is `0` — passed
+  // `toContain('0')` on the echo alone and would have passed on `5*exp(x)` too.
   it.each([
-    ["desolve(y'=y, y(0)=1, x, y)", 'exp(x)'],
-    ["desolve(y'=y, y(2)=3, x, y)", '3/exp(2)*exp(x)'],
-    ["desolve(y'=y, y(pi)=0, x, y)", '0'],
-    ["desolve(y'=y, y(L)=0, x, y)", '0'],
-    ["desolve(y'=y, y(a)=1, x, y)", '1/exp(a)*exp(x)'],
-    ["desolve(y'=y, y(0)=sqrt(2), x, y)", '√2*exp(x)'],
-    ["desolve(y'=y, y(0)=exp(1), x, y)", 'exp(1)*exp(x)'],
-    ["desolve(y'=y, y(0)=1/3, x, y)", '1/3*exp(x)'],
-    ["desolve(y'=y, y(0)=-2, x, y)", '-2*exp(x)'],
-    ["desolve(y'=y, y(0)=2^10, x, y)", '1024*exp(x)'],
-    ["desolve(y''=-y, y(0)=1, y'(0)=0, x, y)", 'cos(x)'],
-    ["desolve(y''=-y, y(0)=0, y(pi/2)=1, x, y)", 'sin(x)'],
-    ["desolve([y'=y, y(0)=1], x, y)", 'exp(x)'],
-    ["desolve(y'=y and y(0)=1, x, y)", 'exp(x)'],
-    ["desolve([y'=z, z'=-y, y(0)=1, z(0)=0], x)", '[[cos(x),-sin(x)]]'],
-    ["desolve([y'=z, z'=-y], y(0)=1, z(0)=0, x)", '[[cos(x),-sin(x)]]'],
+    ["desolve(y'=y, y(0)=1, x, y)", /^Result: exp\(x\)$/m],
+    ["desolve(y'=y, y(2)=3, x, y)", /^Result: 3\/exp\(2\)\*exp\(x\)$/m],
+    ["desolve(y'=y, y(pi)=0, x, y)", /^Result: 0$/m],
+    ["desolve(y'=y, y(L)=0, x, y)", /^Result: 0$/m],
+    ["desolve(y'=y, y(a)=1, x, y)", /^Result: 1\/exp\(a\)\*exp\(x\)$/m],
+    ["desolve(y'=y, y(0)=sqrt(2), x, y)", /^Result: √2\*exp\(x\)$/m],
+    ["desolve(y'=y, y(0)=exp(1), x, y)", /^Result: exp\(1\)\*exp\(x\)$/m],
+    ["desolve(y'=y, y(0)=1/3, x, y)", /^Result: 1\/3\*exp\(x\)$/m],
+    ["desolve(y'=y, y(0)=-2, x, y)", /^Result: -2\*exp\(x\)$/m],
+    ["desolve(y'=y, y(0)=2^10, x, y)", /^Result: 1024\*exp\(x\)$/m],
+    ["desolve(y''=-y, y(0)=1, y'(0)=0, x, y)", /^Result: cos\(x\)$/m],
+    ["desolve(y''=-y, y(0)=0, y(pi/2)=1, x, y)", /^Result: sin\(x\)$/m],
+    ["desolve([y'=y, y(0)=1], x, y)", /^Result: exp\(x\)$/m],
+    ["desolve(y'=y and y(0)=1, x, y)", /^Result: exp\(x\)$/m],
+    ["desolve([y'=z, z'=-y, y(0)=1, z(0)=0], x)", /^Result: \[\[cos\(x\),-sin\(x\)\]\]$/m],
+    ["desolve([y'=z, z'=-y], y(0)=1, z(0)=0, x)", /^Result: \[\[cos\(x\),-sin\(x\)\]\]$/m],
     // A factorial is not itself suspicious. The bound is on its argument, and
     // 1000! — a 2,568-digit number — is the largest one this admits.
-    ["desolve(y'=y, y(0)=5!, x, y)", '120*exp(x)'],
-    ["desolve(y'=y, y(0)=20!, x, y)", '2432902008176640000*exp(x)'],
+    ["desolve(y'=y, y(0)=5!, x, y)", /^Result: 120\*exp\(x\)$/m],
+    ["desolve(y'=y, y(0)=20!, x, y)", /^Result: 2432902008176640000\*exp\(x\)$/m],
     // A bare symbol denotes no literal, and Giac leaves it unevaluated, so it is
     // left alone rather than refused — and `factorial(n)` must agree with it,
     // since giving one operator two verdicts by spelling is this area's
     // most-repeated defect.
-    ["desolve(y'=y, y(0)=n!, x, y)", 'n!*exp(x)'],
-    ["desolve(y'=y, y(0)=factorial(n), x, y)", 'n!*exp(x)'],
+    ["desolve(y'=y, y(0)=n!, x, y)", /^Result: n!\*exp\(x\)$/m],
+    ["desolve(y'=y, y(0)=factorial(n), x, y)", /^Result: n!\*exp\(x\)$/m],
+    // A symbol whose NAME ENDS IN DIGITS is still a symbol. Reading a digit run
+    // leftward instead of a whole token refused these — `k2000!` as a factorial
+    // of 2,000 — and a one-character `n` is the only symbol shape that never
+    // exercises that read.
+    ["desolve(y'=y, y(0)=k2000!, x, y)", /^Result: k2000!\*exp\(x\)$/m],
+    ["desolve(y'=y, y(0)=y_2000!, x, y)", /^Result: y_2000!\*exp\(x\)$/m],
+    ["desolve(y'=y, y(0)=n50000!, x, y)", /^Result: n50000!\*exp\(x\)$/m],
     // A parenthesised operand still reads as the literal it is.
-    ["desolve(y'=y, y(0)=(20)!, x, y)", '2432902008176640000*exp(x)'],
-  ])('still answers %s', async (problem, answer) => {
+    ["desolve(y'=y, y(0)=(20)!, x, y)", /^Result: 2432902008176640000\*exp\(x\)$/m],
+    // A digit run that is a whole token, next to punctuation rather than to
+    // more of a token.
+    ["desolve(y'=y, y(0)=1/2!, x, y)", /^Result: 1\/2\*exp\(x\)$/m],
+  ])('still answers %s', async (problem, expected) => {
     const r = await computeHandler({ problem });
-    expect(r.isError).toBe(false);
-    expect(text(r)).toContain(answer);
+    expect(r.isError, text(r)).toBe(false);
+    expect(text(r)).toMatch(expected);
+  });
+
+  // implausibleMagnitude is applied to every system equation's RIGHT-HAND SIDE
+  // too, not only to conditions, so a symbol ending in digits had to survive
+  // there as well: `y'=z*k2000!` was refused as a right-hand side of implausible
+  // magnitude.
+  it('does not refuse a symbol ending in digits on a system right-hand side', async () => {
+    const r = await computeHandler({ problem: "desolve([y'=z*k2000!, z'=-y], x)" });
+    expect(r.isError, text(r)).toBe(false);
+    expect(text(r)).toContain('k2000!');
+  });
+
+  // A digit run that is only the TAIL of a token is not the operand. Reading it
+  // as one admitted an argument of 100,000 under a bound of 1,000, and made the
+  // two spellings disagree — `factorial(1e5)` takes the whole group and was
+  // already refused.
+  it.each([
+    ["desolve(y'=y, y(0)=1e5!, x, y)", /a factorial this cannot bound \(1e5\)/],
+    ["desolve(y'=y, y(0)=1.0e4!, x, y)", /a factorial this cannot bound \(1\.0e4\)/],
+    ["desolve(y'=y, y(0)=0x10!, x, y)", /a factorial this cannot bound \(0x10\)/],
+    ["desolve(y'=y, y(0)=factorial(1e5), x, y)", /a factorial this cannot bound \(1e5\)/],
+  ])('refuses %s rather than reading the tail of the token', async (problem, reason) => {
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(reason);
+  });
+
+  // A system's trailing conditions are folded into its member list and
+  // re-checked by validateSystemShape, so the refusal must carry the SYSTEM
+  // wording. Bounding them in the extractor instead called a system an equation.
+  it('words a system refusal as a system whichever side the condition is on', async () => {
+    const inList = await computeHandler({
+      problem: "desolve([y'=z, z'=-y, y(0)=50000!, z(0)=0], x)",
+    });
+    const beside = await computeHandler({
+      problem: "desolve([y'=z, z'=-y], y(0)=50000!, z(0)=0, x)",
+    });
+    for (const r of [inList, beside]) {
+      expect(r.isError, text(r)).toBe(true);
+      expect(text(r)).toMatch(/^Error: solve_ode cannot solve this system — it gives /m);
+      expect(text(r)).toMatch(/a factorial of 50000/);
+      expect(text(r)).not.toMatch(/memory access|worker exited|RuntimeError/);
+    }
+  });
+
+  // An unbalanced named call must widen the refusal, not the bound: taking the
+  // slice one short of the end read `factorial(10000` as 1000 and passed it,
+  // which is the unsafe direction for a guard.
+  it.each([
+    "desolve([y'=y, y(0)=factorial(10000], x, y)",
+    "desolve([y'=y, y(0)=factorial(1001], x, y)",
+  ])('refuses the unbalanced %s', async (problem) => {
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/a factorial this cannot bound/);
   });
 
   it('still answers the largest factorial the bound admits', async () => {
