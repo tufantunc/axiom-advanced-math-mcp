@@ -235,9 +235,9 @@ async function checkForcingTerm(
   // meant. The sum guard was therefore never computed, and
   // `(x+1)^50/(x-1)^12` — total 62, minimum 12, outside neither cap as
   // measured — trapped the engine fatally and killed the worker.
-  const degrees =
-    `[max(${constantEntries.map((c) => `${numerator(c)}+${denominator(c)}`).join(',')}),` +
-    `max(${constantEntries.map((c) => `has(denom(${c}),${variable})`).join(',')})]`;
+  const degreeSums = constantEntries.map((c) => `${numerator(c)}+${denominator(c)}`).join(',');
+  const denomChecks = constantEntries.map((c) => `has(denom(${c}),${variable})`).join(',');
+  const degrees = `[max(${degreeSums}),max(${denomChecks})]`;
   let reply: string;
   try {
     reply = (await evaluate(degrees)).trim();
@@ -494,10 +494,12 @@ export async function translateOdeSystem(
   // under a trig identity, which it reports as non-constant.
   const vec = `[${functions.join(',')}]`;
   const zeroAll = `[${functions.map((f) => `${f}=0`).join(',')}]`;
-  const probe =
-    `[[${rhss.map((r) => `normal(grad(${r},${vec}))`).join(',')}],` +
-    `subst([${rhss.join(',')}],${zeroAll}),` +
-    `[${rhss.map((r) => `normal(${r}-(grad(${r},${vec})*${vec})-subst(${r},${zeroAll}))`).join(',')}]]`;
+  const gradients = rhss.map((r) => `normal(grad(${r},${vec}))`).join(',');
+  const substituted = `subst([${rhss.join(',')}],${zeroAll})`;
+  const composed = rhss
+    .map((r) => `normal(${r}-(grad(${r},${vec})*${vec})-subst(${r},${zeroAll}))`)
+    .join(',');
+  const probe = `[[${gradients}],${substituted},[${composed}]]`;
   // The equation cap bounds the count; this bounds the SIZE, which is what the
   // engine actually chokes on — the probe grows as (equations x right-hand-side
   // length), so a few very long equations reach the same place many short ones

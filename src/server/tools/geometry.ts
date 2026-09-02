@@ -87,12 +87,10 @@ export async function geometryHandler(args: Record<string, unknown>) {
           area += xi * yj - xj * yi;
         }
         area = Math.abs(area) / 2;
+        const vertexList = points.map(([x, y]) => `(${x},${y})`).join(', ');
         return formatToolResponse({
           result: formatNumber(area),
-          notes: [
-            `Polygon with ${n} vertices (shoelace formula)`,
-            `Vertices: ${points.map(([x, y]) => `(${x},${y})`).join(', ')}`,
-          ],
+          notes: [`Polygon with ${n} vertices (shoelace formula)`, `Vertices: ${vertexList}`],
         });
       }
 

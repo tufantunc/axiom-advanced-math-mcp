@@ -26,9 +26,10 @@ export async function operatorHandler(args: Record<string, unknown>) {
         // Giac's built-in jacobian() returns unevaluated in this WASM build.
         // Build the Jacobian matrix explicitly from diff(): each row i is the
         // gradient of functions[i] with respect to each variable.
-        const rows = functions.map(
-          (fn) => `[${variables.map((v) => `diff(${fn},${v})`).join(',')}]`
-        );
+        const rows = functions.map((fn) => {
+          const derivatives = variables.map((v) => `diff(${fn},${v})`).join(',');
+          return `[${derivatives}]`;
+        });
         giacExpr = `[${rows.join(',')}]`;
       } else {
         giacExpr = `${operation}(${vec},${varList})`;
