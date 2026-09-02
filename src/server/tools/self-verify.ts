@@ -264,7 +264,12 @@ export async function verifyOdeSystem(
 }
 
 /**
- * Whether a join begins at `i`, with the boundary rule each FORM needs.
+ * The LENGTH of the join beginning at `i`, or undefined if none does.
+ *
+ * A length rather than a boolean because three callers need it: the cut and the
+ * backstop only ask whether a join is there, but the clause splitter has to step
+ * OVER it, and a splitter with its own idea of how long `and` is would be a
+ * fourth spelling prediction in a file that has already paid for three.
  *
  * The word form needs a boundary before it, or `and` matches inside `command`. An
  * operator does not, and requiring one is what made this miss the spelling `&&`
@@ -273,8 +278,9 @@ export async function verifyOdeSystem(
  * isError:false. One space was the whole difference, and every `&&` test row had
  * one.
  *
- * Shared by the cut and the backstop so they cannot disagree about what a join
- * LOOKS like. They still disagree about what to DO with one, which is the point.
+ * Shared by the cut, the backstop and the splitter so they cannot disagree about
+ * what a join LOOKS like. They still disagree about what to DO with one, which is
+ * the point.
  *
  * The history is worth keeping because each version was a spelling prediction and
  * each was wrong: splitTopLevel takes a single CHARACTER and silently split on
@@ -284,10 +290,15 @@ export async function verifyOdeSystem(
  * demanded of the operators too. What ended it is not this function — it is
  * isOneBareEquation, which asks nothing about spelling.
  */
+function joinAt(text: string, i: number, operators: RegExp, word: RegExp): number | undefined {
+  const asOperator = operators.exec(text.slice(i));
+  if (asOperator) return asOperator[0].length;
+  if (/[A-Za-z0-9_]/.test(text[i - 1] ?? ' ')) return undefined;
+  return word.exec(text.slice(i))?.[0].length;
+}
+
 function startsAt(text: string, i: number, operators: RegExp, word: RegExp): boolean {
-  if (operators.test(text.slice(i))) return true;
-  if (/[A-Za-z0-9_]/.test(text[i - 1] ?? ' ')) return false;
-  return word.test(text.slice(i));
+  return joinAt(text, i, operators, word) !== undefined;
 }
 
 /**
@@ -311,6 +322,8 @@ const CONJUNCTION_WORD = /^and(?![A-Za-z0-9_])/i;
 const JOIN_OPERATOR = /^(?:&&|\|\||\u2227|\u2228)/;
 const JOIN_WORD = /^(?:and|or)(?![A-Za-z0-9_])/i;
 
+const conjunctionAt = (text: string, i: number): number | undefined =>
+  joinAt(text, i, CONJUNCTION_OPERATOR, CONJUNCTION_WORD);
 const startsConjunction = (text: string, i: number): boolean =>
   startsAt(text, i, CONJUNCTION_OPERATOR, CONJUNCTION_WORD);
 const startsJoin = (text: string, i: number): boolean =>
@@ -364,6 +377,147 @@ function isOneBareEquation(text: string): boolean {
 }
 
 /**
+ * Every clause of an IVP as written, flattened: the equation, then the conditions.
+ *
+ * Both spellings, and nested inside one another. A conjunction is Giac's own IVP
+ * spelling and the one the extractor's fold uses — `(y'=y) and (y(0)=1)` — while a
+ * member list carries its conditions as further members, `[y'=y, y(0)=1]`. A
+ * caller who writes conditions into the equation AND passes more of them as
+ * arguments gets one nested in the other, `(y'=y and y(0)=1) and (y(1)=2)`, whose
+ * top-level split alone stops at `(y'=y and y(0)=1)`. So every part is stripped of
+ * its brackets and split again.
+ *
+ * The recursion terminates because a part is re-split only when a separator was
+ * actually found, which makes every recursive argument a strict substring of the
+ * text above it.
+ *
+ * `or` is deliberately NOT a separator, for the same reason it is not a
+ * conjunction above: its terms are alternatives, not a list of things that all
+ * hold. So `y(0)=1 or y(0)=2` survives whole into one clause, matches no condition
+ * shape, and is declined by readCondition rather than being read as two claims.
+ */
+function odeClauses(text: string): string[] {
+  const t = stripEnclosingBrackets(text.trim()).trim();
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < t.length; i++) {
+    const ch = t[i];
+    if (ch === '(' || ch === '[' || ch === '{') depth++;
+    else if (ch === ')' || ch === ']' || ch === '}') depth--;
+    else if (depth === 0) {
+      const width = ch === ',' ? 1 : conjunctionAt(t, i);
+      if (width !== undefined) {
+        parts.push(t.slice(start, i));
+        start = i + width;
+        i = start - 1;
+      }
+    }
+  }
+  if (parts.length === 0) return [t];
+  parts.push(t.slice(start));
+  return parts.flatMap((part) => odeClauses(part));
+}
+
+/** Escapes a caller-supplied name for embedding in a RegExp source. */
+function escapeForRegExp(name: string): string {
+  return name.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+}
+
+/** A condition split into its derivative order, its point and its value. */
+interface OdeCondition {
+  order: number;
+  point: string;
+  value: string;
+}
+
+/**
+ * One initial or boundary condition, read as an order, a point and a value.
+ *
+ * Deliberately narrower than the extractor's SINGLE_ODE_CONDITION, which decides
+ * what to FOLD. Being narrower here can only cost a verification mark, while being
+ * wider would mean substituting into something whose meaning was guessed — and a
+ * guessed substitution is how this file's earlier rounds manufactured residuals.
+ * So the point may not contain a bracket, and neither part may carry a comparison
+ * character: `y(0)=1==1` is a proposition rather than a value, and subtracting a
+ * truth value from a function is not the claim the caller made.
+ *
+ * A point or value that mentions the independent variable is refused too. Giac
+ * reads such an argument as a second EQUATION rather than a condition — `y(x)=5`,
+ * `y(0)=x^2` — and the residual check above is what settles those; evaluating
+ * `subst(answer, x=x)` here would be a substitution that means nothing.
+ *
+ * Derivative conditions are read, not dropped: `y'(0)=0` is order 1 and `y''(0)=6`
+ * is order 2. A spelling outside this shape — `diff(y(x),x)(0)=0`, which Giac
+ * itself drops — returns undefined and costs the mark, which is the intended
+ * outcome for a condition nobody can confirm was applied.
+ */
+function readCondition(
+  clause: string,
+  functionName: string,
+  variable: string
+): OdeCondition | undefined {
+  const shape = new RegExp(
+    `^${escapeForRegExp(functionName)}('*)\\s*\\(\\s*([^(),]*?)\\s*\\)\\s*=\\s*(.+)$`
+  );
+  const parsed = shape.exec(clause.trim());
+  if (!parsed) return undefined;
+  const [, primes, point, value] = parsed;
+  if (point.length === 0) return undefined;
+  if (/[=<>!]/.test(point) || /[=<>!]/.test(value)) return undefined;
+  const mentionsVariable = new RegExp(`\\b${escapeForRegExp(variable)}\\b`);
+  if (mentionsVariable.test(point) || mentionsVariable.test(value)) return undefined;
+  return { order: primes.length, point, value };
+}
+
+/**
+ * Bound on the engine work this check adds: one round-trip per condition, each
+ * embedding the answer once more. Eight is an eighth-order IVP, past anything
+ * desolve answers here, and above it the whole check declines rather than
+ * certifying a prefix — checking some of the conditions and marking the answer ✓
+ * is the exact failure this check exists to remove.
+ */
+const MAX_VERIFIABLE_CONDITIONS = 8;
+
+/**
+ * True only where EVERY clause is a condition that provably holds.
+ *
+ * False means "not proven", never "disproved", and the caller must not turn it
+ * into a failure. There is no sound disproof available here. A correct answer to
+ * `desolve(y'=y, y(0.1)=1e10, x, y)` is `9048374180.36*exp(x)`, whose condition
+ * residual is 3.7e-4 — four orders ABOVE the 1e-6 the equation's disproof uses, and
+ * only 3.7e-14 relative — so an absolute threshold would refuse it and a relative
+ * one is the scoring approach verifyOdeSystem already records as unable to
+ * separate a correct answer from a wrong one. A residual is also no evidence when
+ * it still carries a `c_1`: an under-determined answer is legitimate — `desolve(y''=-y,
+ * y(0)=1, x, y)` correctly answers `cos(x)+c_1*sin(x)` — and the family may contain
+ * a member that satisfies the condition even where the arbitrary one does not.
+ *
+ * So this only ever withholds the mark, which is verifyOdeSystem's rule for the
+ * same question and the reason it cannot cost a correct answer anything but a ✓.
+ */
+async function everyConditionHolds(
+  clauses: string[],
+  functionName: string,
+  variable: string,
+  answer: string,
+  evaluate: (expr: string) => Promise<string>
+): Promise<boolean> {
+  if (clauses.length > MAX_VERIFIABLE_CONDITIONS) return false;
+  for (const clause of clauses) {
+    const condition = readCondition(clause, functionName, variable);
+    if (condition === undefined) return false;
+    const { order, point, value } = condition;
+    // Differentiated first, then evaluated at the point — `y'(0)=0` is a claim
+    // about the derivative AT 0, not about the derivative of a constant.
+    const at = order === 0 ? `(${answer})` : `diff(${answer},${variable},${order})`;
+    const residual = await evaluate(`normal(subst(${at},${variable}=(${point}))-(${value}))`);
+    if (!allZero(residual.trim())) return false;
+  }
+  return true;
+}
+
+/**
  * Substitutes a candidate solution into a SINGLE ODE and reports whether it
  * satisfies it.
  *
@@ -379,22 +533,41 @@ function isOneBareEquation(text: string): boolean {
  *
  * Verdicts follow verifyOdeSystem's rules exactly, and for its reasons:
  *
- *   - ✓ only where the residual is exactly zero. `normal` is not a zero test, so
- *     a nonzero print is not yet evidence.
- *   - ✗ only where a nonzero residual survives numeric evaluation AND carries no
- *     branch marker. The numeric stage separates a dropped term (O(1)) from the
- *     `exp(ln(2)/3)-2^(1/3)` spelling artifact (~1e-15); it does NOT separate a
- *     wrong answer from a correct one probed outside its domain, which is what
- *     `abs(`/`sign(` marks and why that is declined before the probe runs.
+ *   - ✓ only where the residual is exactly zero AND every condition the caller
+ *     wrote provably holds. An IVP asks a strictly stronger question than its
+ *     equation does, and the mark has to mean the whole of it — verifyOdeSystem
+ *     records an answer that returned y(0) = 1984 where the caller asked for 1.5
+ *     and earned an honest ✓ for the half that was checked. `normal` is not a zero
+ *     test, so a nonzero print is not yet evidence.
+ *   - ✗ only where a nonzero residual OF THE EQUATION survives numeric evaluation
+ *     AND carries no branch marker. The numeric stage separates a dropped term
+ *     (O(1)) from the `exp(ln(2)/3)-2^(1/3)` spelling artifact (~1e-15); it does
+ *     NOT separate a wrong answer from a correct one probed outside its domain,
+ *     which is what `abs(`/`sign(` marks and why that is declined before the probe
+ *     runs. A condition NEVER produces a ✗ — see everyConditionHolds for why no
+ *     sound disproof is available there. So an answer that misses a condition
+ *     ships, unmarked; it is the certificate that is withdrawn, not the answer.
  *   - no verdict otherwise, including when the answer is too large to hand back
  *     to the engine. "I did not check" is not evidence against an answer.
+ *
+ * `conditionSource` is the command the extractor BUILT — `args.equation`, which is
+ * `(y'=y) and (y(0)=1)` where the caller wrote `desolve(y'=y, y(0)=1, x, y)` —
+ * while `equation` stays the caller's own text, `args.original_equation`. Two
+ * arguments rather than one because they answer different questions and only one
+ * of them may be trusted for each: the residual must be checked against what the
+ * caller WROTE, so that a fold which mangled the equation could not be verified
+ * against its own mangling, whereas the conditions exist only in the built
+ * command. Conditions written into the equation are in both, and taking them from
+ * the built command picks up those as well, since the fold embeds the caller's
+ * equation verbatim. The two are cross-checked below rather than assumed to agree.
  */
 export async function verifyOdeSolution(
   equation: string,
   functionName: string,
   variable: string,
   result: string,
-  evaluate: (expr: string) => Promise<string>
+  evaluate: (expr: string) => Promise<string>,
+  conditionSource?: string
 ): Promise<VerificationResult | undefined> {
   const method = 'substitution';
   const raw = result.trim();
@@ -418,9 +591,10 @@ export async function verifyOdeSolution(
   // verifier that can invent a disproof is worse than no verifier.
   //
   // The first top-level member is the equation; conditions follow it in both
-  // spellings. Conditions are not checked here, which is a real gap — an answer
-  // can satisfy the ODE and miss the condition — and it is the system path's
-  // verifyOdeSystem that covers that for its own shape.
+  // spellings. They are cut off HERE and checked separately at the end, against
+  // odeClauses of the built command — substituting an answer into a condition and
+  // into an equation are different operations, and the round that conflated them
+  // produced `(exp(x))(0)=1`.
   const firstMember = splitTopLevel(stripEnclosingBrackets(equation.trim()), ',')[0] ?? '';
   const equationOnly = stripEnclosingBrackets(beforeTopLevelConjunction(firstMember).trim()).trim();
   // The cut is a spelling prediction and has now been wrong twice, so what follows
@@ -455,8 +629,8 @@ export async function verifyOdeSolution(
     };
   }
 
-  const fn = functionName.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
-  const v = variable.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+  const fn = escapeForRegExp(functionName);
+  const v = escapeForRegExp(variable);
   const sub = `(${answer})`;
   // Longest spelling first, so `diff(y(x),x,2)` is not eaten by the `y(x)` rule.
   // The same three spellings derivativeTarget reads, and the prime rule is anchored
@@ -508,7 +682,30 @@ export async function verifyOdeSolution(
   try {
     const residual = (await evaluate(`normal(${toZeroForm(substituted)})`)).trim();
     if (isPrintedZero(residual) || allZero(residual)) {
-      return { verified: true, method, detail: `substitutes back into ${equationOnly} exactly` };
+      // The equation is only half of an IVP. Everything above proves the answer
+      // solves `equationOnly`; these are the caller's conditions, and without them
+      // `2*exp(x)` was marked ✓ for `desolve(y'=y, y(0)=1, x, y)` — a genuine
+      // solution of a DIFFERENT initial-value problem, exactly the failure
+      // verifyOdeSystem's condition block was added to stop on the system path.
+      const clauses = odeClauses(conditionSource ?? equation);
+      // The cross-check, not an assumption. `conditionSource` is a second text
+      // and this is the one thing that has to be true of it: its first clause is
+      // the caller's equation, because the fold embeds that verbatim and only
+      // appends. Where the two disagree, the clauses after the first are not
+      // known to be this equation's conditions, so nothing is claimed about them.
+      if (clauses[0] !== equationOnly) return undefined;
+      const conditions = clauses.slice(1);
+      if (!(await everyConditionHolds(conditions, functionName, variable, answer, evaluate))) {
+        return undefined;
+      }
+      return {
+        verified: true,
+        method,
+        detail:
+          conditions.length === 0
+            ? `substitutes back into ${equationOnly} exactly`
+            : `substitutes back into ${equationOnly} exactly and meets the conditions`,
+      };
     }
     // Kept as a second net: the engine can introduce the name itself, e.g. as
     // `(function_diff(y))(x)`, where nothing was left unsubstituted going in.

@@ -357,6 +357,31 @@ export async function calculusHandler(args: Record<string, unknown>) {
       // The argument guard stays in front of it for the arguments it does cover:
       // no round-trip, and it can name the offending argument, which a residual
       // cannot.
+      //
+      // The CONDITIONS reach it as a second argument, from `args.equation` — the
+      // command this handler was given to run, `(y'=y) and (y(0)=1)` where the
+      // caller wrote `desolve(y'=y, y(0)=1, x, y)`. Neither text alone carries
+      // both halves: `original_equation` is deliberately the caller's own words,
+      // so the residual cannot be checked against a fold that mangled the
+      // equation, and the conditions the fold added exist only in the built
+      // command. Handing over both, rather than re-deriving the conditions here,
+      // is the same choice the system path makes with `system.condition`: two
+      // independent computations over one string can disagree, and this handler
+      // already paid for that once by re-parsing the caller's argument to recover
+      // a boolean.
+      //
+      // What that changes HERE is nothing, and the reason is worth stating so the
+      // next reader does not go looking for the effect. This path reads only
+      // `verified === false`, and a missed condition never produces one — see
+      // everyConditionHolds for why no sound disproof of a condition is available
+      // — so the answer ships exactly as before. Unlike the system path, this one
+      // does not hand a `verify` callback to evalWithLatex either, so there is no
+      // `Verified:` line for a withheld mark to disappear from. What the argument
+      // buys is that the ✓ this function returns can no longer mean "solves the
+      // equation, conditions unexamined": the next consumer of that value gets a
+      // certificate for the whole IVP or none. Displaying it is the open
+      // follow-up, and it needs its own guard work, because with `verify` wired in
+      // the check would run before the `[]` and `infinity` guards below.
       const original = args.original_equation;
       if (typeof original === 'string' && original.length > 0) {
         const verdict = await verifyOdeSolution(
@@ -364,7 +389,8 @@ export async function calculusHandler(args: Record<string, unknown>) {
           (args.function_name as string) ?? 'y',
           (args.variable as string) ?? 'x',
           resultText,
-          (expr) => giacEngine.evaluate(expr).then((r) => String(r))
+          (expr) => giacEngine.evaluate(expr).then((r) => String(r)),
+          args.equation as string
         );
         if (verdict?.verified === false) {
           return formatErrorResponse(`solve_ode cannot solve this equation — ${verdict.detail}`);
