@@ -96,7 +96,7 @@ describe('combinatorics', () => {
     it('B(4) = 15', async () => {
       const result = await combinatoricsHandler({ operation: 'bell_number', n: 4 });
       expect(result.isError).toBe(false);
-      expect(result.content[0].text).toContain('15');
+      expect(result.content[0].text).toBe('Result: 15');
     });
 
     it('B(10) = 115975', async () => {

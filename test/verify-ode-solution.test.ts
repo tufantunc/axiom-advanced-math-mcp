@@ -89,6 +89,15 @@ describe('verifyOdeSolution', () => {
     expect(out).toMatchObject({ verified: true });
   });
 
+  it('checks conditions inside an unspaced group', async () => {
+    // The separator and the opening bracket sit on adjacent characters: the
+    // clause scanner must examine the char right after each separator or the
+    // group's depth is never entered and a comma inside splits at top level.
+    // Pins the skip-direction off-by-one the loop rewrite could regress.
+    const out = await verifyOdeSolution("y'=y&&(y(0)=1,y(1)=exp(1))", 'y', 'x', 'exp(x)', evaluate);
+    expect(out).toMatchObject({ verified: true });
+  });
+
   it.each([
     ['[y’=y, y(0)=1]'.replace('’', "'"), 'exp(x)'],
     ["y'=y, y(0)=1", 'exp(x)'],
