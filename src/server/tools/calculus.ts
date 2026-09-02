@@ -380,8 +380,10 @@ export async function calculusHandler(args: Record<string, unknown>) {
       // buys is that the ✓ this function returns can no longer mean "solves the
       // equation, conditions unexamined": the next consumer of that value gets a
       // certificate for the whole IVP or none. Displaying it is the open
-      // follow-up, and it needs its own guard work, because with `verify` wired in
-      // the check would run before the `[]` and `infinity` guards below.
+      // follow-up, and it needs its own guard work: a `verify` callback runs inside
+      // the evalWithLatex call near the top of this handler, which is before the
+      // `[]`, `GIAC_ERROR` and `infinity` guards at the head of this block — and
+      // those are what turn an unsolvable IVP into a clean refusal today.
       const original = args.original_equation;
       if (typeof original === 'string' && original.length > 0) {
         const verdict = await verifyOdeSolution(

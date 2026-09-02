@@ -213,6 +213,17 @@ describe('verifyOdeSolution', () => {
     // is not the equation, so without flattening through the brackets this correct
     // answer loses its mark instead of earning it.
     ["y'=y and y(0)=1", 'exp(x)', "(y'=y and y(0)=1) and (y(1)=exp(1))"],
+    // `&&&`, which the engine accepts as a conjunction. The cut only had to know
+    // WHERE a join starts and behaved the same on `&&` and `&&&`; the splitter has
+    // to step over it, and a two-character reading left a stray `&` heading the
+    // next clause, which matched no condition and cost this correct answer its mark.
+    ["y'=y", 'exp(x)', "(y'=y)&&&(y(0)=1)"],
+    // `normal` is not a zero test. It leaves `exp(ln(2)/3)-2^(1/3)` standing — the
+    // artifact this file already records for the equation's residual — so this
+    // correct answer lost its mark for a condition it satisfies exactly. The
+    // fallback asks `simplify`, which is a stronger simplification and not a
+    // smaller number, so the mark is still only given where it is proven.
+    ["y'=y", 'exp(ln(2)/3)*exp(x)', "(y'=y) and (y(0)=2^(1/3))"],
   ])(
     'verifies %s satisfied by %s together with the conditions in %s',
     async (equation, answer, conditionSource) => {
@@ -286,6 +297,17 @@ describe('verifyOdeSolution', () => {
     // satisfy, so without the guard it is read as a condition, holds, and the mark
     // comes back saying the conditions were met — about a clause that is not one.
     ["y'=y", 'exp(x)', "(y'=y) and (y(x)=exp(x))"],
+    // A bracketed point. The character class excluded only parentheses and commas
+    // at first, so `y([0])=1` parsed, `subst(exp(x),x=([0]))` was evaluated, and the
+    // answer was certified against the point `[0]` — a reading that happened to
+    // agree with Giac's and need not have.
+    ["y'=y", 'exp(x)', "(y'=y) and (y([0])=1)"],
+    // A disjunction as the VALUE. `y(0)=1 or y(0)=2` was declined only because its
+    // second disjunct carries an `=`; parenthesise it and the `=` goes away, Giac
+    // evaluates `1 or 2` to 1, and the mark came back saying the conditions were
+    // met about a clause whose value is a boolean.
+    ["y'=y", 'exp(x)', "(y'=y) and (y(0)=(1 or 2))"],
+    ["y'=y", 'exp(x)', "(y'=y) and (y(0)=(2 && 1))"],
     // The cross-check between the two texts. `conditionSource` is trusted for the
     // conditions only on the strength of its first clause being the caller's own
     // equation; where it is not, the rest of it is not known to be this equation's

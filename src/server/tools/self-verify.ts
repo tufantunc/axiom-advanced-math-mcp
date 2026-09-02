@@ -316,8 +316,16 @@ function startsAt(text: string, i: number, operators: RegExp, word: RegExp): boo
  * `or` is deliberately NOT here. It is a disjunction, so the first term is not
  * "the equation" — refuting an answer to the second branch would be wrong — and
  * Giac refuses `or` inside desolve anyway. It is declined below instead of cut.
+ *
+ * `&&+` rather than `&&`, and the difference is the WIDTH rather than the where.
+ * The cut and the backstop only ask whether a join starts at a position, so `&&`
+ * was enough for them and `&&&` behaved identically. odeClauses steps OVER the
+ * match, so a two-character reading of `&&&` left a stray `&` at the head of the
+ * next clause, which matched no condition and cost a correct answer its mark — on
+ * a spelling this docblock has recorded the engine accepting since the round that
+ * added `\u2227`.
  */
-const CONJUNCTION_OPERATOR = /^(?:&&|\u2227)/;
+const CONJUNCTION_OPERATOR = /^(?:&&+|\u2227)/;
 const CONJUNCTION_WORD = /^and(?![A-Za-z0-9_])/i;
 const JOIN_OPERATOR = /^(?:&&|\|\||\u2227|\u2228)/;
 const JOIN_WORD = /^(?:and|or)(?![A-Za-z0-9_])/i;
@@ -424,6 +432,15 @@ function escapeForRegExp(name: string): string {
   return name.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 }
 
+/**
+ * A comparison or a boolean, in either spelling the engine accepts.
+ *
+ * Word-bounded for `and`/`or` so an identifier whose NAME contains one — `or_1`,
+ * `random_or_not` — is still a value; `_` is a word character, so those do not
+ * match. Case-insensitive because the engine's own word form is.
+ */
+const NOT_A_VALUE = /[=<>!&|]|\u2227|\u2228|\b(?:and|or)\b/i;
+
 /** A condition split into its derivative order, its point and its value. */
 interface OdeCondition {
   order: number;
@@ -438,9 +455,17 @@ interface OdeCondition {
  * what to FOLD. Being narrower here can only cost a verification mark, while being
  * wider would mean substituting into something whose meaning was guessed — and a
  * guessed substitution is how this file's earlier rounds manufactured residuals.
- * So the point may not contain a bracket, and neither part may carry a comparison
- * character: `y(0)=1==1` is a proposition rather than a value, and subtracting a
- * truth value from a function is not the claim the caller made.
+ *
+ * So the point is a single bracket-free argument, and NEITHER part may carry a
+ * boolean or a comparison. Both halves of that earned themselves. The point's
+ * character class excluded only `(`, `)` and `,` at first, which let `y([0])=1`
+ * through and certified an answer against the point `[0]`; the class now excludes
+ * every bracket, as this sentence always claimed it did. And the value rule was a
+ * bare `/[=<>!]/`, which declined `y(0)=1 or y(0)=2` only because the second
+ * disjunct happens to carry an `=`: `y(0)=(1 or 2)` walked past it, Giac evaluated
+ * `1 or 2` to 1, and the mark came back saying the conditions were met — about a
+ * clause whose value is a disjunction. A boolean is not a value, so both spellings
+ * of one are refused rather than handed to the engine to interpret.
  *
  * A point or value that mentions the independent variable is refused too. Giac
  * reads such an argument as a second EQUATION rather than a condition — `y(x)=5`,
@@ -458,24 +483,25 @@ function readCondition(
   variable: string
 ): OdeCondition | undefined {
   const shape = new RegExp(
-    `^${escapeForRegExp(functionName)}('*)\\s*\\(\\s*([^(),]*?)\\s*\\)\\s*=\\s*(.+)$`
+    `^${escapeForRegExp(functionName)}('*)\\s*\\(\\s*([^(){}\\[\\],]*?)\\s*\\)\\s*=\\s*(.+)$`
   );
   const parsed = shape.exec(clause.trim());
   if (!parsed) return undefined;
   const [, primes, point, value] = parsed;
   if (point.length === 0) return undefined;
-  if (/[=<>!]/.test(point) || /[=<>!]/.test(value)) return undefined;
+  if (NOT_A_VALUE.test(point) || NOT_A_VALUE.test(value)) return undefined;
   const mentionsVariable = new RegExp(`\\b${escapeForRegExp(variable)}\\b`);
   if (mentionsVariable.test(point) || mentionsVariable.test(value)) return undefined;
   return { order: primes.length, point, value };
 }
 
 /**
- * Bound on the engine work this check adds: one round-trip per condition, each
- * embedding the answer once more. Eight is an eighth-order IVP, past anything
- * desolve answers here, and above it the whole check declines rather than
- * certifying a prefix — checking some of the conditions and marking the answer ✓
- * is the exact failure this check exists to remove.
+ * Bound on the engine work this check adds: one round-trip per condition, or two
+ * where `normal` leaves a residual standing, each embedding the answer once more.
+ * Eight is an eighth-order IVP, past anything desolve answers here, and above it
+ * the whole check declines rather than certifying a prefix — checking some of the
+ * conditions and marking the answer ✓ is the exact failure this check exists to
+ * remove.
  */
 const MAX_VERIFIABLE_CONDITIONS = 8;
 
@@ -495,6 +521,18 @@ const MAX_VERIFIABLE_CONDITIONS = 8;
  *
  * So this only ever withholds the mark, which is verifyOdeSystem's rule for the
  * same question and the reason it cannot cost a correct answer anything but a ✓.
+ *
+ * What withholding COSTS, measured, because the docblock above justifies the rule
+ * with an extreme case and the loss lands on ordinary ones. Over 513 requests
+ * through computeHandler, 435 answers used to carry the mark; as committed 358 keep
+ * it and 77 do not, and only ONE of those 77 is the 1e10 case above. The rest are
+ * 58 float-rounding residuals below 1e-6 — `desolve(y'=y, y(0.5)=2, x, y)` leaves
+ * 7.8e-12, and whether a float cancels exactly is a coin flip — and 18 residuals
+ * that are not numeric at all (an `erf`, an `i`, a surviving `c_1`). A further 16
+ * were lost before the `simplify` fallback below was added and are now inside the
+ * 358. The remaining 77 are the price of "✓ only where proven", they are invisible
+ * while nothing displays this mark, and the follow-up that displays it is signing
+ * up for them.
  */
 async function everyConditionHolds(
   clauses: string[],
@@ -511,8 +549,26 @@ async function everyConditionHolds(
     // Differentiated first, then evaluated at the point — `y'(0)=0` is a claim
     // about the derivative AT 0, not about the derivative of a constant.
     const at = order === 0 ? `(${answer})` : `diff(${answer},${variable},${order})`;
-    const residual = await evaluate(`normal(subst(${at},${variable}=(${point}))-(${value}))`);
-    if (!allZero(residual.trim())) return false;
+    const zeroForm = `subst(${at},${variable}=(${point}))-(${value})`;
+    const residual = await evaluate(`normal(${zeroForm})`);
+    if (allZero(residual.trim())) continue;
+    // `normal` is not a zero test, and here that is the difference between a mark
+    // and no mark rather than between an accusation and none. It leaves
+    // `exp(ln(2)/3)-2^(1/3)` standing — the artifact this file already records for
+    // the equation's residual — so a correct `exp(ln(2)/3)*exp(x)` lost its mark
+    // for `y(0)=2^(1/3)`. `simplify` reduces that to 0, and it recovers 16 of the
+    // 93 answers that lost their mark without it. Still EXACT: the fallback asks
+    // for a stronger simplification, not for a smaller number, so nothing is
+    // certified on numeric evidence. Second call only where the first failed, so
+    // the common case still costs one round-trip per condition.
+    //
+    // `allZero` again rather than a second zero test, so the two stages cannot
+    // disagree about what a printed zero is. Its float arm is unreachable HERE and
+    // that is measured, not assumed: a float anywhere in the answer, the point or
+    // the value collapses the whole residual to a numeric print that `normal`
+    // already reduces, so nothing gets this far printing `0.0`. It is shared for
+    // the sake of one predicate, not because this call needs the float case.
+    if (!allZero((await evaluate(`simplify(${zeroForm})`)).trim())) return false;
   }
   return true;
 }
