@@ -75,7 +75,7 @@ export async function exactValueHandler(args: Record<string, unknown>) {
         }
         return formatToolResponse({
           result: `${num}/${den}`,
-          latex: `${num < 0 ? '-' : ''}\\frac{${Math.abs(num)}}{${den}}`,
+          latex: String.raw`${num < 0 ? '-' : ''}\frac{${Math.abs(num)}}{${den}}`,
           notes: [`GCD = ${g}`, `Simplified: ${fracMatch[1]}/${fracMatch[2]} = ${num}/${den}`],
         });
       }

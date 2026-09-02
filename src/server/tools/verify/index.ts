@@ -327,7 +327,7 @@ function parseClaim(claim: string): ParsedClaim {
   }
 
   // Point-evaluation claim: "EXPR at x=a = b" → identity subst(EXPR, x=a) = b
-  const atMatch = /^(.+?)\s+at\s+([A-Za-z]\w*)\s*=\s*([^=\s,]+)\s*=\s*(.+)$/i.exec(claim);
+  const atMatch = /^(.+?)\s+at\s+([a-z]\w*)\s*=\s*([^=\s,]+)\s*=\s*(.+)$/i.exec(claim);
   if (atMatch) {
     return {
       type: 'identity',

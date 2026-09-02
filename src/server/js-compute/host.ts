@@ -125,11 +125,11 @@ export function createJsComputeHost(opts: JsComputeHostOptions = {}) {
    */
   function armAdmission(id: number): void {
     const p = pending.get(id);
-    if (!p || p.phase !== 'queued') return;
+    if (p?.phase !== 'queued') return;
     if (p.timer) clearTimeout(p.timer);
     p.timer = setTimeout(() => {
       const cur = pending.get(id);
-      if (!cur || cur.phase !== 'queued') return;
+      if (cur?.phase !== 'queued') return;
       if (!childReady() || runningEntry() === undefined) {
         // The worker's own setup, not another caller's computation, so extend
         // rather than blame this one. Two kinds of setup reach here:

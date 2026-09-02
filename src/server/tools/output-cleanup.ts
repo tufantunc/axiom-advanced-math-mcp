@@ -166,7 +166,7 @@ export function giacNumber(raw: string): number | null {
   // function answers only "is the reply a number".
   return Number.isNaN(value) ? null : value;
 }
-const COMPLEX_TERM = new RegExp(`^(.*?)([+-]?(?:${GIAC_NUMBER}\\*?)?)i$`);
+const COMPLEX_TERM = new RegExp(String.raw`^(.*?)([+-]?(?:${GIAC_NUMBER}\*?)?)i$`);
 
 /**
  * Parses one Giac complex literal into its real and imaginary parts.
@@ -201,7 +201,7 @@ export function parseComplexTerm(term: string): { re: number; im: number } {
     coefficient === '' || coefficient === '+' ? 1 : coefficient === '-' ? -1 : Number(coefficient);
   const re = realPart === '' ? 0 : Number(realPart);
   if (!Number.isFinite(re) || !Number.isFinite(im)) {
-    throw new Error(`unparseable complex term: ${term}`);
+    throw new TypeError(`unparseable complex term: ${term}`);
   }
   return { re, im };
 }

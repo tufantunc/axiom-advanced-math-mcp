@@ -425,7 +425,7 @@ export function validateSystemShape(
     };
   }
 
-  const applied = new RegExp(`\\b(${functions.join('|')})\\s*\\(\\s*${variable}\\s*\\)`, 'g');
+  const applied = new RegExp(String.raw`\b(${functions.join('|')})\s*\(\s*${variable}\s*\)`, 'g');
   const rhss = system.equations.map((e) => e.rhs.replace(applied, '$1'));
   // Anything still applied is not this system's unknown at this point — `z(t)`
   // while solving in x, or `z(x-1)`. Rewriting only `f(variable)` left those

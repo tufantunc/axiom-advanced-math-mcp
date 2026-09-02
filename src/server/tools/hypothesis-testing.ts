@@ -74,6 +74,12 @@ async function tPValue(t: number, df: number, alternative: string): Promise<numb
   return 2 * Math.min(cdf, 1 - cdf);
 }
 
+/** The report header `paired_t` must override — see oneSampleT's `report` param. */
+const DEFAULT_ONE_SAMPLE_REPORT: { name: string; parameter: string } = {
+  name: 'One-sample t-test',
+  parameter: 'μ',
+};
+
 async function oneSampleT(
   data: { sample1?: number[]; mu0?: number; significance: number },
   alternative: string,
@@ -83,10 +89,7 @@ async function oneSampleT(
    * as "One-sample t-test / H₀: μ = 0" tells a user who asked for a paired
    * test that a different test ran.
    */
-  report: { name: string; parameter: string } = {
-    name: 'One-sample t-test',
-    parameter: 'μ',
-  }
+  report: { name: string; parameter: string } = DEFAULT_ONE_SAMPLE_REPORT
 ): Promise<string[]> {
   const { sample1, mu0, significance } = data;
   if (!sample1 || sample1.length < 2)
@@ -542,7 +545,7 @@ function checkDataShape(data: Record<string, unknown> | undefined): string | nul
 
   const mu0 = data['mu0'];
   if (mu0 !== undefined && !(typeof mu0 === 'number' && Number.isFinite(mu0))) {
-    return `mu0 must be a finite number, got ${String(mu0)}`;
+    return `mu0 must be a finite number, got ${JSON.stringify(mu0)}`;
   }
   return null;
 }

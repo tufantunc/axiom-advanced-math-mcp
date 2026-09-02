@@ -248,7 +248,7 @@ export async function calculusHandler(args: Record<string, unknown>) {
       const unfinished =
         detectFailure(`Result: ${result}`) !== null ||
         /poly1\[|ilaplace\(/.test(result) ||
-        /(^|[^A-Za-z_0-9])infinity([^A-Za-z_0-9]|$)/.test(result);
+        /(^|\W)infinity(\W|$)/.test(result);
       // Reachable again. This branch was removed when verifyOdeSystem could only
       // say ✓ or nothing; it can now prove failure for an exact system, and a
       // disproved answer must not ship — `[y'=z, z'=-y+sqrt(x)]` was going out as
@@ -304,8 +304,7 @@ export async function calculusHandler(args: Record<string, unknown>) {
       // Only an answer whose every branch is non-finite is no answer.
       const branches = splitTopLevel(stripEnclosingBrackets(resultText), ',');
       const everyBranchInfinite =
-        resultText.length > 0 &&
-        branches.every((b) => /(^|[^A-Za-z_0-9])infinity([^A-Za-z_0-9]|$)/.test(b));
+        resultText.length > 0 && branches.every((b) => /(^|\W)infinity(\W|$)/.test(b));
       const failure =
         detectFailure(`Result: ${resultText}`) ??
         (everyBranchInfinite ? 'non-finite result' : null);
@@ -408,7 +407,7 @@ export async function calculusHandler(args: Record<string, unknown>) {
           (args.function_name as string) ?? 'y',
           (args.variable as string) ?? 'x',
           resultText,
-          (expr) => giacEngine.evaluate(expr).then((r) => String(r)),
+          (expr) => giacEngine.evaluate(expr).then(String),
           args.equation as string
         );
         if (verdict?.verified === false) {

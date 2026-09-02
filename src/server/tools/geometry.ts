@@ -25,10 +25,7 @@ export async function geometryHandler(args: Record<string, unknown>) {
           : `d = hypot(${formatNumber(x2 - x1)}, ${formatNumber(y2 - y1)})`;
         return formatToolResponse({
           result: formatNumber(d),
-          notes: [
-            `Distance between (${x1},${y1}) and (${x2},${y2})`,
-            derivation,
-          ],
+          notes: [`Distance between (${x1},${y1}) and (${x2},${y2})`, derivation],
         });
       }
 
