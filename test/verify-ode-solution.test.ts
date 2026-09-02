@@ -131,6 +131,14 @@ describe('verifyOdeSolution', () => {
   it.each([
     // Nothing to substitute: not this function's equation to judge.
     ['z_1=w_2', 'exp(x)'],
+    // The same domain problem with NO marker to spot it by. `sqrt(1-y^2)` makes the
+    // residual cos(θ)-√(1-sin²θ), which is cos(θ)-|cos(θ)| wearing a square root:
+    // zero while cos θ >= 0, nonzero after. One probe at x=13/10 sits past that
+    // boundary, so this correct answer was refuted — and adding `sqrt` to the marker
+    // list would have gutted the disproof for every equation with a radical in it.
+    // The domain is sampled instead, and a residual that vanishes anywhere on the
+    // sample is an artifact rather than evidence.
+    ["y'=sqrt(1-y^2)", 'sin(x+pi/6)'],
     // A branch solution: the CONSTANT is the domain boundary, so probing at a fixed
     // x with an assigned c_0 asks whether a correct answer holds at a point it never
     // claimed. All six of these were refused — correct answers, all of which main
