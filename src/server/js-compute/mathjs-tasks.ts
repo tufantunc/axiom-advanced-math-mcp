@@ -460,9 +460,7 @@ export const MATHJS_TASKS = {
           allPoints.push(null);
         }
       } catch (e) {
-        if (firstError === undefined) {
-          firstError = e instanceof Error ? e.message : String(e);
-        }
+        firstError ??= e instanceof Error ? e.message : String(e);
         allPoints.push(null);
       }
     }

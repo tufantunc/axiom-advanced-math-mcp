@@ -989,38 +989,34 @@ export function extractGeometry(problem: string): RouteResult {
     // coercion — so parsing `inner` again with a second policy meant one
     // non-JSON element threw and dropped every point, where the shared parser
     // coerces element by element and keeps the rest.
-    {
-      const parsed = callArgs.positional;
-      {
-        if (operation === 'area_circle' || operation === 'circumference') {
-          args['radius'] = parsed[0];
-        } else if (
-          operation === 'area_triangle' &&
-          parsed.length === 2 &&
-          parsed.every((n) => typeof n === 'number')
-        ) {
-          // Two bare numbers for a triangle are base and height, not points.
-          args['base'] = parsed[0];
-          args['height'] = parsed[1];
-        } else if (operation === 'angle_between_lines' || operation === 'line_intersection') {
-          args['line1'] = parsed[0];
-          args['line2'] = parsed[1];
-        } else if (operation === 'point_line_distance') {
-          // The handler reads `points[0]` and `line1`; nothing set `line1`, so
-          // every call reported "requires points[0] and line1". The line comes
-          // either as one [a,b,c] argument or as three bare coefficients —
-          // reading the first spelling only left the second destructuring a
-          // number, which surfaced as the raw "line1 is not iterable".
-          args['points'] = [parsed[0]];
-          args['line1'] = Array.isArray(parsed[1])
-            ? parsed[1]
-            : parsed.slice(1, 4).every((n) => typeof n === 'number')
-              ? parsed.slice(1, 4)
-              : undefined;
-        } else {
-          args['points'] = parsePointList(inner) ?? parsed;
-        }
-      }
+    const parsed = callArgs.positional;
+    if (operation === 'area_circle' || operation === 'circumference') {
+      args['radius'] = parsed[0];
+    } else if (
+      operation === 'area_triangle' &&
+      parsed.length === 2 &&
+      parsed.every((n) => typeof n === 'number')
+    ) {
+      // Two bare numbers for a triangle are base and height, not points.
+      args['base'] = parsed[0];
+      args['height'] = parsed[1];
+    } else if (operation === 'angle_between_lines' || operation === 'line_intersection') {
+      args['line1'] = parsed[0];
+      args['line2'] = parsed[1];
+    } else if (operation === 'point_line_distance') {
+      // The handler reads `points[0]` and `line1`; nothing set `line1`, so
+      // every call reported "requires points[0] and line1". The line comes
+      // either as one [a,b,c] argument or as three bare coefficients —
+      // reading the first spelling only left the second destructuring a
+      // number, which surfaced as the raw "line1 is not iterable".
+      args['points'] = [parsed[0]];
+      args['line1'] = Array.isArray(parsed[1])
+        ? parsed[1]
+        : parsed.slice(1, 4).every((n) => typeof n === 'number')
+          ? parsed.slice(1, 4)
+          : undefined;
+    } else {
+      args['points'] = parsePointList(inner) ?? parsed;
     }
   }
 

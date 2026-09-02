@@ -435,14 +435,14 @@ async function readNumericDomain(
         evaluate(written),
       ]);
       floatInConditions = flat(asExact) !== flat(asWritten);
-    } catch (failure) {
+    } catch (error) {
       // Same classification as the probe's. An outage that lands here is not the
       // caller's conditions being at fault, and a recycle caused by somebody
       // else's request read as a verdict on theirs.
       return {
         error:
           'has initial conditions that could not be examined for decimals, so the ' +
-          `accuracy bound that depends on that could not be applied${engineFailureSuffix(failure)}`,
+          `accuracy bound that depends on that could not be applied${engineFailureSuffix(error)}`,
       };
     }
   }
@@ -531,10 +531,10 @@ export async function translateOdeSystem(
           'faster than the input that produced them',
       };
     }
-  } catch (failure) {
+  } catch (error) {
     // A trap or timeout in the probe is this operation's failure, not a raw
     // engine string for the caller to decipher.
-    return { error: `could not be analysed${engineFailureSuffix(failure)}` };
+    return { error: `could not be analysed${engineFailureSuffix(error)}` };
   }
   if (raw.includes('GIAC_ERROR')) {
     return {

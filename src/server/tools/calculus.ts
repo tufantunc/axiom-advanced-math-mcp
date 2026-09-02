@@ -304,8 +304,7 @@ export async function calculusHandler(args: Record<string, unknown>) {
       // Only an answer whose every branch is non-finite is no answer.
       const branches = splitTopLevel(stripEnclosingBrackets(resultText), ',');
       const everyBranchInfinite =
-        resultText.length > 0 &&
-        branches.every((b) => /(^|\W)infinity(\W|$)/.test(b));
+        resultText.length > 0 && branches.every((b) => /(^|\W)infinity(\W|$)/.test(b));
       const failure =
         detectFailure(`Result: ${resultText}`) ??
         (everyBranchInfinite ? 'non-finite result' : null);
@@ -364,7 +363,7 @@ export async function calculusHandler(args: Record<string, unknown>) {
           (args.function_name as string) ?? 'y',
           (args.variable as string) ?? 'x',
           resultText,
-          (expr) => giacEngine.evaluate(expr).then((r) => String(r))
+          (expr) => giacEngine.evaluate(expr).then(String)
         );
         if (verdict?.verified === false) {
           return formatErrorResponse(`solve_ode cannot solve this equation — ${verdict.detail}`);
