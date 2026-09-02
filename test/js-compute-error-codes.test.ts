@@ -8,12 +8,13 @@ import {
 /**
  * The js-compute failure taxonomy, pinned.
  *
- * `JsComputeErrorCode` shipped with no consumer at all: nothing in `src/` or
- * `test/` read a code, and every existing failure-path test matched the prose
- * instead — some of it deliberately loose (`/memory budget|stopped
- * unexpectedly/`, `/budget|response limit/`), which cannot tell one failure mode
- * from another. So the codes asserted nothing, and the one place that branches on
- * a code (host.ts's `result_too_large` relay) was unguarded.
+ * `JsComputeErrorCode` shipped with no consumer outside its own directory:
+ * nothing in `src/` read a code except js-compute's own relay (host.ts reads
+ * `msg.code`, worker.ts reads `e.code` to put it on the message), and no test read
+ * one at all. Every existing failure-path test matched the prose instead — some of
+ * it deliberately loose (`/memory budget|stopped unexpectedly/`, `/budget|response
+ * limit/`), which cannot tell one failure mode from another. So the codes asserted
+ * nothing, and the one place that branches on a code (that relay) was unguarded.
  *
  * The caller-facing narrowing helper was deleted — the tool boundary is text and
  * cannot carry a code, see errors.ts. These rows exercise the field that stayed:
@@ -41,8 +42,8 @@ import {
  *     A child that dies before its `start` ack leaves `runningEntry()` undefined,
  *     so recycleAndRedispatch has no culprit to settle and requeues instead. Not,
  *     as an earlier version of this comment said, because `handleFault` returned
- *     early — that is true only of the timeout route, where the culprit is
- *     already settled by then.
+ *     early — that happens on the timeout and dispose routes, where the culprit is
+ *     already settled by the time the kill's own `exit` arrives.
  *
  * Only the middle two need an injectable worker, which would change host.ts's
  * production shape to guard a label nothing branches on — so it waits for the day

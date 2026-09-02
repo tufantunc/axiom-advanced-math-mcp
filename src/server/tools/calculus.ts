@@ -357,6 +357,38 @@ export async function calculusHandler(args: Record<string, unknown>) {
       // The argument guard stays in front of it for the arguments it does cover:
       // no round-trip, and it can name the offending argument, which a residual
       // cannot.
+      //
+      // The CONDITIONS reach it as a second argument, from `args.equation` — the
+      // command this handler was given to run, `(y'=y) and (y(0)=1)` where the
+      // caller wrote `desolve(y'=y, y(0)=1, x, y)`. Neither text alone carries
+      // both halves: `original_equation` is deliberately the caller's own words,
+      // so the residual cannot be checked against a fold that mangled the
+      // equation, and the conditions the fold added exist only in the built
+      // command. Handing over both, rather than re-deriving the conditions here,
+      // is the same choice the system path makes with `system.condition`: two
+      // independent computations over one string can disagree, and this handler
+      // already paid for that once by re-parsing the caller's argument to recover
+      // a boolean.
+      //
+      // That last argument is INERT TODAY, and this says so rather than leaving a
+      // reader to discover it. Delete it and no test fails and no caller sees a
+      // difference: this path reads only `verified === false`, a missed condition
+      // never produces one (see everyConditionHolds for why no sound disproof of a
+      // condition is available), and unlike the system path this one hands no
+      // `verify` callback to evalWithLatex, so there is no `Verified:` line for a
+      // withheld mark to disappear from. It is not dead code in the sense of
+      // unreachable — verifyOdeSolution reads it on every solve_ode request, and
+      // removing it makes 16 rows of verify-ode-solution.test.ts fail — but its
+      // effect stops at a return value nothing consumes.
+      //
+      // It ships anyway because it fixes what the ✓ MEANS. Without it that value
+      // can only ever say "solves the equation, conditions unexamined", and the
+      // next consumer of it would inherit exactly the defect this change removes.
+      // Displaying it is the open follow-up, and it needs its own guard work: a
+      // `verify` callback runs inside the evalWithLatex call near the top of this
+      // handler, which is before the `[]`, `GIAC_ERROR` and `infinity` guards at
+      // the head of this block — and those are what turn an unsolvable IVP into a
+      // clean refusal today.
       const original = args.original_equation;
       if (typeof original === 'string' && original.length > 0) {
         const verdict = await verifyOdeSolution(
@@ -364,7 +396,8 @@ export async function calculusHandler(args: Record<string, unknown>) {
           (args.function_name as string) ?? 'y',
           (args.variable as string) ?? 'x',
           resultText,
-          (expr) => giacEngine.evaluate(expr).then((r) => String(r))
+          (expr) => giacEngine.evaluate(expr).then((r) => String(r)),
+          args.equation as string
         );
         if (verdict?.verified === false) {
           return formatErrorResponse(`solve_ode cannot solve this equation — ${verdict.detail}`);
