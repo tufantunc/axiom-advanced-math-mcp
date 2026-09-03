@@ -106,40 +106,18 @@ describe('MCP Server Integration — 3-Tool Architecture', () => {
       expect(text).toContain(result);
     });
 
-    it('definite integral: ∫₀¹ x dx = 1/2', async () => {
+    it.each([
+      ['definite integral ∫₀¹ x dx', 'int(x, x, 0, 1)', '1/2'],
+      ['limit sin(x)/x at 0', 'limit(sin(x)/x, x, 0)', '1'],
+      ['taylor exp(x) around 0', 'taylor(exp(x), x=0, 3)', '1+x+1/2*x^2+1/6*x^3'],
+      ["solve ODE y' = x", "desolve(y'=x, x, y)", '(2*c_0+x^2)/2'],
+    ])('compute %s', async (_label, problem, result) => {
       const res = await client.callTool({
         name: 'compute',
-        arguments: { problem: 'int(x, x, 0, 1)' },
+        arguments: { problem },
       });
       const text = getTextContent(res);
-      expect(text).toContain('1/2');
-    });
-
-    it('limit: lim(sin(x)/x, x→0) = 1', async () => {
-      const res = await client.callTool({
-        name: 'compute',
-        arguments: { problem: 'limit(sin(x)/x, x, 0)' },
-      });
-      const text = getTextContent(res);
-      expect(text).toContain('1');
-    });
-
-    it('taylor: exp(x) around x=0', async () => {
-      const res = await client.callTool({
-        name: 'compute',
-        arguments: { problem: 'taylor(exp(x), x=0, 3)' },
-      });
-      const text = getTextContent(res);
-      expect(text).toContain('x');
-    });
-
-    it("solve ODE: y' = x", async () => {
-      const res = await client.callTool({
-        name: 'compute',
-        arguments: { problem: "desolve(y'=x, x, y)" },
-      });
-      const text = getTextContent(res);
-      expect(text).toContain('x');
+      expect(text).toContain(result);
     });
   });
 
@@ -148,43 +126,18 @@ describe('MCP Server Integration — 3-Tool Architecture', () => {
   // =========================================================================
 
   describe('compute: algebra', () => {
-    it('factor: x^2 - 4 → (x-2)(x+2)', async () => {
+    it.each([
+      ['factor x^2-4', 'factor(x^2-4)', '(x-2)*(x+2)'],
+      ['simplify (x^2-1)/(x-1)', 'simplify((x^2-1)/(x-1))', 'x+1'],
+      ['expand (x+1)^2', 'expand((x+1)^2)', 'x^2+2*x+1'],
+      ['partial fractions 1/(x^2-1)', 'partfrac(1/(x^2-1), x)', '1/2/(x-1)-1/2/(x+1)'],
+    ])('compute %s', async (_label, problem, result) => {
       const res = await client.callTool({
         name: 'compute',
-        arguments: { problem: 'factor(x^2-4)' },
+        arguments: { problem },
       });
       const text = getTextContent(res);
-      expect(text).toContain('x');
-      expect(text).toContain('2');
-    });
-
-    it('simplify: (x^2-1)/(x-1) → x+1', async () => {
-      const res = await client.callTool({
-        name: 'compute',
-        arguments: { problem: 'simplify((x^2-1)/(x-1))' },
-      });
-      const text = getTextContent(res);
-      expect(text).toContain('x');
-      expect(text).toContain('1');
-    });
-
-    it('expand: (x+1)^2 → x^2+2x+1', async () => {
-      const res = await client.callTool({
-        name: 'compute',
-        arguments: { problem: 'expand((x+1)^2)' },
-      });
-      const text = getTextContent(res);
-      expect(text).toContain('x');
-      expect(text).toContain('2');
-    });
-
-    it('partial fractions: 1/(x^2-1)', async () => {
-      const res = await client.callTool({
-        name: 'compute',
-        arguments: { problem: 'partfrac(1/(x^2-1), x)' },
-      });
-      const text = getTextContent(res);
-      expect(text).toContain('x');
+      expect(text).toContain(result);
     });
   });
 
@@ -310,31 +263,18 @@ describe('MCP Server Integration — 3-Tool Architecture', () => {
   // =========================================================================
 
   describe('verify tool', () => {
-    it('should verify identity sin^2+cos^2 = 1', async () => {
+    it.each([
+      ['identity sin^2+cos^2 = 1', 'sin(x)^2 + cos(x)^2 = 1', 'TRUE'],
+      ['solution x=2 satisfies x^2-4=0', 'x=2 satisfies x^2-4=0', 'TRUE'],
+      ['false identity 2+3 = 6', '2+3 = 6', 'FALSE'],
+    ])('should rule on %s', async (_label, claim, verdict) => {
       const res = await client.callTool({
         name: 'verify',
-        arguments: { claim: 'sin(x)^2 + cos(x)^2 = 1' },
+        arguments: { claim },
       });
       const text = getTextContent(res);
-      expect(text).toContain('TRUE');
-    });
-
-    it('should verify solution x=2 satisfies x^2-4=0', async () => {
-      const res = await client.callTool({
-        name: 'verify',
-        arguments: { claim: 'x=2 satisfies x^2-4=0' },
-      });
-      const text = getTextContent(res);
-      expect(text).toContain('TRUE');
-    });
-
-    it('should reject false identity', async () => {
-      const res = await client.callTool({
-        name: 'verify',
-        arguments: { claim: '2+3 = 6' },
-      });
-      const text = getTextContent(res);
-      expect(text).toContain('FALSE');
+      // Full verdict line — every FALSE output also contains the letter T.
+      expect(text).toContain(`Verified: ${verdict}`);
     });
   });
 

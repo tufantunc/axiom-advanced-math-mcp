@@ -54,36 +54,16 @@ describe('Verify Tool', () => {
   });
 
   describe('Solution verification', () => {
-    it('should verify x=2 satisfies x^2-4=0', async () => {
-      const res = await verifyHandler({
-        claim: 'x=2 satisfies x^2-4=0',
-      });
+    it.each([
+      ['x=2 satisfies x^2-4=0', 'TRUE'],
+      ['x=-2 satisfies x^2-4=0', 'TRUE'],
+      ['x=3 satisfies x^2-4=0', 'FALSE'],
+      ['x=1 is a solution of x^3-1=0', 'TRUE'],
+    ])('should rule on %s', async (claim, verdict) => {
+      const res = await verifyHandler({ claim });
       const text = getText(res);
-      expect(text).toContain('TRUE');
-    });
-
-    it('should verify x=-2 satisfies x^2-4=0', async () => {
-      const res = await verifyHandler({
-        claim: 'x=-2 satisfies x^2-4=0',
-      });
-      const text = getText(res);
-      expect(text).toContain('TRUE');
-    });
-
-    it('should reject x=3 satisfies x^2-4=0', async () => {
-      const res = await verifyHandler({
-        claim: 'x=3 satisfies x^2-4=0',
-      });
-      const text = getText(res);
-      expect(text).toContain('FALSE');
-    });
-
-    it('should verify x=1 is a solution of x^3-1=0', async () => {
-      const res = await verifyHandler({
-        claim: 'x=1 is a solution of x^3-1=0',
-      });
-      const text = getText(res);
-      expect(text).toContain('TRUE');
+      // Full verdict line — every FALSE output also contains the letter T.
+      expect(text).toContain(`Verified: ${verdict}`);
     });
   });
 
@@ -122,15 +102,11 @@ describe('Verify Tool', () => {
     // `evaluated` is what separates "checked and refuted" from "never checked".
     // The CLI turns the first into exit 2 and the second into exit 1, so a
     // claim that reported evaluated: true here would be read as a refutation.
-    it('reports evaluated: false for a claim that does not parse', async () => {
-      const res = await verifyHandler({ claim: 'this is not a math claim', format: 'json' });
-      const parsed = JSON.parse(getText(res));
-      expect(parsed.verified).toBe(false);
-      expect(parsed.evaluated).toBe(false);
-    });
-
-    it('reports evaluated: false for a parseable claim Giac cannot evaluate', async () => {
-      const res = await verifyHandler({ claim: 'x + = 1', format: 'json' });
+    it.each([
+      ['a claim that does not parse', 'this is not a math claim'],
+      ['a parseable claim Giac cannot evaluate', 'x + = 1'],
+    ])('reports evaluated: false for %s', async (_label, claim) => {
+      const res = await verifyHandler({ claim, format: 'json' });
       const parsed = JSON.parse(getText(res));
       expect(parsed.verified).toBe(false);
       expect(parsed.evaluated).toBe(false);
