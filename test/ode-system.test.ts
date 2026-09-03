@@ -213,6 +213,46 @@ describe('translateOdeSystem refusals', () => {
     expect('error' in out && out.error).toMatch(/degree in x could not be read/);
   });
 
+  // The probe and degree questions are Giac-executable expressions assembled
+  // from caller text; a stray comma or swapped part changes the mathematics.
+  // The stub-based tests above answer canned strings by prefix, so damage to
+  // the CONSTRUCTION is invisible to them — this suite's own matrix-shape
+  // mutations once passed all 93 stub tests. These pins capture what is
+  // actually sent, byte for byte, so the construction is guarded here too and
+  // not only by the slower real-engine seam file.
+  describe('the probe and degree questions, captured verbatim', () => {
+    const capturing = (reply: string, degree = '[0,0]') => {
+      const base = stub(reply, degree);
+      const seen: string[] = [];
+      return { seen, engine: { evaluate: (expr: string) => { seen.push(expr); return base.evaluate(expr); } } };
+    };
+
+    it('sends the three-part probe exactly as built', async () => {
+      const { seen, engine } = capturing('[[[0,1],[-1,0]],[0,0],[0,0]]');
+      const out = await translateOdeSystem(system("[y'=z, z'=-y]"), 'x', engine);
+      expect('command' in out).toBe(true);
+      expect(seen).toContain(
+        '[[normal(grad(z,[y,z])),normal(grad(-y,[y,z]))],' +
+          'subst([z,-y],[y=0,z=0]),' +
+          '[normal(z-(grad(z,[y,z])*[y,z])-subst(z,[y=0,z=0])),' +
+          'normal(-y-(grad(-y,[y,z])*[y,z])-subst(-y,[y=0,z=0]))]]'
+      );
+    });
+
+    it('asks the degree question sum-first, denominator-second', async () => {
+      // Non-zero constants in the probe reply make the system non-homogeneous,
+      // which is what triggers the degree question at all.
+      const { seen, engine } = capturing('[[[0,1],[-1,0]],[1/2,0],[0,0]]', '[1,0]');
+      const out = await translateOdeSystem(system("[y'=z, z'=-y]"), 'x', engine);
+      expect('command' in out).toBe(true);
+      expect(seen).toContain(
+        '[max(degree(numer(1/2),x)+degree(denom(1/2),x),' +
+          'degree(numer(0),x)+degree(denom(0),x)),' +
+          'max(has(denom(1/2),x),has(denom(0),x))]'
+      );
+    });
+  });
+
   it.each([
     // The matrix normalisation must not make things worse when it fails: an
     // error reply must not become the matrix, and a trap must not escape.
