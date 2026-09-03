@@ -51,9 +51,11 @@ export async function fourierTransformHandler(args: Record<string, unknown>) {
 
       if (outputMagnitude) lines.push(...magLines);
       if (sampleRate) {
-        lines.push('');
-        lines.push(`Frequency resolution: ${freqStep.toFixed(4)} Hz/bin`);
-        lines.push(`Nyquist frequency: ${(sampleRate / 2).toFixed(4)} Hz`);
+        lines.push(
+          '',
+          `Frequency resolution: ${freqStep.toFixed(4)} Hz/bin`,
+          `Nyquist frequency: ${(sampleRate / 2).toFixed(4)} Hz`
+        );
       }
     } else {
       lines.push('Reconstructed time-domain signal:');

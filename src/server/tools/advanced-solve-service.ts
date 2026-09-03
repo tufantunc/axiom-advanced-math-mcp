@@ -50,8 +50,7 @@ export class AdvancedSolveService {
         output.steps.push(`Input: ${expression}`);
         if (simplify !== false && giacExpression !== expression) {
           const rawResult = await giacEngine.evaluate(expression);
-          output.steps.push(`Raw result: ${rawResult}`);
-          output.steps.push(`Simplified: ${result}`);
+          output.steps.push(`Raw result: ${rawResult}`, `Simplified: ${result}`);
         } else {
           output.steps.push(`Result: ${result}`);
         }

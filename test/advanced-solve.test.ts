@@ -31,6 +31,13 @@ describe('AdvancedSolveService', () => {
     await expect(giacEngine.evaluate('diff(x^3,x)')).resolves.toContain('3*x^2');
   });
 
+  it('records the raw and simplified steps in order', async () => {
+    // The steps transcript is an internal surface (no router spelling emits
+    // the flag), but it is this service's own audit trail — order included.
+    const r = await service.evaluate({ expression: '2*x + 3*x', steps: true });
+    expect(r.steps).toEqual(['Input: 2*x + 3*x', 'Raw result: 2*x+3*x', 'Simplified: 5*x']);
+  });
+
   describe('Integration', () => {
     it('should integrate polynomial', async () => {
       const result = await service.evaluate({

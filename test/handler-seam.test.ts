@@ -67,6 +67,11 @@ const CAPABILITIES: [string, RegExp][] = [
   // square, and nothing else in the suite would notice the No branch dying.
   ['analyze(28)', /^Perfect square: No$/m],
   ['analyze(36)', /^Perfect square: Yes \(6²\)$/m],
+  // Asymmetric picks so an argument swap cannot pass either: 28 is triangular
+  // T7 and not Fibonacci; 13 is Fibonacci and not triangular.
+  ['analyze(28)', /^Triangular: Yes \(T7\)$/m],
+  ['analyze(28)', /^Fibonacci: No$/m],
+  ['analyze(13)', /^Fibonacci: Yes$/m],
   // Combinatorics
   ['C(10,3)', /^Result: 120$/m],
   ['multinomial(5, [2,2,1])', /^Result: 30$/m],
