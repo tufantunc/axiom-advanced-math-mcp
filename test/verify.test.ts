@@ -27,7 +27,9 @@ describe('Verify Tool', () => {
     ])('should verify %s', async (_label, claim) => {
       const res = await verifyHandler({ claim });
       const text = getText(res);
-      expect(text).toContain('TRUE');
+      // Full verdict line: every FALSE output also contains the letter T,
+      // so a shorter matcher cannot discriminate (found by mutation).
+      expect(text).toContain('Verified: TRUE');
     });
 
     it('should reject false identity sin(x) = cos(x)', async () => {

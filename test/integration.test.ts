@@ -95,15 +95,15 @@ describe('MCP Server Integration — 3-Tool Architecture', () => {
 
   describe('compute: calculus', () => {
     it.each([
-      ['diff(x^3, x)', ['3', 'x']],
-      ['int(x^2, x)', ['x', '3']],
-    ])('calculus round trip %s', async (problem, needles) => {
+      ['diff(x^3, x)', '3*x^2'],
+      ['int(x^2, x)', 'x^3/3'],
+    ])('calculus round trip %s', async (problem, result) => {
       const res = await client.callTool({
         name: 'compute',
         arguments: { problem },
       });
       const text = getTextContent(res);
-      for (const needle of needles) expect(text).toContain(needle);
+      expect(text).toContain(result);
     });
 
     it('definite integral: ∫₀¹ x dx = 1/2', async () => {
