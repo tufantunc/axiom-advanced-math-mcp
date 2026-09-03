@@ -75,31 +75,17 @@ describe('MCP Server Integration — 3-Tool Architecture', () => {
   // =========================================================================
 
   describe('compute: arithmetic', () => {
-    it('should evaluate 2 + 3', async () => {
+    it.each([
+      ['2 + 3', '5'],
+      ['sin(pi/2)', '1'],
+      ['sqrt(144)', '12'],
+    ])('should evaluate %s', async (problem, expected) => {
       const res = await client.callTool({
         name: 'compute',
-        arguments: { problem: '2 + 3' },
+        arguments: { problem },
       });
       const text = getTextContent(res);
-      expect(text).toContain('5');
-    });
-
-    it('should evaluate sin(pi/2)', async () => {
-      const res = await client.callTool({
-        name: 'compute',
-        arguments: { problem: 'sin(pi/2)' },
-      });
-      const text = getTextContent(res);
-      expect(text).toContain('1');
-    });
-
-    it('should evaluate sqrt(144)', async () => {
-      const res = await client.callTool({
-        name: 'compute',
-        arguments: { problem: 'sqrt(144)' },
-      });
-      const text = getTextContent(res);
-      expect(text).toContain('12');
+      expect(text).toContain(expected);
     });
   });
 
@@ -108,24 +94,16 @@ describe('MCP Server Integration — 3-Tool Architecture', () => {
   // =========================================================================
 
   describe('compute: calculus', () => {
-    it('differentiate: d/dx(x^3) = 3x^2', async () => {
+    it.each([
+      ['diff(x^3, x)', '3*x^2'],
+      ['int(x^2, x)', 'x^3/3'],
+    ])('calculus round trip %s', async (problem, result) => {
       const res = await client.callTool({
         name: 'compute',
-        arguments: { problem: 'diff(x^3, x)' },
+        arguments: { problem },
       });
       const text = getTextContent(res);
-      expect(text).toContain('3');
-      expect(text).toContain('x');
-    });
-
-    it('integrate: ∫x^2 dx = x^3/3', async () => {
-      const res = await client.callTool({
-        name: 'compute',
-        arguments: { problem: 'int(x^2, x)' },
-      });
-      const text = getTextContent(res);
-      expect(text).toContain('x');
-      expect(text).toContain('3');
+      expect(text).toContain(result);
     });
 
     it('definite integral: ∫₀¹ x dx = 1/2', async () => {
