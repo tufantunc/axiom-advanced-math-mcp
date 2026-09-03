@@ -231,12 +231,15 @@ describe('translateOdeSystem refusals', () => {
       const { seen, engine } = capturing('[[[0,1],[-1,0]],[0,0],[0,0]]');
       const out = await translateOdeSystem(system("[y'=z, z'=-y]"), 'x', engine);
       expect('command' in out).toBe(true);
-      expect(seen).toContain(
+      const probe =
         '[[normal(grad(z,[y,z])),normal(grad(-y,[y,z]))],' +
-          'subst([z,-y],[y=0,z=0]),' +
-          '[normal(z-(grad(z,[y,z])*[y,z])-subst(z,[y=0,z=0])),' +
-          'normal(-y-(grad(-y,[y,z])*[y,z])-subst(-y,[y=0,z=0]))]]'
-      );
+        'subst([z,-y],[y=0,z=0]),' +
+        '[normal(z-(grad(z,[y,z])*[y,z])-subst(z,[y=0,z=0])),' +
+        'normal(-y-(grad(-y,[y,z])*[y,z])-subst(-y,[y=0,z=0]))]]';
+      expect(seen).toContain(probe);
+      // Exactly once: a doubled send would double the engine round trips on
+      // the shared worker and no other test counts probe sends.
+      expect(seen.filter((e) => e === probe)).toHaveLength(1);
     });
 
     it('asks the degree question sum-first, denominator-second', async () => {
@@ -245,11 +248,12 @@ describe('translateOdeSystem refusals', () => {
       const { seen, engine } = capturing('[[[0,1],[-1,0]],[1/2,0],[0,0]]', '[1,0]');
       const out = await translateOdeSystem(system("[y'=z, z'=-y]"), 'x', engine);
       expect('command' in out).toBe(true);
-      expect(seen).toContain(
+      const degrees =
         '[max(degree(numer(1/2),x)+degree(denom(1/2),x),' +
-          'degree(numer(0),x)+degree(denom(0),x)),' +
-          'max(has(denom(1/2),x),has(denom(0),x))]'
-      );
+        'degree(numer(0),x)+degree(denom(0),x)),' +
+        'max(has(denom(1/2),x),has(denom(0),x))]';
+      expect(seen).toContain(degrees);
+      expect(seen.filter((e) => e === degrees)).toHaveLength(1);
     });
   });
 
