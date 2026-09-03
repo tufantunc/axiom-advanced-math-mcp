@@ -21,10 +21,11 @@ describe('Verify Tool', () => {
       expect(text).toContain('Verified');
     });
 
-    it('should verify (a+b)^2 = a^2+2ab+b^2', async () => {
-      const res = await verifyHandler({
-        claim: '(a+b)^2 = a^2+2*a*b+b^2',
-      });
+    it.each([
+      ['(a+b)^2 = a^2+2ab+b^2', '(a+b)^2 = a^2+2*a*b+b^2'],
+      ['2+3 = 5', '2+3 = 5'],
+    ])('should verify %s', async (_label, claim) => {
+      const res = await verifyHandler({ claim });
       const text = getText(res);
       expect(text).toContain('TRUE');
     });
@@ -39,14 +40,6 @@ describe('Verify Tool', () => {
       // substitution, with what residual — pin its shape so the failure
       // detail cannot degrade into an unreadable blob.
       expect(text).toMatch(/At x=[-\d.]+: diff = [-\d.e+]+/);
-    });
-
-    it('should verify numeric identity 2+3 = 5', async () => {
-      const res = await verifyHandler({
-        claim: '2+3 = 5',
-      });
-      const text = getText(res);
-      expect(text).toContain('TRUE');
     });
 
     it('should reject numeric identity 2+3 = 6', async () => {

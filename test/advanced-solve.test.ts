@@ -48,26 +48,13 @@ describe('AdvancedSolveService', () => {
       expect(result.latex).toBeDefined();
     });
 
-    it('should integrate sin', async () => {
-      const result = await service.evaluate({
-        expression: 'int(sin(x), x)',
-      });
-      expect(result.result).toBeDefined();
-    });
-
-    it('should integrate cos', async () => {
-      const result = await service.evaluate({
-        expression: 'int(cos(x), x)',
-      });
-      expect(result.result).toBeDefined();
-    });
-
-    it('should integrate exp', async () => {
-      const result = await service.evaluate({
-        expression: 'int(exp(x), x)',
-      });
-      expect(result.result).toBeDefined();
-    });
+    it.each([['int(sin(x), x)'], ['int(cos(x), x)'], ['int(exp(x), x)']])(
+      'should integrate %s',
+      async (expression) => {
+        const result = await service.evaluate({ expression });
+        expect(result.result).toBeDefined();
+      }
+    );
   });
 
   describe('Differentiation', () => {
@@ -79,100 +66,43 @@ describe('AdvancedSolveService', () => {
       expect(result.result).toBeDefined();
     });
 
-    it('should differentiate sin', async () => {
-      const result = await service.evaluate({
-        expression: 'diff(sin(x), x)',
-      });
-      expect(result.result).toBeDefined();
-    });
-
-    it('should differentiate cos', async () => {
-      const result = await service.evaluate({
-        expression: 'diff(cos(x), x)',
-      });
-      expect(result.result).toBeDefined();
-    });
-
-    it('should differentiate exp', async () => {
-      const result = await service.evaluate({
-        expression: 'diff(exp(x), x)',
-      });
-      expect(result.result).toBeDefined();
-    });
-
-    it('should differentiate log', async () => {
-      const result = await service.evaluate({
-        expression: 'diff(log(x), x)',
-      });
-      expect(result.result).toBeDefined();
-    });
+    it.each([['diff(sin(x), x)'], ['diff(cos(x), x)'], ['diff(exp(x), x)'], ['diff(log(x), x)']])(
+      'should differentiate %s',
+      async (expression) => {
+        const result = await service.evaluate({ expression });
+        expect(result.result).toBeDefined();
+      }
+    );
   });
 
   describe('Limits', () => {
-    it('should calculate simple limit', async () => {
-      const result = await service.evaluate({
-        expression: 'limit(x, x, 0)',
-      });
-      expect(result.result).toBeDefined();
-    });
-
-    it('should calculate limit of rational function', async () => {
-      const result = await service.evaluate({
-        expression: 'limit((x^2-1)/(x-1), x, 1)',
-      });
-      expect(result.result).toBeDefined();
-    });
-
-    it('should calculate limit with infinity', async () => {
-      const result = await service.evaluate({
-        expression: 'limit(1/x, x, +infinity)',
-      });
-      expect(result.result).toBeDefined();
-    });
+    it.each([['limit(x, x, 0)'], ['limit((x^2-1)/(x-1), x, 1)'], ['limit(1/x, x, +infinity)']])(
+      'should calculate %s',
+      async (expression) => {
+        const result = await service.evaluate({ expression });
+        expect(result.result).toBeDefined();
+      }
+    );
   });
 
   describe('Equation Solving', () => {
-    it('should solve linear equation', async () => {
-      const result = await service.evaluate({
-        expression: 'solve(2*x + 3 = 7, x)',
-      });
-      expect(result.result).toBeDefined();
-    });
-
-    it('should solve quadratic equation', async () => {
-      const result = await service.evaluate({
-        expression: 'solve(x^2 - 5*x + 6 = 0, x)',
-      });
-      expect(result.result).toBeDefined();
-    });
-
-    it('should solve cubic equation', async () => {
-      const result = await service.evaluate({
-        expression: 'solve(x^3 - 6*x^2 + 11*x - 6 = 0, x)',
-      });
+    it.each([
+      ['linear equation', 'solve(2*x + 3 = 7, x)'],
+      ['quadratic equation', 'solve(x^2 - 5*x + 6 = 0, x)'],
+      ['cubic equation', 'solve(x^3 - 6*x^2 + 11*x - 6 = 0, x)'],
+    ])('should solve %s', async (_label, expression) => {
+      const result = await service.evaluate({ expression });
       expect(result.result).toBeDefined();
     });
   });
 
   describe('Factorization', () => {
-    it('should factor polynomial', async () => {
-      const result = await service.evaluate({
-        expression: 'factor(x^2 - 4)',
-      });
-      expect(result.result).toBeDefined();
-    });
-
-    it('should factor complex polynomial', async () => {
-      const result = await service.evaluate({
-        expression: 'factor(x^3 - x)',
-      });
-      expect(result.result).toBeDefined();
-    });
-
-    it('should factor with cfactor', async () => {
-      const result = await service.evaluate({
-        expression: 'cfactor(x^4 - 16)',
-      });
+    it.each([
+      ['polynomial', 'factor(x^2 - 4)'],
+      ['complex polynomial', 'factor(x^3 - x)'],
+      ['with cfactor', 'cfactor(x^4 - 16)'],
+    ])('should factor %s', async (_label, expression) => {
+      const result = await service.evaluate({ expression });
       expect(result.result).toBeDefined();
     });
   });
@@ -194,26 +124,13 @@ describe('AdvancedSolveService', () => {
   });
 
   describe('Simplification', () => {
-    it('should simplify expression', async () => {
-      const result = await service.evaluate({
-        expression: 'simplify((x^2 - 1)/(x - 1))',
-      });
-      expect(result.result).toBeDefined();
-    });
-
-    it('should simplify trigonometric expression', async () => {
-      const result = await service.evaluate({
-        expression: 'simplify(sin(x)^2 + cos(x)^2)',
-      });
-      expect(result.result).toBeDefined();
-    });
-
-    it('should auto-simplify by default', async () => {
-      const result = await service.evaluate({
-        expression: '2*x + 3*x',
-      });
-      expect(result.result).toBeDefined();
-    });
+    it.each([['simplify((x^2 - 1)/(x - 1))'], ['simplify(sin(x)^2 + cos(x)^2)'], ['2*x + 3*x']])(
+      'should simplify %s',
+      async (expression) => {
+        const result = await service.evaluate({ expression });
+        expect(result.result).toBeDefined();
+      }
+    );
 
     it('should respect simplify = false', async () => {
       const result = await service.evaluate({
