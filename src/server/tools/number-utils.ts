@@ -62,8 +62,7 @@ export async function analyzeNumberCore(n: number): Promise<string[]> {
   const cubeNote = isPerfectCube(absN) ? `Yes (${Math.round(Math.cbrt(absN))}³)` : 'No';
   lines.push(`Perfect cube: ${cubeNote}`);
   const triangularNote = isTriangular(absN) ? `Yes (T${triangularIndex(absN)})` : 'No';
-  lines.push(`Triangular: ${triangularNote}`);
-  lines.push(`Fibonacci: ${isFibonacci(absN) ? 'Yes' : 'No'}`);
+  lines.push(`Triangular: ${triangularNote}`, `Fibonacci: ${isFibonacci(absN) ? 'Yes' : 'No'}`);
 
   return lines;
 }

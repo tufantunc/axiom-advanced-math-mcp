@@ -54,9 +54,12 @@ async function newtonRaphson(
     );
 
     if (Math.abs(fx) < tol) {
-      lines.push(``, `✓ Converged in ${i + 1} iterations.`);
-      lines.push(`Root: ${variable} = ${x}`);
-      lines.push(`f(root) = ${fx.toExponential(6)}`);
+      lines.push(
+        ``,
+        `✓ Converged in ${i + 1} iterations.`,
+        `Root: ${variable} = ${x}`,
+        `f(root) = ${fx.toExponential(6)}`
+      );
       return lines;
     }
     if (Math.abs(fpx) < 1e-15) {
@@ -65,8 +68,7 @@ async function newtonRaphson(
     }
     x = x - fx / fpx;
   }
-  lines.push(``, `✗ Did not converge within ${maxIter} iterations.`);
-  lines.push(`Last x = ${x}`);
+  lines.push(``, `✗ Did not converge within ${maxIter} iterations.`, `Last x = ${x}`);
   return lines;
 }
 
@@ -170,9 +172,12 @@ async function bisection(
     );
 
     if (Math.abs(fmid) < tol || (hi - lo) / 2 < tol) {
-      lines.push(``, `✓ Converged in ${i + 1} iterations.`);
-      lines.push(`Root: ${variable} = ${mid}`);
-      lines.push(`f(root) = ${fmid.toExponential(6)}`);
+      lines.push(
+        ``,
+        `✓ Converged in ${i + 1} iterations.`,
+        `Root: ${variable} = ${mid}`,
+        `f(root) = ${fmid.toExponential(6)}`
+      );
       return lines;
     }
     if (flo * fmid < 0) hi = mid;
@@ -212,9 +217,12 @@ async function secant(
     );
 
     if (Math.abs(fcurr) < tol) {
-      lines.push(``, `✓ Converged in ${i + 1} iterations.`);
-      lines.push(`Root: ${variable} = ${curr}`);
-      lines.push(`f(root) = ${fcurr.toExponential(6)}`);
+      lines.push(
+        ``,
+        `✓ Converged in ${i + 1} iterations.`,
+        `Root: ${variable} = ${curr}`,
+        `f(root) = ${fcurr.toExponential(6)}`
+      );
       return lines;
     }
     const denom = fcurr - fprev;
@@ -292,8 +300,7 @@ async function simpsonIntegration(
   }
   const result = (h / 3) * sum;
 
-  lines.push(`h = (${b} - ${a}) / ${n} = ${h.toExponential(6)}`);
-  lines.push(``, `Result = ${result}`);
+  lines.push(`h = (${b} - ${a}) / ${n} = ${h.toExponential(6)}`, ``, `Result = ${result}`);
   return lines;
 }
 

@@ -21,9 +21,11 @@ export async function identifySequenceCore(terms: number[]): Promise<SequenceIde
   const lines: string[] = [`Sequence: ${terms.join(', ')}`];
 
   if (terms.every((t) => t === terms[0])) {
-    lines.push(`Pattern: Constant sequence`);
-    lines.push(`Formula: a(n) = ${terms[0]}`);
-    lines.push(`Next 3 terms: ${terms[0]}, ${terms[0]}, ${terms[0]}`);
+    lines.push(
+      `Pattern: Constant sequence`,
+      `Formula: a(n) = ${terms[0]}`,
+      `Next 3 terms: ${terms[0]}, ${terms[0]}, ${terms[0]}`
+    );
     return { lines, isError: false };
   }
 
@@ -37,9 +39,11 @@ export async function identifySequenceCore(terms: number[]): Promise<SequenceIde
   for (const recognize of recognizers) {
     const result = recognize();
     if (result) {
-      lines.push(`Pattern: ${result.pattern}`);
-      lines.push(`Formula: ${result.formula}`);
-      lines.push(`Next 3 terms: ${result.nextTerms.join(', ')}`);
+      lines.push(
+        `Pattern: ${result.pattern}`,
+        `Formula: ${result.formula}`,
+        `Next 3 terms: ${result.nextTerms.join(', ')}`
+      );
       return { lines, isError: false };
     }
   }
@@ -50,8 +54,7 @@ export async function identifySequenceCore(terms: number[]): Promise<SequenceIde
     const giacExpr = `interp([${xValues}],[${yValues}],x)`;
     const polyResult = await giacEngine.evaluate(giacExpr);
     if (polyResult && polyResult !== 'undef') {
-      lines.push(`Pattern: Polynomial interpolation`);
-      lines.push(`Formula: a(n) = ${polyResult}`);
+      lines.push(`Pattern: Polynomial interpolation`, `Formula: a(n) = ${polyResult}`);
       const next: string[] = [];
       for (let i = 1; i <= 3; i++) {
         try {

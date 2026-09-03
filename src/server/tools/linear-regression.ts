@@ -81,8 +81,7 @@ function formatModelOutput(
     `  R² = ${r2.toFixed(6)} (${(r2 * 100).toFixed(2)}% variance explained)`,
   ];
   if (mse !== undefined) {
-    lines.push(`  MSE = ${mse.toFixed(6)}`);
-    lines.push(`  RMSE = ${Math.sqrt(mse).toFixed(6)}`);
+    lines.push(`  MSE = ${mse.toFixed(6)}`, `  RMSE = ${Math.sqrt(mse).toFixed(6)}`);
   }
   return lines;
 }
