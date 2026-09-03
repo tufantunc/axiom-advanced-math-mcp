@@ -15,9 +15,13 @@ describe('linear_regression', () => {
         x, y, model: 'linear',
       });
       expect(result.isError).toBe(false);
-      expect(result.content[0].text).toContain('R²');
-      expect(result.content[0].text).toContain('1.000000');
-      expect(result.content[0].text).toContain('Linear');
+      const t = result.content[0].text;
+      expect(t).toContain('R²');
+      expect(t).toContain('1.000000');
+      expect(t).toContain('Linear');
+      // The goodness-of-fit pair, in order — nothing else asserted these
+      // lines (a dropped RMSE survived the whole suite, verified by mutation).
+      expect(t).toMatch(/^  MSE = 0\.000000\n  RMSE = 0\.000000$/m);
     });
 
     it('should compute correct slope and intercept', async () => {
@@ -107,6 +111,9 @@ describe('linear_regression', () => {
       // R² for a real fit is in [0,1]; the laundered coefficients gave -762.
       const r2 = Number(/R² = (-?[\d.]+)/.exec(t)?.[1]);
       expect(r2).toBeGreaterThan(0.9);
+      // The imperfect-fit error pair, pinned by hand: MSE for residuals
+      // [-0.047619, 0.023810, 0.023810] is 0.023810, its root 0.154303.
+      expect(t).toMatch(/^  MSE = 0\.023810\n  RMSE = 0\.154303$/m);
     });
 
     it('still fits an exactly-linear set', async () => {
