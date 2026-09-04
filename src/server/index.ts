@@ -54,35 +54,41 @@ The "plot" tool renders function graphs as SVG images.`,
   registerPrompts(server);
 
   // --- compute: single gateway for ALL math computations ---
-  server.tool(
+  server.registerTool(
     'compute',
-    'Compute an exact answer to a mathematics problem: equation solving, calculus, linear algebra, ' +
-      'combinatorics, probability and statistics, number theory, geometry, differential equations, ' +
-      'transforms and series. Runs a real computer algebra system (Giac/Xcas) in this process — ' +
-      'answers are computed rather than recalled, with no network call and no API key.\n\n' +
-      'Pass one CAS-style problem string; the `problem` parameter lists the verbs. Anything it does ' +
-      'not recognise is evaluated as a raw Giac/Xcas expression, so valid Giac syntax always works.\n\n' +
-      'Results are exact by default — fractions and radicals are kept rather than rounded. Ask for ' +
-      'domain "numeric" or set `precision` when you want a decimal. Where it can, the tool re-checks ' +
-      'its own answer and reports that check alongside the result.\n\n' +
-      'When you already have an answer and want it confirmed, use `verify` instead: recomputing here ' +
-      'and comparing is not an independent check.',
-    computeSchema.shape,
+    {
+      description:
+        'Compute an exact answer to a mathematics problem: equation solving, calculus, linear algebra, ' +
+        'combinatorics, probability and statistics, number theory, geometry, differential equations, ' +
+        'transforms and series. Runs a real computer algebra system (Giac/Xcas) in this process — ' +
+        'answers are computed rather than recalled, with no network call and no API key.\n\n' +
+        'Pass one CAS-style problem string; the `problem` parameter lists the verbs. Anything it does ' +
+        'not recognise is evaluated as a raw Giac/Xcas expression, so valid Giac syntax always works.\n\n' +
+        'Results are exact by default — fractions and radicals are kept rather than rounded. Ask for ' +
+        'domain "numeric" or set `precision` when you want a decimal. Where it can, the tool re-checks ' +
+        'its own answer and reports that check alongside the result.\n\n' +
+        'When you already have an answer and want it confirmed, use `verify` instead: recomputing here ' +
+        'and comparing is not an independent check.',
+      inputSchema: computeSchema.shape,
+    },
     computeTool
   );
 
   // --- verify: independent result verification ---
-  server.tool(
+  server.registerTool(
     'verify',
-    'Independently check whether a mathematical claim is true. Use it to confirm an answer — yours or ' +
-      'one from `compute` — instead of recomputing and hoping the second attempt agrees.\n\n' +
-      'Handles identities ("sin(x)^2+cos(x)^2 = 1"), solution claims ("x=2 satisfies x^2-4=0") and ' +
-      'computation assertions ("diff(x^3, x) = 3*x^2"), checked symbolically, numerically, or both.\n\n' +
-      'The verdict has three outcomes, not two. Read `evaluated` before `verified`: when `evaluated` is ' +
-      'false nothing could be checked — the claim did not parse, or the CAS could not evaluate it — so ' +
-      '`verified: false` there means "unknown", not "disproved". Treating the two as the same turns a ' +
-      'syntax error into a refutation.',
-    verifySchema.shape,
+    {
+      description:
+        'Independently check whether a mathematical claim is true. Use it to confirm an answer — yours or ' +
+        'one from `compute` — instead of recomputing and hoping the second attempt agrees.\n\n' +
+        'Handles identities ("sin(x)^2+cos(x)^2 = 1"), solution claims ("x=2 satisfies x^2-4=0") and ' +
+        'computation assertions ("diff(x^3, x) = 3*x^2"), checked symbolically, numerically, or both.\n\n' +
+        'The verdict has three outcomes, not two. Read `evaluated` before `verified`: when `evaluated` is ' +
+        'false nothing could be checked — the claim did not parse, or the CAS could not evaluate it — so ' +
+        '`verified: false` there means "unknown", not "disproved". Treating the two as the same turns a ' +
+        'syntax error into a refutation.',
+      inputSchema: verifySchema.shape,
+    },
     verifyTool
   );
 
