@@ -25,6 +25,11 @@ function getTextContent(res: Awaited<ReturnType<typeof client.callTool>>): strin
     .join('\n');
 }
 
+/** Matches a whole `Result: …` line, regex-escaping the needle — a substring
+ *  match passes on wrong answers that happen to contain the digits. */
+const resultLine = (s: string): RegExp =>
+  new RegExp(`Result: ${s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\n`);
+
 describe('MCP Server Integration — 3-Tool Architecture', () => {
   // =========================================================================
   // Tool & Prompt Discovery
@@ -103,7 +108,7 @@ describe('MCP Server Integration — 3-Tool Architecture', () => {
         arguments: { problem },
       });
       const text = getTextContent(res);
-      expect(text).toContain(result);
+      expect(text).toMatch(resultLine(result));
     });
 
     it.each([
@@ -117,7 +122,10 @@ describe('MCP Server Integration — 3-Tool Architecture', () => {
         arguments: { problem },
       });
       const text = getTextContent(res);
-      expect(text).toContain(result);
+      // Anchored to the whole Result line: a bare toContain passed a wrong
+      // limit whose decimal happened to contain the digit, and cannot see a
+      // right-truncated needle (found by mutation on both counts).
+      expect(text).toMatch(resultLine(result));
     });
   });
 
@@ -137,7 +145,7 @@ describe('MCP Server Integration — 3-Tool Architecture', () => {
         arguments: { problem },
       });
       const text = getTextContent(res);
-      expect(text).toContain(result);
+      expect(text).toMatch(resultLine(result));
     });
   });
 
@@ -267,6 +275,9 @@ describe('MCP Server Integration — 3-Tool Architecture', () => {
       ['identity sin^2+cos^2 = 1', 'sin(x)^2 + cos(x)^2 = 1', 'TRUE'],
       ['solution x=2 satisfies x^2-4=0', 'x=2 satisfies x^2-4=0', 'TRUE'],
       ['false identity 2+3 = 6', '2+3 = 6', 'FALSE'],
+      // The third verdict, pinned through the transport (unit tests cover it,
+      // but nothing asserted UNKNOWN over MCP until this row).
+      ['an unparseable claim', 'this is not a math claim', 'UNKNOWN — could not be checked'],
     ])('should rule on %s', async (_label, claim, verdict) => {
       const res = await client.callTool({
         name: 'verify',
