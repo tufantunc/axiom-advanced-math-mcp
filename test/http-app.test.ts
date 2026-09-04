@@ -125,6 +125,54 @@ describe('http-app POST /mcp (stateless)', () => {
     expect(names).toEqual(['compute', 'plot', 'verify']);
   });
 
+  it('advertises the load-bearing parts of each tool description', async () => {
+    // Descriptions are the model's tool-selection API: a truncation or
+    // merge-mangle ships silently if only names are pinned (proven by
+    // mutation — deleting the verify-steering sentence passed every suite).
+    const { json } = await post(app, { jsonrpc: '2.0', id: 3, method: 'tools/list', params: {} });
+    const byName = new Map(
+      (json.result.tools as { name: string; description: string }[]).map((t) => [
+        t.name,
+        t.description,
+      ])
+    );
+    const compute: string = byName.get('compute') ?? '';
+    expect(compute.length).toBeGreaterThan(400);
+    expect(compute).toContain('use `verify` instead');
+    const verify: string = byName.get('verify') ?? '';
+    expect(verify.length).toBeGreaterThan(300);
+    expect(verify).toContain('Read `evaluated` before `verified`');
+    const plot: string = byName.get('plot') ?? '';
+    expect(plot.length).toBeGreaterThan(200);
+    expect(plot).toContain('asymptote detection');
+  });
+
+  it('advertises every prompt with its full argument set', async () => {
+    // prompts/list is the client-visible contract for which arguments each
+    // prompt accepts — a dropped argsSchema field survived the entire suite
+    // by mutation. One literal pins all seven.
+    const { json } = await post(app, { jsonrpc: '2.0', id: 4, method: 'prompts/list', params: {} });
+    const byName = new Map(
+      (json.result.prompts as { name: string; arguments?: { name: string }[] }[]).map((p) => [
+        p.name,
+        p.arguments,
+      ])
+    );
+    const argNames = (name: string) =>
+      (byName.get(name) ?? []).map((a: { name: string }) => a.name).sort();
+    expect(argNames('solve-step-by-step')).toEqual(['expression']);
+    expect(argNames('analyze-function')).toEqual(['expression', 'variable']);
+    expect(argNames('verify-identity')).toEqual(['lhs', 'rhs']);
+    expect(argNames('convert-units')).toEqual(['from_unit', 'to_unit', 'value']);
+    expect(argNames('analyze-dataset')).toEqual(['data_type', 'description', 'design', 'groups']);
+    expect(argNames('solve-ode-system')).toEqual(['initial_conditions', 'system', 'variable']);
+    expect(argNames('regression-workflow')).toEqual([
+      'description',
+      'x_description',
+      'y_description',
+    ]);
+  });
+
   it('computes a symbolic integral end to end', async () => {
     const { json } = await post(app, {
       jsonrpc: '2.0',
