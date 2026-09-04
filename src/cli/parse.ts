@@ -234,124 +234,216 @@ export function parseArgs(argv: string[]): Command {
   if (first !== 'compute' && first !== 'verify' && first !== 'plot') {
     throw new UsageError(`unknown command: ${first}`);
   }
-  const kind = first;
 
   // `-h`/`--help` only counts before a `--` sentinel: `compute -- --help` must
   // compute the literal expression `--help`, not print help.
   const doubleDashIndex = rest.indexOf('--');
   const beforeDoubleDash = doubleDashIndex === -1 ? rest : rest.slice(0, doubleDashIndex);
   if (beforeDoubleDash.includes('-h') || beforeDoubleDash.includes('--help')) {
-    return { kind: 'help', topic: kind };
+    return { kind: 'help', topic: first };
   }
 
-  let positional: string | undefined;
+  if (first === 'compute') return parseComputeArgs(rest);
+  if (first === 'verify') return parseVerifyArgs(rest);
+  return parsePlotArgs(rest);
+}
+
+/**
+ * Which subcommand a flag belongs to. Each parser's switch handles only its
+ * own flags; this table is what a foreign flag hits, so it is the single
+ * author of both the "only valid for" error and the flag/kind pairing —
+ * the same drift guard RANGE_FIELDS gives the range flags. Range flags
+ * derive their owner from RANGE_FIELDS so the two tables cannot disagree.
+ */
+const FLAG_OWNER = {
+  '--latex': 'compute',
+  '--domain': 'compute',
+  '--precision': 'compute',
+  '--method': 'verify',
+  // The old switch's case label was `-o`; --out fell into it, so the error
+  // named `-o` whichever spelling the user typed. Kept byte-identical.
+  '-o': 'plot',
+  '--out': 'plot',
+  '--variable': 'plot',
+  '--title': 'plot',
+  ...Object.fromEntries(Object.keys(RANGE_FIELDS).map((f) => [f, 'plot'])),
+} as const satisfies Record<string, 'compute' | 'verify' | 'plot'>;
+
+/**
+ * The one alias whose foreign-flag error names its primary spelling: the old
+ * switch's case label was `-o`, so `--out` reported `-o` whichever spelling
+ * the user typed. `-q`/`--quiet` never carried a kind guard, so no other
+ * alias has an error text to preserve.
+ */
+const FLAG_ERROR_NAME: Partial<Record<string, string>> = { '--out': '-o' };
+
+/** The shared default case: a flag we know, but for another subcommand. */
+function rejectForeignFlag(kind: string, arg: string): never {
+  const owner = Object.hasOwn(FLAG_OWNER, arg)
+    ? FLAG_OWNER[arg as keyof typeof FLAG_OWNER]
+    : undefined;
+  if (owner !== undefined && owner !== kind) {
+    const name = FLAG_ERROR_NAME[arg] ?? arg;
+    throw new UsageError(`${name} is only valid for ${owner}`);
+  }
+  throw new UsageError(`unknown option: ${arg}`);
+}
+
+/** One loop iteration's classification — the `--` mechanics live only here. */
+function classifyArg(sawDoubleDash: boolean, arg: string): 'sentinel' | 'positional' | 'flag' {
+  if (!sawDoubleDash && arg === '--') return 'sentinel';
+  if (sawDoubleDash || !arg.startsWith('-')) return 'positional';
+  return 'flag';
+}
+
+/** Accepts the single positional, refusing a second one. */
+function takePositional(current: string | undefined, arg: string): string {
+  if (current !== undefined) {
+    throw new UsageError(`unexpected extra argument: ${arg}`);
+  }
+  return arg;
+}
+
+function parseComputeArgs(rest: string[]): ComputeCommand {
+  let expression: string | undefined;
   let output: OutputMode = 'text';
   let domain: string | undefined;
   let precision: number | undefined;
-  let method: string | undefined;
-  let out: string | undefined;
-  let variable: string | undefined;
-  const range: Partial<Record<RangeField, number>> = {};
-  let title: string | undefined;
-
   let sawDoubleDash = false;
 
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i];
-
-    if (!sawDoubleDash && arg === '--') {
+    const cls = classifyArg(sawDoubleDash, arg);
+    if (cls === 'sentinel') {
       sawDoubleDash = true;
-      continue;
-    }
-
-    // After `--`, every remaining argument is positional — this is the escape
-    // for expressions that begin with `-` (`-x^2+1`, `-2+2`), which would
-    // otherwise be sent into the flag switch below and rejected.
-    if (sawDoubleDash || !arg.startsWith('-')) {
-      if (positional !== undefined) {
-        throw new UsageError(`unexpected extra argument: ${arg}`);
-      }
-      positional = arg;
-      continue;
-    }
-
-    switch (arg) {
-      case '--json':
-        output = setOutput(output, 'json');
-        break;
-      case '-q':
-      case '--quiet':
-        output = setOutput(output, 'quiet');
-        break;
-      case '--latex':
-        if (kind !== 'compute') {
-          throw new UsageError(`--latex is only valid for compute`);
-        }
-        output = setOutput(output, 'latex');
-        break;
-      case '--domain':
-        if (kind !== 'compute') throw new UsageError('--domain is only valid for compute');
-        domain = requireValue(arg, rest[++i]);
-        if (!DOMAINS.includes(domain)) {
-          throw new UsageError(`--domain must be one of ${DOMAINS.join('|')}`);
-        }
-        break;
-      case '--precision': {
-        if (kind !== 'compute') throw new UsageError('--precision is only valid for compute');
-        precision = parseNumber(arg, requireValue(arg, rest[++i]));
-        if (!Number.isInteger(precision) || precision < 1 || precision > 50) {
-          throw new UsageError('--precision must be an integer between 1 and 50');
-        }
-        break;
-      }
-      case '--method':
-        if (kind !== 'verify') throw new UsageError('--method is only valid for verify');
-        method = requireValue(arg, rest[++i]);
-        if (!METHODS.includes(method)) {
-          throw new UsageError(`--method must be one of ${METHODS.join('|')}`);
-        }
-        break;
-      case '-o':
-      case '--out':
-        if (kind !== 'plot') throw new UsageError('-o is only valid for plot');
-        out = requireValue(arg, rest[++i]);
-        break;
-      case '--variable':
-        if (kind !== 'plot') throw new UsageError('--variable is only valid for plot');
-        variable = requireValue(arg, rest[++i]);
-        break;
-      case '--title':
-        if (kind !== 'plot') throw new UsageError('--title is only valid for plot');
-        title = requireValue(arg, rest[++i]);
-        break;
-      default:
-        // Range/size flags are dispatched off RANGE_FIELDS rather than their own
-        // case labels, so that table is the single author of both which flags
-        // exist and which field each one sets. With case labels, drift was only
-        // half-caught: a label with no entry failed to compile, but an entry
-        // with no label compiled clean and silently did nothing.
-        if (isRangeFlag(arg)) {
-          if (kind !== 'plot') throw new UsageError(`${arg} is only valid for plot`);
-          range[RANGE_FIELDS[arg]] = parseNumber(arg, requireValue(arg, rest[++i]));
+    } else if (cls === 'positional') {
+      expression = takePositional(expression, arg);
+    } else {
+      switch (arg) {
+        case '--json':
+          output = setOutput(output, 'json');
+          break;
+        case '-q':
+        case '--quiet':
+          output = setOutput(output, 'quiet');
+          break;
+        case '--latex':
+          output = setOutput(output, 'latex');
+          break;
+        case '--domain':
+          domain = requireValue(arg, rest[++i]);
+          if (!DOMAINS.includes(domain)) {
+            throw new UsageError(`--domain must be one of ${DOMAINS.join('|')}`);
+          }
+          break;
+        case '--precision': {
+          precision = parseNumber(arg, requireValue(arg, rest[++i]));
+          if (!Number.isInteger(precision) || precision < 1 || precision > 50) {
+            throw new UsageError('--precision must be an integer between 1 and 50');
+          }
           break;
         }
-        throw new UsageError(`unknown option: ${arg}`);
+        default:
+          rejectForeignFlag('compute', arg);
+      }
     }
   }
 
-  if (kind === 'compute') {
-    const cmd: ComputeCommand = { kind, output };
-    if (positional !== undefined) cmd.expression = positional;
-    if (domain !== undefined) cmd.domain = domain;
-    if (precision !== undefined) cmd.precision = precision;
-    return cmd;
+  const cmd: ComputeCommand = { kind: 'compute', output };
+  if (expression !== undefined) cmd.expression = expression;
+  if (domain !== undefined) cmd.domain = domain;
+  if (precision !== undefined) cmd.precision = precision;
+  return cmd;
+}
+
+function parseVerifyArgs(rest: string[]): VerifyCommand {
+  let claim: string | undefined;
+  let output: OutputMode = 'text';
+  let method: string | undefined;
+  let sawDoubleDash = false;
+
+  for (let i = 0; i < rest.length; i++) {
+    const arg = rest[i];
+    const cls = classifyArg(sawDoubleDash, arg);
+    if (cls === 'sentinel') {
+      sawDoubleDash = true;
+    } else if (cls === 'positional') {
+      claim = takePositional(claim, arg);
+    } else {
+      switch (arg) {
+        case '--json':
+          output = setOutput(output, 'json');
+          break;
+        case '-q':
+        case '--quiet':
+          output = setOutput(output, 'quiet');
+          break;
+        case '--method':
+          method = requireValue(arg, rest[++i]);
+          if (!METHODS.includes(method)) {
+            throw new UsageError(`--method must be one of ${METHODS.join('|')}`);
+          }
+          break;
+        default:
+          rejectForeignFlag('verify', arg);
+      }
+    }
   }
 
-  if (kind === 'verify') {
-    const cmd: VerifyCommand = { kind, output };
-    if (positional !== undefined) cmd.claim = positional;
-    if (method !== undefined) cmd.method = method;
-    return cmd;
+  const cmd: VerifyCommand = { kind: 'verify', output };
+  if (claim !== undefined) cmd.claim = claim;
+  if (method !== undefined) cmd.method = method;
+  return cmd;
+}
+
+function parsePlotArgs(rest: string[]): PlotCommand {
+  let expression: string | undefined;
+  let output: OutputMode = 'text';
+  let out: string | undefined;
+  let variable: string | undefined;
+  let title: string | undefined;
+  const range: Partial<Record<RangeField, number>> = {};
+  let sawDoubleDash = false;
+
+  for (let i = 0; i < rest.length; i++) {
+    const arg = rest[i];
+    const cls = classifyArg(sawDoubleDash, arg);
+    if (cls === 'sentinel') {
+      sawDoubleDash = true;
+    } else if (cls === 'positional') {
+      expression = takePositional(expression, arg);
+    } else {
+      switch (arg) {
+        case '--json':
+          output = setOutput(output, 'json');
+          break;
+        case '-q':
+        case '--quiet':
+          output = setOutput(output, 'quiet');
+          break;
+        case '-o':
+        case '--out':
+          out = requireValue(arg, rest[++i]);
+          break;
+        case '--variable':
+          variable = requireValue(arg, rest[++i]);
+          break;
+        case '--title':
+          title = requireValue(arg, rest[++i]);
+          break;
+        default:
+          // Range/size flags are dispatched off RANGE_FIELDS rather than their
+          // own case labels, so that table is the single author of both which
+          // flags exist and which field each one sets. With case labels, drift
+          // was only half-caught: a label with no entry failed to compile, but
+          // an entry with no label compiled clean and silently did nothing.
+          if (isRangeFlag(arg)) {
+            range[RANGE_FIELDS[arg]] = parseNumber(arg, requireValue(arg, rest[++i]));
+            break;
+          }
+          rejectForeignFlag('plot', arg);
+      }
+    }
   }
 
   // plot: -q prints the written path, so without -o there is nothing to print
@@ -360,8 +452,8 @@ export function parseArgs(argv: string[]): Command {
   }
   // `range` holds only the flags actually seen, so spreading it keeps the
   // absent-key style the rest of this function uses.
-  const cmd: PlotCommand = { kind, output, ...range };
-  if (positional !== undefined) cmd.expression = positional;
+  const cmd: PlotCommand = { kind: 'plot', output, ...range };
+  if (expression !== undefined) cmd.expression = expression;
   if (out !== undefined) cmd.out = out;
   if (variable !== undefined) cmd.variable = variable;
   if (title !== undefined) cmd.title = title;

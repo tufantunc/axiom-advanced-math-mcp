@@ -127,6 +127,16 @@ describe('CLI — compute', () => {
     expect(r.stdout.trim()).toBe('3*x^2');
   }, 30_000);
 
+  it('refuses a second positional with exit 1 and clean stdout', async () => {
+    // An unquoted expression (`compute x^2 + 1`) arrives as multiple argv
+    // entries; the script-facing contract is refusal, not answering the
+    // last positional with exit 0.
+    const r = await cli(['compute', '2+2', '3+3']);
+    expect(r.code).toBe(1);
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toContain('unexpected extra argument');
+  }, 30_000);
+
   it('exits 1 on a bad expression and keeps stdout clean', async () => {
     const r = await cli(['compute', 'integrate(']);
     expect(r.code).toBe(1);
