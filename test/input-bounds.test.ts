@@ -130,8 +130,11 @@ describe('arbitrary-precision work is bounded outside the server process', () =>
     ['stirling_second(600,600)', /^Result: 1$/m],
     ['stirling_second(1000,600)', /^Result: 305134181871302850583718528780/m],
     // 24 characters. Aborted the whole server under the cell-count ceiling;
-    // refused by the n²·k one. It is simply an answer.
-    ['stirling_first(20000,48)', /^Result: 131276123551409011274941445553/m],
+    // refused by the n²·k one. It is simply an answer. n=12000, not the
+    // original 20000: the DP takes ~1s on the dev machine and CI runners
+    // are 3-6x slower against the worker's default 10s budget — 12000 keeps
+    // n²·k ≈ 6.9×10⁹ (far above every retired ceiling) with 2.5x headroom.
+    ['stirling_first(12000,48)', /^Result: 66011291014257532782019614647237/m],
     // Trapped the WASM engine and failed the NEXT client's in-flight call.
     ['permutations(50000,25000)', /^Result: \d{20}/m],
   ])('%s answers instead of being refused', async (problem, expected) => {
@@ -212,8 +215,16 @@ describe('the compute worker bounds both axes', () => {
     // This is the axis no input ceiling expressed: cost is the WIDTH of the
     // BigInts, not the iteration count. Under a tight heap the child dies and
     // the server keeps running — the previous behaviour was a SIGABRT of the
-    // whole process from 24 characters of input.
-    const host = createJsComputeHost({ timeoutMs: 30_000, heapMb: 32 });
+    // whole process from 24 characters of input. The heap fills in ~8s on the
+    // dev machine; CI runners are 3-6x slower, so the wall clock is 150s —
+    // matching the js-compute-error-codes sibling that runs this same input
+    // and documented 30s losing the race under load. The memory budget must
+    // be the bound that fires, never the timeout; work to fill a heap of B
+    // bytes is bounded regardless of k, and machine speed scales it uniformly.
+    // The memory-vs-timeout axis itself is enforced by the js-compute-error-
+    // codes sibling, which runs this same input and asserts the out_of_memory
+    // code; this row's unique pin is the survival assertion below.
+    const host = createJsComputeHost({ timeoutMs: 150_000, heapMb: 32 });
     try {
       await expect(host.run('stirling_first', { n: 60000, k: 20000 })).rejects.toThrow(
         /memory budget|stopped unexpectedly/
@@ -223,7 +234,7 @@ describe('the compute worker bounds both axes', () => {
     } finally {
       await host.dispose();
     }
-  }, 40_000);
+  }, 300_000);
 
   it('reports an unknown task rather than hanging', async () => {
     const host = createJsComputeHost({ timeoutMs: 2000 });
@@ -736,13 +747,15 @@ describe('an oversized result is refused before it is built', () => {
   it('rejects on element count rather than stringifying 24 million characters', async () => {
     const host = createJsComputeHost({ timeoutMs: 10_000 });
     try {
-      const started = Date.now();
+      // No wall-clock assertion: the check (~0.3s) and the build it refuses
+      // (~1.9s measured — mathjs-tasks.ts documents 1.64s of that as
+      // String() itself) are within 6x of each other, so no machine-independent
+      // constant separates them — the old 1.5s bound flaked on CI and a loose
+      // one admits build-first. The refusal itself, before any string reaches
+      // the caller, is what the /elements/ message pins.
       await expect(host.run('mathjs_evaluate', { expression: '1:2000000' })).rejects.toThrow(
         /2000000 elements/
       );
-      // Measuring the built string first cost ~1.8s here. Generous bound: this
-      // asserts the pre-check exists at all, not a specific machine's speed.
-      expect(Date.now() - started).toBeLessThan(1500);
     } finally {
       await host.dispose();
     }
