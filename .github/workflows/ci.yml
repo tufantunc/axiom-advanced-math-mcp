@@ -20,7 +20,16 @@ jobs:
         with:
           node-version: 22
           cache: npm
+          cache-dependency-path: '**/package-lock.json'
       - run: npm ci
+      # The test suite imports benchmark modules (config, graders, datasets),
+      # so `tsc -p tsconfig.test.json` transitively typechecks benchmark code
+      # whose dependencies (@anthropic-ai/sdk, openai) live in benchmark's own
+      # package.json — a separate project per AGENTS.md, so they are never
+      # hoisted into the root lockfile. Without this install the typecheck
+      # step failed on every CI run since 2026-09-02.
+      - run: npm ci
+        working-directory: benchmark
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run format:check
