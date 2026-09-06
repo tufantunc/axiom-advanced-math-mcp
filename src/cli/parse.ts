@@ -5,6 +5,8 @@
  * justify adding a package to a tree this project spent effort shrinking.
  */
 
+export type Subcommand = 'compute' | 'verify' | 'plot';
+
 export type OutputMode = 'text' | 'latex' | 'json' | 'quiet';
 
 /** Thrown for anything the user could fix by reading the usage text. */
@@ -46,7 +48,7 @@ export interface ServerCommand {
 
 export interface HelpCommand {
   kind: 'help';
-  topic?: 'compute' | 'verify' | 'plot';
+  topic?: Subcommand;
 }
 
 export interface VersionCommand {
@@ -157,7 +159,7 @@ Examples:
   axiom-math plot 'sin(x)' --json`;
 
 /** Returns the usage text for a subcommand, or the global text when omitted. */
-export function topicUsage(topic?: 'compute' | 'verify' | 'plot'): string {
+export function topicUsage(topic?: Subcommand): string {
   if (topic === 'compute') return USAGE_COMPUTE;
   if (topic === 'verify') return USAGE_VERIFY;
   if (topic === 'plot') return USAGE_PLOT;
@@ -267,7 +269,7 @@ const FLAG_OWNER = {
   '--variable': 'plot',
   '--title': 'plot',
   ...Object.fromEntries(Object.keys(RANGE_FIELDS).map((f) => [f, 'plot'])),
-} as const satisfies Record<string, 'compute' | 'verify' | 'plot'>;
+} as const satisfies Record<string, Subcommand>;
 
 /**
  * The one alias whose foreign-flag error names its primary spelling: the old
