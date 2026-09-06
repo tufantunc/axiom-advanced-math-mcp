@@ -1,5 +1,5 @@
 // test/multivariable-optimization.test.ts
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { giacEngine } from '../src/server/giac/index.js';
 import { optimizationHandler } from '../src/server/tools/multivariable/optimization.js';
 
@@ -35,6 +35,12 @@ describe('multivariable optimization', () => {
     });
     expect(r.isError).toBe(false);
     expect(text(r)).toMatch(/Result:\s*2\b/);
+    // Notes are user-visible contract (stdout doctrine): the point, the
+    // direction and the computed norm belong in the response — a dropped
+    // note survived the entire suite by mutation.
+    expect(text(r)).toContain('Point: (1, 1)');
+    expect(text(r)).toContain('Direction: [1, 0]');
+    expect(text(r)).toContain('‖direction‖ = 1');
   });
 
   it('errors on zero direction vector', async () => {
@@ -47,6 +53,33 @@ describe('multivariable optimization', () => {
     });
     expect(r.isError).toBe(true);
   });
+
+  it.each(['tangent_plane', 'directional_derivative', 'critical_points', 'lagrange'])(
+    'resolves an engine throw from %s into an error response, never a rejection',
+    async (op) => {
+      // The dispatch must be `return await` — a bare `return promise`
+      // escapes the handler's catch, and callers see a rejection instead
+      // of the error envelope (found by review on the Giac-undef path).
+      // Every dispatch is pinned: a future "cleanup" dropping one await
+      // must fail here, not in production. The engine is forced to reject
+      // so all four paths throw deterministically.
+      const spy = vi.spyOn(giacEngine, 'evaluate').mockRejectedValue(new Error('engine down'));
+      try {
+        const r = await optimizationHandler({
+          operation: op,
+          expression: 'x^2+y^2',
+          variables: ['x', 'y'],
+          ...(op === 'tangent_plane' || op === 'directional_derivative' ? { point: ['1', '1'] } : {}),
+          ...(op === 'directional_derivative' ? { direction: ['1', '0'] } : {}),
+          ...(op === 'lagrange' ? { constraint: 'x+y' } : {}),
+        });
+        expect(r.isError).toBe(true);
+        expect(r.content[0].text).toContain('engine down');
+      } finally {
+        spy.mockRestore();
+      }
+    }
+  );
 
   it('errors when point length != variables length', async () => {
     const r = await optimizationHandler({
