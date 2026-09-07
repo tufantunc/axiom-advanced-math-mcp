@@ -1,6 +1,6 @@
 import { formatErrorResponse } from './response-formatter.js';
 import { validateExpression } from './expression-validator.js';
-import { evalWithLatex } from './giac-eval.js';
+import { evalWithLatex, type EvaluatedResponse } from './giac-eval.js';
 import type { VerificationResult } from './self-verify.js';
 import { detectFailure } from './compute/silent-failure.js';
 import { splitTopLevel } from './output-cleanup.js';
@@ -150,6 +150,264 @@ function validateParams(operation: string, args: Record<string, unknown>): strin
   }
 }
 
+function buildVerifyCallback(
+  operation: string,
+  args: Record<string, unknown>,
+  system: BuiltCommand['system']
+): ((result: string) => Promise<VerificationResult | undefined>) | undefined {
+  const isIndefiniteIntegral =
+    operation === 'integrate' && args.lower_bound === undefined && args.upper_bound === undefined;
+  if (isIndefiniteIntegral) {
+    return (result: string) =>
+      verifyIntegrate(args.expression as string, args.variable as string, result);
+  }
+  // A rewritten system is checked against Y' = A*Y + b. The shape guards in the
+  // handler catch an answer that is visibly not one (`[]`, `undef`, `poly1[`);
+  // this catches one that looks entirely ordinary and simply is not a solution.
+  if (system) {
+    return (result: string) =>
+      verifyOdeSystem(
+        system.matrix,
+        system.constants,
+        system.variable,
+        result,
+        (expr: string) => giacEngine.evaluate(expr),
+        system.condition
+      );
+  }
+  return undefined;
+}
+
+function solutionVectorGuard(
+  response: EvaluatedResponse,
+  hasConditions: boolean
+): ReturnType<typeof formatErrorResponse> | undefined {
+  // `undef` as a whole token is what fixes the observed case: matching it as
+  // a substring refused `[y'=k_undefined*z, z'=-y]`, which Giac solves
+  // correctly, because the coefficient's NAME contains it.
+  //
+  // Reading only the Result line is defence in depth, not that fix — the
+  // other two sentinels carry punctuation (`poly1[`, `ilaplace(`) so a bare
+  // coefficient named `ilaplace_k` does not trip them either. It is here
+  // because the `Command:` line echoes caller text and a sentinel added
+  // later may not be as punctuated.
+  // The typed value, not a scrape of the rendered block. evalWithLatex returns
+  // `result` for exactly this, and it exists because this file used to read its
+  // own `Verified: ✗` glyph back out of the display. A `^Result:(.*)$` scrape
+  // also stops at the first newline, and a truncated answer handed to the
+  // substituter would be a manufactured residual — a manufactured
+  // disproof, which is the one thing this check must never produce.
+  const result = response.result.trim();
+  // The shared detector decides the three checks it already owns — an empty
+  // result, a GIAC_ERROR, and a non-finite token — and this path adds only
+  // what is specific to a solution VECTOR. Re-deriving them here had let the
+  // two drift: `detectFailure` token-matches `NaN`, `Inf` and `-Inf`, and this
+  // copy did not, so a non-finite component would have shipped as a solution.
+  //
+  // It is given a synthesized `Result:` line rather than the whole response,
+  // which is what keeps an earlier fix: the `Command:` line echoes the
+  // caller's own text, so scanning the full response refused
+  // `[y'=k_undefined*z, z'=-y]` for a coefficient's NAME.
+  //
+  // `infinity` stays local. It is not a failure in general — `integrate(1/x^2,
+  // x, 0, 1)` correctly diverges to `+infinity` and detectFailure is right to
+  // pass it — but neither an infinite COMPONENT of a solution vector nor an
+  // `integrate(…,x,0,+infinity)` the engine never evaluated is a solution.
+  // Token-matched so a coefficient named `infinity_k` is not caught by its own
+  // name.
+  //
+  // Reached by `[y'=z, z'=-y+x^x]`, which answers `[[infinity,infinity]]`, and
+  // by four forcing terms that come back with an unevaluated
+  // `integrate(…,x,0,+infinity)`: exp(exp(x)), Gamma(x), log(x)^2,
+  // exp(x)*sin(exp(x)). The pole rule cannot refuse any of them — `denom(x^x)`
+  // does not mention x, and none is tan/cotan/tanh — so this arm is the only
+  // guard on that answer. An earlier version of this comment called the arm
+  // unreachable; `x^x` was the counterexample, and the row named
+  // 'refuses an infinite solution component' in handler-seam.test.ts pins it.
+  //
+  // `ilaplace(` has never been observed without `poly1[` beside it — over 120
+  // random matrices and every shape tried here — so no input discriminates
+  // that arm and no test can pin it. Recorded so the next reader does not go
+  // looking for the test that is missing.
+  const unfinished =
+    detectFailure(`Result: ${result}`) !== null ||
+    /poly1\[|ilaplace\(/.test(result) ||
+    /(^|\W)infinity(\W|$)/.test(result);
+  // Reachable again. This branch was removed when verifyOdeSystem could only
+  // say ✓ or nothing; it can now prove failure for an exact system, and a
+  // disproved answer must not ship — `[y'=z, z'=-y+sqrt(x)]` was going out as
+  // the homogeneous solution with success:true.
+  //
+  // Read from the value, not from the rendered glyph. Testing for `Verified: ✗`
+  // coupled this guard to a display character: renaming the label or
+  // reordering the formatter would have stopped it firing silently.
+  const disproved = response.verification?.verified === false;
+  if (unfinished || disproved) {
+    // The initial-condition hint only when there were any: a 10-equation
+    // cycle with none was being told to check conditions it never supplied.
+    if (disproved && !unfinished) {
+      return formatErrorResponse(
+        'solve_ode cannot solve this system — the CAS returned an answer that ' +
+          'does not satisfy it'
+      );
+    }
+    const hint = hasConditions ? '; check the initial conditions' : '';
+    return formatErrorResponse(
+      `solve_ode cannot solve this system — the CAS could not finish it${hint}`
+    );
+  }
+  return undefined;
+}
+
+async function singleEquationGuard(
+  response: EvaluatedResponse,
+  args: Record<string, unknown>
+): Promise<ReturnType<typeof formatErrorResponse> | undefined> {
+  // The single-equation path has no solution VECTOR to check, but it can still
+  // be handed something that is visibly not an answer, and it had no guard at
+  // all: `desolve(y'=y, y(0)=1, y(1)=2, x, y)` — over-determined — shipped
+  // `Result: []` as the answer with isError:false, and so did a condition on a
+  // function the equation never mentions.
+  //
+  // Only reachable since conditions written as separate arguments stopped being
+  // dropped. Dropping them meant Giac was never asked an unsatisfiable
+  // question, so fixing that drop is what made this path able to produce `[]`.
+  //
+  // Same delegation as the solution-vector guard, and the same synthesized
+  // `Result:` line
+  // for the same reason: the `Command:` line echoes the caller's own text, so
+  // scanning the whole response would refuse an equation for a coefficient's
+  // name.
+  const resultText = response.result.trim();
+  // `infinity` is checked here and not in detectFailure because it is not a
+  // failure in general — `integrate(1/x^2, x, 0, 1)` correctly diverges — but
+  // no SOLUTION of an ODE is infinity. The solution-vector guard has had this
+  // arm all along; the single-equation path did not, so an inconsistent BVP
+  // shipped "infinity" as the answer at isError:false:
+  // `desolve(y''=-y, y(pi/2)=1, y'(0)=0)`, which looks ordinary and is in fact
+  // unsatisfiable. Newly reachable, because conditions written as separate
+  // arguments used to be dropped.
+  // Per BRANCH, not over the whole print. Giac answers `2*y*y'=1` with three
+  // branches of which the first is `infinity`; scanning the text refused the
+  // request and threw away the two correct +/-sqrt(x-c_1) branches with it.
+  // Only an answer whose every branch is non-finite is no answer.
+  const branches = splitTopLevel(stripEnclosingBrackets(resultText), ',');
+  const everyBranchInfinite =
+    resultText.length > 0 && branches.every((b) => /(^|\W)infinity(\W|$)/.test(b));
+  const failure =
+    detectFailure(`Result: ${resultText}`) ?? (everyBranchInfinite ? 'non-finite result' : null);
+  if (failure !== null) {
+    // The IVP diagnosis only where the caller actually wrote conditions —
+    // `equation` differs from `original_equation` exactly when some were folded
+    // in. Unconditionally, it told callers of `desolve(y'=log(y), x, y)`, who
+    // supplied none, that their conditions could not all be satisfied, and sent
+    // them looking in the wrong place for a Giac limitation.
+    const foldedConditions = args.equation !== args.original_equation;
+    let why: string;
+    if (failure === 'empty result' && foldedConditions) {
+      why =
+        'the CAS returned no solution, which for an initial-value problem ' +
+        'usually means the conditions cannot all be satisfied';
+    } else if (failure === 'empty result') {
+      why = 'the CAS returned no solution for this equation';
+    } else {
+      why = `the CAS returned ${failure}`;
+    }
+    return formatErrorResponse(`solve_ode cannot solve this equation — ${why}`);
+  }
+  // The residual check, and the reason the guards above are not the defence.
+  // Each of them scans the ANSWER's shape for a sentinel, so each has to
+  // predict what a wrong answer looks like. Three rounds of syntactic guards
+  // on the condition arguments closed the reported spelling and left the field
+  // next door — `y(x)=5`, then `y(x+0)=5`, then `y(0)=x^2` — because an
+  // argument Giac reads as a second equation produces an answer that looks
+  // entirely ordinary. This asks the only question that settles it: does the
+  // thing about to be shipped solve the equation the caller wrote.
+  //
+  // Refuses on a DISPROOF only. verifyOdeSolution returns no verdict when it
+  // cannot substitute, when the answer is too large to hand back, or when a
+  // nonzero residual does not survive numeric evaluation — and "I did not
+  // check" must not become an accusation.
+  //
+  // This fires, and on families nothing else covers. An earlier version of
+  // this note claimed no input reached it — false, and expensively so: the
+  // argument guard in extractOde scans the trailing ARGUMENTS, so a condition
+  // written inside the equation walks straight past it. Both spellings reach
+  // here and are refused, where main answers each with a non-solution:
+  //
+  //   desolve(y'=y and y(x)=5, x, y)      residual -5
+  //   desolve([y'=y, y(x)=5], x, y)       residual -5
+  //   desolve(y'=y and y(0)=x^2, x, y)    residual 2*x*exp(x)
+  //   desolve([y'=y, y(0)=x^2], x, y)     residual 2*x*exp(x)
+  //
+  // Believing that note is why the reachable path went untested, and that is
+  // how a version of the verifier that refused `y'=y and(y(0)=1)` — a correct
+  // answer, Giac's own syntax — shipped unnoticed.
+  //
+  // The argument guard stays in front of it for the arguments it does cover:
+  // no round-trip, and it can name the offending argument, which a residual
+  // cannot.
+  //
+  // The CONDITIONS reach it as a second argument, from `args.equation` — the
+  // command the handler was given to run, `(y'=y) and (y(0)=1)` where the
+  // caller wrote `desolve(y'=y, y(0)=1, x, y)`. Neither text alone carries
+  // both halves: `original_equation` is deliberately the caller's own words,
+  // so the residual cannot be checked against a fold that mangled the
+  // equation, and the conditions the fold added exist only in the built
+  // command. Handing over both, rather than re-deriving the conditions here,
+  // is the same choice the system path makes with `system.condition`: two
+  // independent computations over one string can disagree, and this handler
+  // already paid for that once by re-parsing the caller's argument to recover
+  // a boolean.
+  //
+  // That last argument is INERT TODAY, and this says so rather than leaving a
+  // reader to discover it. Delete it and no test fails and no caller sees a
+  // difference: this path reads only `verified === false`, a missed condition
+  // never produces one (see everyConditionHolds for why no sound disproof of a
+  // condition is available), and unlike the system path this one hands no
+  // `verify` callback to evalWithLatex, so there is no `Verified:` line for a
+  // withheld mark to disappear from.
+  //
+  // Two mutations, two different referents, and an earlier version of this
+  // paragraph gave both answers at once by borrowing one's number for the
+  // other. Measured here, separately:
+  //
+  //   delete THIS argument at the call site  -> 0 of 1907 rows fail
+  //   make the FUNCTION ignore the parameter
+  //     (odeClauses(equation) instead of
+  //      odeClauses(conditionSource ?? equation))  -> 16 rows fail
+  //
+  // So the SEMANTICS of the parameter are pinned from inside self-verify.ts;
+  // what no row pins is the WIRING here. That distinction is the whole point
+  // of this paragraph — it is the only thing protecting a line with no test —
+  // and reading the 16 as cover for the wiring would tell the next maintainer
+  // the line is guarded when it is not.
+  //
+  // It ships anyway because it fixes what the ✓ MEANS. Without it that value
+  // can only ever say "solves the equation, conditions unexamined", and the
+  // next consumer of it would inherit exactly the defect this change removes.
+  // Displaying it is the open follow-up, and it needs its own guard work: a
+  // `verify` callback runs inside the evalWithLatex call near the top of the
+  // handler, which is before the `[]`, `GIAC_ERROR` and `infinity` guards at
+  // the head of this guard — and those are what turn an unsolvable IVP into a
+  // clean refusal today.
+  const original = args.original_equation;
+  if (typeof original === 'string' && original.length > 0) {
+    const verdict = await verifyOdeSolution(
+      original,
+      (args.function_name as string) ?? 'y',
+      (args.variable as string) ?? 'x',
+      resultText,
+      (expr) => giacEngine.evaluate(expr).then(String),
+      args.equation as string
+    );
+    if (verdict?.verified === false) {
+      return formatErrorResponse(`solve_ode cannot solve this equation — ${verdict.detail}`);
+    }
+  }
+  return undefined;
+}
+
 export async function calculusHandler(args: Record<string, unknown>) {
   try {
     const operation = args.operation as string;
@@ -169,26 +427,7 @@ export async function calculusHandler(args: Record<string, unknown>) {
     // internals rather than on what buildGiacExpression handed back — and two
     // independent computations over the same string can disagree.
     const hasConditions = system?.condition !== undefined;
-    const isIndefiniteIntegral =
-      operation === 'integrate' && args.lower_bound === undefined && args.upper_bound === undefined;
-    // A rewritten system is checked against Y' = A*Y + b. The shape guards below
-    // catch an answer that is visibly not one (`[]`, `undef`, `poly1[`); this
-    // catches one that looks entirely ordinary and simply is not a solution.
-    let verify: ((result: string) => Promise<VerificationResult | undefined>) | undefined;
-    if (isIndefiniteIntegral) {
-      verify = (result: string) =>
-        verifyIntegrate(args.expression as string, args.variable as string, result);
-    } else if (system) {
-      verify = (result: string) =>
-        verifyOdeSystem(
-          system.matrix,
-          system.constants,
-          system.variable,
-          result,
-          (expr: string) => giacEngine.evaluate(expr),
-          system.condition
-        );
-    }
+    const verify = buildVerifyCallback(operation, args, system);
     // Through `notes`, not appended to the formatted content: formatToolResponse
     // owns line order and puts notes before the "The answer is" summary. Pushed
     // onto content it landed after the sentence presenting the answer, which for
@@ -200,225 +439,11 @@ export async function calculusHandler(args: Record<string, unknown>) {
       ...(functions ? { notes: [`Components are in the order: ${functions.join(', ')}`] } : {}),
     });
     if (functions) {
-      // `undef` as a whole token is what fixes the observed case: matching it as
-      // a substring refused `[y'=k_undefined*z, z'=-y]`, which Giac solves
-      // correctly, because the coefficient's NAME contains it.
-      //
-      // Reading only the Result line is defence in depth, not that fix — the
-      // other two sentinels carry punctuation (`poly1[`, `ilaplace(`) so a bare
-      // coefficient named `ilaplace_k` does not trip them either. It is here
-      // because the `Command:` line echoes caller text and a sentinel added
-      // later may not be as punctuated.
-      // The typed value, not a scrape of the rendered block. evalWithLatex returns
-      // `result` for exactly this, and it exists because this file used to read its
-      // own `Verified: ✗` glyph back out of the display. A `^Result:(.*)$` scrape
-      // also stops at the first newline, and a truncated answer handed to the
-      // substituter below would be a manufactured residual — a manufactured
-      // disproof, which is the one thing this check must never produce.
-      const result = response.result.trim();
-      // The shared detector decides the three checks it already owns — an empty
-      // result, a GIAC_ERROR, and a non-finite token — and this path adds only
-      // what is specific to a solution VECTOR. Re-deriving them here had let the
-      // two drift: `detectFailure` token-matches `NaN`, `Inf` and `-Inf`, and this
-      // copy did not, so a non-finite component would have shipped as a solution.
-      //
-      // It is given a synthesized `Result:` line rather than the whole response,
-      // which is what keeps an earlier fix: the `Command:` line echoes the
-      // caller's own text, so scanning the full response refused
-      // `[y'=k_undefined*z, z'=-y]` for a coefficient's NAME.
-      //
-      // `infinity` stays local. It is not a failure in general — `integrate(1/x^2,
-      // x, 0, 1)` correctly diverges to `+infinity` and detectFailure is right to
-      // pass it — but neither an infinite COMPONENT of a solution vector nor an
-      // `integrate(…,0,+infinity)` the engine never evaluated is a solution.
-      // Token-matched so a coefficient named `infinity_k` is not caught by its own
-      // name.
-      //
-      // Reached by `[y'=z, z'=-y+x^x]`, which answers `[[infinity,infinity]]`, and
-      // by four forcing terms that come back with an unevaluated
-      // `integrate(…,x,0,+infinity)`: exp(exp(x)), Gamma(x), log(x)^2,
-      // exp(x)*sin(exp(x)). The pole rule cannot refuse any of them — `denom(x^x)`
-      // does not mention x, and none is tan/cotan/tanh — so this arm is the only
-      // guard on that answer. An earlier version of this comment called the arm
-      // unreachable; `x^x` was the counterexample, and the row named
-      // 'refuses an infinite solution component' in handler-seam.test.ts pins it.
-      //
-      // `ilaplace(` has never been observed without `poly1[` beside it — over 120
-      // random matrices and every shape tried here — so no input discriminates
-      // that arm and no test can pin it. Recorded so the next reader does not go
-      // looking for the test that is missing.
-      const unfinished =
-        detectFailure(`Result: ${result}`) !== null ||
-        /poly1\[|ilaplace\(/.test(result) ||
-        /(^|\W)infinity(\W|$)/.test(result);
-      // Reachable again. This branch was removed when verifyOdeSystem could only
-      // say ✓ or nothing; it can now prove failure for an exact system, and a
-      // disproved answer must not ship — `[y'=z, z'=-y+sqrt(x)]` was going out as
-      // the homogeneous solution with success:true.
-      //
-      // Read from the value, not from the rendered glyph. Testing for `Verified: ✗`
-      // coupled this guard to a display character: renaming the label or
-      // reordering the formatter would have stopped it firing silently.
-      const disproved = response.verification?.verified === false;
-      if (unfinished || disproved) {
-        // The initial-condition hint only when there were any: a 10-equation
-        // cycle with none was being told to check conditions it never supplied.
-        if (disproved && !unfinished) {
-          return formatErrorResponse(
-            'solve_ode cannot solve this system — the CAS returned an answer that ' +
-              'does not satisfy it'
-          );
-        }
-        const hint = hasConditions ? '; check the initial conditions' : '';
-        return formatErrorResponse(
-          `solve_ode cannot solve this system — the CAS could not finish it${hint}`
-        );
-      }
-    }
-    // The single-equation path has no solution VECTOR to check, but it can still
-    // be handed something that is visibly not an answer, and it had no guard at
-    // all: `desolve(y'=y, y(0)=1, y(1)=2, x, y)` — over-determined — shipped
-    // `Result: []` as the answer with isError:false, and so did a condition on a
-    // function the equation never mentions.
-    //
-    // Only reachable since conditions written as separate arguments stopped being
-    // dropped. Dropping them meant Giac was never asked an unsatisfiable
-    // question, so fixing that drop is what made this path able to produce `[]`.
-    //
-    // Same delegation as the solution-vector guard, and the same synthesized
-    // `Result:` line
-    // for the same reason: the `Command:` line echoes the caller's own text, so
-    // scanning the whole response would refuse an equation for a coefficient's
-    // name.
-    if (!functions && operation === 'solve_ode') {
-      const resultText = response.result.trim();
-      // `infinity` is checked here and not in detectFailure because it is not a
-      // failure in general — `integrate(1/x^2, x, 0, 1)` correctly diverges — but
-      // no SOLUTION of an ODE is infinity. The solution-vector guard has had this
-      // arm all along; the single-equation path did not, so an inconsistent BVP
-      // shipped "infinity" as the answer at isError:false:
-      // `desolve(y''=-y, y(pi/2)=1, y'(0)=0)`, which looks ordinary and is in fact
-      // unsatisfiable. Newly reachable, because conditions written as separate
-      // arguments used to be dropped.
-      // Per BRANCH, not over the whole print. Giac answers `2*y*y'=1` with three
-      // branches of which the first is `infinity`; scanning the text refused the
-      // request and threw away the two correct +/-sqrt(x-c_1) branches with it.
-      // Only an answer whose every branch is non-finite is no answer.
-      const branches = splitTopLevel(stripEnclosingBrackets(resultText), ',');
-      const everyBranchInfinite =
-        resultText.length > 0 && branches.every((b) => /(^|\W)infinity(\W|$)/.test(b));
-      const failure =
-        detectFailure(`Result: ${resultText}`) ??
-        (everyBranchInfinite ? 'non-finite result' : null);
-      if (failure !== null) {
-        // The IVP diagnosis only where the caller actually wrote conditions —
-        // `equation` differs from `original_equation` exactly when some were folded
-        // in. Unconditionally, it told callers of `desolve(y'=log(y), x, y)`, who
-        // supplied none, that their conditions could not all be satisfied, and sent
-        // them looking in the wrong place for a Giac limitation.
-        const foldedConditions = args.equation !== args.original_equation;
-        let why: string;
-        if (failure === 'empty result' && foldedConditions) {
-          why =
-            'the CAS returned no solution, which for an initial-value problem ' +
-            'usually means the conditions cannot all be satisfied';
-        } else if (failure === 'empty result') {
-          why = 'the CAS returned no solution for this equation';
-        } else {
-          why = `the CAS returned ${failure}`;
-        }
-        return formatErrorResponse(`solve_ode cannot solve this equation — ${why}`);
-      }
-      // The residual check, and the reason the guards above are not the defence.
-      // Each of them scans the ANSWER's shape for a sentinel, so each has to
-      // predict what a wrong answer looks like. Three rounds of syntactic guards
-      // on the condition arguments closed the reported spelling and left the field
-      // next door — `y(x)=5`, then `y(x+0)=5`, then `y(0)=x^2` — because an
-      // argument Giac reads as a second equation produces an answer that looks
-      // entirely ordinary. This asks the only question that settles it: does the
-      // thing about to be shipped solve the equation the caller wrote.
-      //
-      // Refuses on a DISPROOF only. verifyOdeSolution returns no verdict when it
-      // cannot substitute, when the answer is too large to hand back, or when a
-      // nonzero residual does not survive numeric evaluation — and "I did not
-      // check" must not become an accusation.
-      //
-      // This fires, and on families nothing else covers. An earlier version of
-      // this note claimed no input reached it — false, and expensively so: the
-      // argument guard in extractOde scans the trailing ARGUMENTS, so a condition
-      // written inside the equation walks straight past it. Both spellings reach
-      // here and are refused, where main answers each with a non-solution:
-      //
-      //   desolve(y'=y and y(x)=5, x, y)      residual -5
-      //   desolve([y'=y, y(x)=5], x, y)       residual -5
-      //   desolve(y'=y and y(0)=x^2, x, y)    residual 2*x*exp(x)
-      //   desolve([y'=y, y(0)=x^2], x, y)     residual 2*x*exp(x)
-      //
-      // Believing that note is why the reachable path went untested, and that is
-      // how a version of the verifier that refused `y'=y and(y(0)=1)` — a correct
-      // answer, Giac's own syntax — shipped unnoticed.
-      //
-      // The argument guard stays in front of it for the arguments it does cover:
-      // no round-trip, and it can name the offending argument, which a residual
-      // cannot.
-      //
-      // The CONDITIONS reach it as a second argument, from `args.equation` — the
-      // command this handler was given to run, `(y'=y) and (y(0)=1)` where the
-      // caller wrote `desolve(y'=y, y(0)=1, x, y)`. Neither text alone carries
-      // both halves: `original_equation` is deliberately the caller's own words,
-      // so the residual cannot be checked against a fold that mangled the
-      // equation, and the conditions the fold added exist only in the built
-      // command. Handing over both, rather than re-deriving the conditions here,
-      // is the same choice the system path makes with `system.condition`: two
-      // independent computations over one string can disagree, and this handler
-      // already paid for that once by re-parsing the caller's argument to recover
-      // a boolean.
-      //
-      // That last argument is INERT TODAY, and this says so rather than leaving a
-      // reader to discover it. Delete it and no test fails and no caller sees a
-      // difference: this path reads only `verified === false`, a missed condition
-      // never produces one (see everyConditionHolds for why no sound disproof of a
-      // condition is available), and unlike the system path this one hands no
-      // `verify` callback to evalWithLatex, so there is no `Verified:` line for a
-      // withheld mark to disappear from.
-      //
-      // Two mutations, two different referents, and an earlier version of this
-      // paragraph gave both answers at once by borrowing one's number for the
-      // other. Measured here, separately:
-      //
-      //   delete THIS argument at the call site  -> 0 of 1907 rows fail
-      //   make the FUNCTION ignore the parameter
-      //     (odeClauses(equation) instead of
-      //      odeClauses(conditionSource ?? equation))  -> 16 rows fail
-      //
-      // So the SEMANTICS of the parameter are pinned from inside self-verify.ts;
-      // what no row pins is the WIRING here. That distinction is the whole point
-      // of this paragraph — it is the only thing protecting a line with no test —
-      // and reading the 16 as cover for the wiring would tell the next maintainer
-      // the line is guarded when it is not.
-      //
-      // It ships anyway because it fixes what the ✓ MEANS. Without it that value
-      // can only ever say "solves the equation, conditions unexamined", and the
-      // next consumer of it would inherit exactly the defect this change removes.
-      // Displaying it is the open follow-up, and it needs its own guard work: a
-      // `verify` callback runs inside the evalWithLatex call near the top of this
-      // handler, which is before the `[]`, `GIAC_ERROR` and `infinity` guards at
-      // the head of this block — and those are what turn an unsolvable IVP into a
-      // clean refusal today.
-      const original = args.original_equation;
-      if (typeof original === 'string' && original.length > 0) {
-        const verdict = await verifyOdeSolution(
-          original,
-          (args.function_name as string) ?? 'y',
-          (args.variable as string) ?? 'x',
-          resultText,
-          (expr) => giacEngine.evaluate(expr).then(String),
-          args.equation as string
-        );
-        if (verdict?.verified === false) {
-          return formatErrorResponse(`solve_ode cannot solve this equation — ${verdict.detail}`);
-        }
-      }
+      const refusal = solutionVectorGuard(response, hasConditions);
+      if (refusal) return refusal;
+    } else if (operation === 'solve_ode') {
+      const refusal = await singleEquationGuard(response, args);
+      if (refusal) return refusal;
     }
     return response;
   } catch (error) {
