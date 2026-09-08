@@ -1,9 +1,6 @@
 import { giacEngine } from '../giac/index.js';
 
-export async function analyzeNumberCore(n: number): Promise<string[]> {
-  const absN = Math.abs(n);
-  const lines: string[] = [`Number: ${n}`];
-
+async function primalityLines(absN: number): Promise<string[]> {
   let isPrime = false;
   try {
     const primeResult = await giacEngine.evaluate(`isprime(${absN})`);
@@ -19,52 +16,83 @@ export async function analyzeNumberCore(n: number): Promise<string[]> {
       }
     }
   }
-  lines.push(`Prime: ${isPrime ? 'Yes' : 'No'}`);
+  return [`Prime: ${isPrime ? 'Yes' : 'No'}`];
+}
 
-  let factors: [number, number][] = [];
+async function factorize(absN: number): Promise<{ lines: string[]; factors: [number, number][] }> {
+  // Negated, not inverted: `absN > 1` and `absN <= 1` disagree on NaN, which
+  // fails both comparisons. NaN is reachable from the compute extractors
+  // (Number.parseInt with no NaN check), and the inverted form sent it down
+  // the engine path where it fabricated "Divisor count: 1" lines and leaked a
+  // raw GIAC_ERROR as the totient value. NaN's garbage output is a separate,
+  // pre-existing extractor defect — this refactor must not extend it.
+  if (!(absN > 1)) {
+    return { lines: [`Prime factorization: ${absN}`], factors: [] };
+  }
+  try {
+    const ifactorResult = await giacEngine.evaluate(`ifactor(${absN})`);
+    const factors = parseIfactor(ifactorResult);
+    const factorStr = factors.map(([p, e]) => (e > 1 ? `${p}^${e}` : `${p}`)).join(' × ');
+    return { lines: [`Prime factorization: ${factorStr}`], factors };
+  } catch {
+    return { lines: ['Prime factorization: (could not compute)'], factors: [] };
+  }
+}
+
+function divisorLines(absN: number, factors: [number, number][]): string[] {
+  // Negated for the same NaN reason as factorize.
+  if (!(absN >= 1)) return [];
+  const lines: string[] = [];
+  const divs = factors.length > 0 ? listDivisors(factors) : [1];
+  const count = divisorCount(factors.length > 0 ? factors : []);
+  const sum = divisorSum(factors.length > 0 ? factors : []);
+  lines.push(`Divisor count: ${count}`);
+  if (count <= 30) {
+    lines.push(`Divisors: ${divs.join(', ')}`);
+  }
+  lines.push(`Divisor sum: ${sum}`);
   if (absN > 1) {
-    try {
-      const ifactorResult = await giacEngine.evaluate(`ifactor(${absN})`);
-      factors = parseIfactor(ifactorResult);
-      const factorStr = factors.map(([p, e]) => (e > 1 ? `${p}^${e}` : `${p}`)).join(' × ');
-      lines.push(`Prime factorization: ${factorStr}`);
-    } catch {
-      lines.push('Prime factorization: (could not compute)');
-    }
-  } else {
-    lines.push(`Prime factorization: ${absN}`);
+    const properSum = sum - absN;
+    lines.push(`Perfect number: ${properSum === absN ? 'Yes' : 'No'}`);
   }
-
-  if (absN >= 1) {
-    const divs = factors.length > 0 ? listDivisors(factors) : [1];
-    const count = divisorCount(factors.length > 0 ? factors : []);
-    const sum = divisorSum(factors.length > 0 ? factors : []);
-    lines.push(`Divisor count: ${count}`);
-    if (count <= 30) {
-      lines.push(`Divisors: ${divs.join(', ')}`);
-    }
-    lines.push(`Divisor sum: ${sum}`);
-    if (absN > 1) {
-      const properSum = sum - absN;
-      lines.push(`Perfect number: ${properSum === absN ? 'Yes' : 'No'}`);
-    }
-  }
-
-  if (absN > 0) {
-    try {
-      const eulerResult = await giacEngine.evaluate(`euler(${absN})`);
-      lines.push(`Euler totient φ(${absN}): ${eulerResult.trim()}`);
-    } catch {}
-  }
-
-  const squareNote = isPerfectSquare(absN) ? `Yes (${Math.round(Math.sqrt(absN))}²)` : 'No';
-  lines.push(`Perfect square: ${squareNote}`);
-  const cubeNote = isPerfectCube(absN) ? `Yes (${Math.round(Math.cbrt(absN))}³)` : 'No';
-  lines.push(`Perfect cube: ${cubeNote}`);
-  const triangularNote = isTriangular(absN) ? `Yes (T${triangularIndex(absN)})` : 'No';
-  lines.push(`Triangular: ${triangularNote}`, `Fibonacci: ${isFibonacci(absN) ? 'Yes' : 'No'}`);
-
   return lines;
+}
+
+async function eulerTotientLine(absN: number): Promise<string[]> {
+  // Negated for the same NaN reason as factorize.
+  if (!(absN > 0)) return [];
+  try {
+    const eulerResult = await giacEngine.evaluate(`euler(${absN})`);
+    return [`Euler totient φ(${absN}): ${eulerResult.trim()}`];
+  } catch {
+    return [];
+  }
+}
+
+function shapeNotes(absN: number): string[] {
+  const squareNote = isPerfectSquare(absN) ? `Yes (${Math.round(Math.sqrt(absN))}²)` : 'No';
+  const cubeNote = isPerfectCube(absN) ? `Yes (${Math.round(Math.cbrt(absN))}³)` : 'No';
+  const triangularNote = isTriangular(absN) ? `Yes (T${triangularIndex(absN)})` : 'No';
+  return [
+    `Perfect square: ${squareNote}`,
+    `Perfect cube: ${cubeNote}`,
+    `Triangular: ${triangularNote}`,
+    `Fibonacci: ${isFibonacci(absN) ? 'Yes' : 'No'}`,
+  ];
+}
+
+export async function analyzeNumberCore(n: number): Promise<string[]> {
+  const absN = Math.abs(n);
+  const primeLines = await primalityLines(absN);
+  const { lines: factorLines, factors } = await factorize(absN);
+  return [
+    `Number: ${n}`,
+    ...primeLines,
+    ...factorLines,
+    ...divisorLines(absN, factors),
+    ...(await eulerTotientLine(absN)),
+    ...shapeNotes(absN),
+  ];
 }
 
 export function parseIfactor(ifactorResult: string): [number, number][] {
