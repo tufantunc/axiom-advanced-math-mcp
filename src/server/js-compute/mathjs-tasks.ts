@@ -348,6 +348,98 @@ function finiteOr(value: number, fallback: number): number {
   return Number.isFinite(value) ? value : fallback;
 }
 
+/** Pass one of `mathjs_sample`: the grid, with null marking a non-finite point. */
+interface SampledGrid {
+  allPoints: (PlotPoint | null)[];
+  yMin: number;
+  yMax: number;
+  sampled: number;
+  firstError: string | undefined;
+}
+
+function sampleGrid(
+  compiled: { evaluate: (scope: Record<string, number>) => unknown },
+  a: { variable: string; xMin: number; xMax: number; numPoints: number }
+): SampledGrid {
+  const step = (a.xMax - a.xMin) / (a.numPoints - 1);
+
+  // Pass one: sample, with null marking a point that is not finite.
+  const allPoints: (PlotPoint | null)[] = [];
+  let yMin = Number.POSITIVE_INFINITY;
+  let yMax = Number.NEGATIVE_INFINITY;
+  let sampled = 0;
+  let firstError: string | undefined;
+  for (let i = 0; i < a.numPoints; i++) {
+    const x = a.xMin + i * step;
+    try {
+      const y: unknown = compiled.evaluate({ [a.variable]: x });
+      if (typeof y === 'number' && Number.isFinite(y)) {
+        allPoints.push({ x, y });
+        sampled++;
+        if (y < yMin) yMin = y;
+        if (y > yMax) yMax = y;
+      } else {
+        allPoints.push(null);
+      }
+    } catch (e) {
+      firstError ??= e instanceof Error ? e.message : String(e);
+      allPoints.push(null);
+    }
+  }
+  return { allPoints, yMin, yMax, sampled, firstError };
+}
+
+function normalizedYRange(
+  yMin: number,
+  yMax: number,
+  sampled: number
+): { yMin: number; yMax: number; rawRange: number } {
+  // The jump threshold is measured against the RAW span, before padding.
+  // Padding first was the bug: it made the threshold 2.2x the raw span while
+  // no adjacent jump can exceed the raw span itself, so the split below could
+  // never fire and `1/x` was drawn as one curve straight through its pole.
+  const rawRange = sampled > 0 ? yMax - yMin : 0;
+
+  // Pad the y range, and pick a default when nothing was finite.
+  if (sampled === 0) {
+    return { yMin: -10, yMax: 10, rawRange };
+  }
+  if (rawRange === 0) {
+    return { yMin: yMin - 1, yMax: yMax + 1, rawRange };
+  }
+  return {
+    yMin: finiteOr(yMin - rawRange * 0.05, yMin),
+    yMax: finiteOr(yMax + rawRange * 0.05, yMax),
+    rawRange,
+  };
+}
+
+function splitSegments(allPoints: (PlotPoint | null)[], rawRange: number): PlotSegment[] {
+  // Pass two: split into continuous segments, breaking at a non-finite sample
+  // or at a jump over half the raw span. Half is a heuristic: a pole crossing
+  // moves nearly the whole span between adjacent samples, while a steep but
+  // continuous curve moves a fraction of it (over [-10,10], `exp(x)`'s largest
+  // adjacent step is 10% of its span and `x^2`'s is 2%).
+  const segments: PlotSegment[] = [];
+  let current: PlotPoint[] = [];
+  const threshold = rawRange * 0.5;
+  for (const pt of allPoints) {
+    if (pt === null) {
+      if (current.length > 1) segments.push({ points: current });
+      current = [];
+      continue;
+    }
+    const prev = current.at(-1);
+    if (prev !== undefined && rawRange > 0 && Math.abs(pt.y - prev.y) > threshold) {
+      if (current.length > 1) segments.push({ points: current });
+      current = [];
+    }
+    current.push(pt);
+  }
+  if (current.length > 1) segments.push({ points: current });
+  return segments;
+}
+
 export const MATHJS_TASKS = {
   /** One expression evaluated to a value, plus its LaTeX when asked for. */
   mathjs_evaluate: (a: { expression: string; precision?: number; latex?: boolean }): string => {
@@ -439,74 +531,16 @@ export const MATHJS_TASKS = {
   }): string => {
     const m = math();
     const compiled = m.compile(a.expression);
-    const step = (a.xMax - a.xMin) / (a.numPoints - 1);
+    const { allPoints, yMin, yMax, sampled, firstError } = sampleGrid(compiled, a);
+    const range = normalizedYRange(yMin, yMax, sampled);
+    const segments = splitSegments(allPoints, range.rawRange);
 
-    // Pass one: sample, with null marking a point that is not finite.
-    const allPoints: (PlotPoint | null)[] = [];
-    let yMin = Number.POSITIVE_INFINITY;
-    let yMax = Number.NEGATIVE_INFINITY;
-    let sampled = 0;
-    let firstError: string | undefined;
-    for (let i = 0; i < a.numPoints; i++) {
-      const x = a.xMin + i * step;
-      try {
-        const y: unknown = compiled.evaluate({ [a.variable]: x });
-        if (typeof y === 'number' && Number.isFinite(y)) {
-          allPoints.push({ x, y });
-          sampled++;
-          if (y < yMin) yMin = y;
-          if (y > yMax) yMax = y;
-        } else {
-          allPoints.push(null);
-        }
-      } catch (e) {
-        firstError ??= e instanceof Error ? e.message : String(e);
-        allPoints.push(null);
-      }
-    }
-
-    // The jump threshold is measured against the RAW span, before padding.
-    // Padding first was the bug: it made the threshold 2.2x the raw span while
-    // no adjacent jump can exceed the raw span itself, so the split below could
-    // never fire and `1/x` was drawn as one curve straight through its pole.
-    const rawRange = sampled > 0 ? yMax - yMin : 0;
-
-    // Pad the y range, and pick a default when nothing was finite.
-    if (sampled === 0) {
-      yMin = -10;
-      yMax = 10;
-    } else if (rawRange === 0) {
-      yMin -= 1;
-      yMax += 1;
-    } else {
-      yMin = finiteOr(yMin - rawRange * 0.05, yMin);
-      yMax = finiteOr(yMax + rawRange * 0.05, yMax);
-    }
-
-    // Pass two: split into continuous segments, breaking at a non-finite sample
-    // or at a jump over half the raw span. Half is a heuristic: a pole crossing
-    // moves nearly the whole span between adjacent samples, while a steep but
-    // continuous curve moves a fraction of it (over [-10,10], `exp(x)`'s largest
-    // adjacent step is 10% of its span and `x^2`'s is 2%).
-    const segments: PlotSegment[] = [];
-    let current: PlotPoint[] = [];
-    const threshold = rawRange * 0.5;
-    for (const pt of allPoints) {
-      if (pt === null) {
-        if (current.length > 1) segments.push({ points: current });
-        current = [];
-        continue;
-      }
-      const prev = current.at(-1);
-      if (prev !== undefined && rawRange > 0 && Math.abs(pt.y - prev.y) > threshold) {
-        if (current.length > 1) segments.push({ points: current });
-        current = [];
-      }
-      current.push(pt);
-    }
-    if (current.length > 1) segments.push({ points: current });
-
-    const result: SampledFunction = { segments, yMin, yMax, sampled };
+    const result: SampledFunction = {
+      segments,
+      yMin: range.yMin,
+      yMax: range.yMax,
+      sampled,
+    };
     if (firstError !== undefined) result.firstError = firstError;
     // Insurance rather than an active bound: 200 points serialize to ~10KB. It
     // becomes reachable if the sample count is ever exposed to callers.

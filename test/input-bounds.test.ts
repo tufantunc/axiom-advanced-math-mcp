@@ -586,6 +586,28 @@ describe('the plot sampler kept the behaviour it had in-process', () => {
     expect(r.yMax).toBe(6);
   });
 
+  it('clamps the padded y range when 5% of the span overflows to Infinity', async () => {
+    // yMax - yMin = 2e308 = Infinity, so the 5% pad is ±Infinity, which
+    // JSON.stringify renders as null in a field declared number — the bug
+    // finiteOr exists for. Assert the IPC payload, not the SVG: render's own
+    // tick math still overflows downstream.
+    const host = createJsComputeHost({ timeoutMs: 10_000 });
+    try {
+      const raw = await host.run('mathjs_sample', {
+        expression: '1e307*x',
+        variable: 'x',
+        xMin: -10,
+        xMax: 10,
+        numPoints: 200,
+      });
+      const r = JSON.parse(raw) as { yMin: number; yMax: number };
+      expect(r.yMin).toBe(-1e308);
+      expect(r.yMax).toBe(1e308);
+    } finally {
+      await host.dispose();
+    }
+  });
+
   it('splits at a pole, judging the jump against the raw sampled span', async () => {
     // The threshold is half the span measured BEFORE padding. Padding first was
     // the bug: it put the threshold at 2.2x the raw span while no adjacent jump
