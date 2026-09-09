@@ -20,13 +20,14 @@ async function primalityLines(absN: number): Promise<string[]> {
 }
 
 async function factorize(absN: number): Promise<{ lines: string[]; factors: [number, number][] }> {
-  // Negated, not inverted: `absN > 1` and `absN <= 1` disagree on NaN, which
-  // fails both comparisons. NaN is reachable from the compute extractors
+  // NaN is named explicitly rather than falling out of a comparison: it fails
+  // BOTH `absN > 1` and `absN <= 1`, so a plain `absN <= 1` gate is not this
+  // gate's complement. NaN is reachable from the compute extractors
   // (Number.parseInt with no NaN check), and the inverted form sent it down
   // the engine path where it fabricated "Divisor count: 1" lines and leaked a
   // raw GIAC_ERROR as the totient value. NaN's garbage output is a separate,
   // pre-existing extractor defect — this refactor must not extend it.
-  if (!(absN > 1)) {
+  if (absN <= 1 || Number.isNaN(absN)) {
     return { lines: [`Prime factorization: ${absN}`], factors: [] };
   }
   try {
@@ -40,8 +41,8 @@ async function factorize(absN: number): Promise<{ lines: string[]; factors: [num
 }
 
 function divisorLines(absN: number, factors: [number, number][]): string[] {
-  // Negated for the same NaN reason as factorize.
-  if (!(absN >= 1)) return [];
+  // NaN named explicitly for the same reason as factorize.
+  if (absN < 1 || Number.isNaN(absN)) return [];
   const lines: string[] = [];
   const divs = factors.length > 0 ? listDivisors(factors) : [1];
   const count = divisorCount(factors.length > 0 ? factors : []);
@@ -59,8 +60,8 @@ function divisorLines(absN: number, factors: [number, number][]): string[] {
 }
 
 async function eulerTotientLine(absN: number): Promise<string[]> {
-  // Negated for the same NaN reason as factorize.
-  if (!(absN > 0)) return [];
+  // NaN named explicitly for the same reason as factorize.
+  if (absN <= 0 || Number.isNaN(absN)) return [];
   try {
     const eulerResult = await giacEngine.evaluate(`euler(${absN})`);
     return [`Euler totient φ(${absN}): ${eulerResult.trim()}`];

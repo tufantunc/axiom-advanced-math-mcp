@@ -101,15 +101,15 @@ export async function planeHandler(args: Record<string, unknown>) {
     const op = args.operation as string;
     switch (op) {
       case 'plane_from_points':
-        return await planeFromPoints(args);
+        return planeFromPoints(args);
       case 'point_plane_distance':
-        return await pointPlaneDistance(args);
+        return pointPlaneDistance(args);
       case 'line_plane_intersection':
-        return await linePlaneIntersection(args);
+        return linePlaneIntersection(args);
       case 'plane_plane_angle':
-        return await planePlaneAngle(args);
+        return planePlaneAngle(args);
       case 'line_line_distance':
-        return await lineLineDistance(args);
+        return lineLineDistance(args);
       default:
         return formatErrorResponse(`Unknown plane operation: ${op}`);
     }
