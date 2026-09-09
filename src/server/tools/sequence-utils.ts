@@ -120,12 +120,40 @@ export function checkGeometric(terms: number[]): SequenceResult | null {
   return null;
 }
 
+function diffs(arr: number[]): number[] {
+  const out: number[] = [];
+  for (let i = 1; i < arr.length; i++) out.push(arr[i] - arr[i - 1]);
+  return out;
+}
+
+function quadraticFormula(A: number, B: number, C: number): string {
+  const parts: string[] = [];
+  if (A !== 0) {
+    let aTerm: string;
+    if (A === 1) aTerm = 'n²';
+    else if (A === -1) aTerm = '-n²';
+    else aTerm = `${A}n²`;
+    parts.push(aTerm);
+  }
+  if (B !== 0) parts.push(B > 0 && parts.length > 0 ? `+${B}n` : `${B}n`);
+  if (C !== 0) parts.push(C > 0 && parts.length > 0 ? `+${C}` : `${C}`);
+
+  return `a(n) = ${parts.join(' ') || '0'}`;
+}
+
+function nextQuadraticTerms(A: number, B: number, C: number, length: number): number[] {
+  const next: number[] = [];
+  for (let i = 1; i <= 3; i++) {
+    const n = length + i;
+    next.push(A * n * n + B * n + C);
+  }
+  return next;
+}
+
 export function checkQuadratic(terms: number[]): SequenceResult | null {
   if (terms.length < 3) return null;
-  const d1 = [];
-  for (let i = 1; i < terms.length; i++) d1.push(terms[i] - terms[i - 1]);
-  const d2: number[] = [];
-  for (let i = 1; i < d1.length; i++) d2.push(d1[i] - d1[i - 1]);
+  const d1 = diffs(terms);
+  const d2 = diffs(d1);
 
   const eps = 1e-9;
   if (d2.length > 0 && d2.every((d) => Math.abs(d - d2[0]) < eps)) {
@@ -133,27 +161,10 @@ export function checkQuadratic(terms: number[]): SequenceResult | null {
     const B = d1[0] - 3 * A;
     const C = terms[0] - A - B;
 
-    const next: number[] = [];
-    for (let i = 1; i <= 3; i++) {
-      const n = terms.length + i;
-      next.push(A * n * n + B * n + C);
-    }
-
-    const parts: string[] = [];
-    if (A !== 0) {
-      let aTerm: string;
-      if (A === 1) aTerm = 'n²';
-      else if (A === -1) aTerm = '-n²';
-      else aTerm = `${A}n²`;
-      parts.push(aTerm);
-    }
-    if (B !== 0) parts.push(B > 0 && parts.length > 0 ? `+${B}n` : `${B}n`);
-    if (C !== 0) parts.push(C > 0 && parts.length > 0 ? `+${C}` : `${C}`);
-
     return {
       pattern: 'Quadratic sequence',
-      formula: `a(n) = ${parts.join(' ') || '0'}`,
-      nextTerms: next,
+      formula: quadraticFormula(A, B, C),
+      nextTerms: nextQuadraticTerms(A, B, C, terms.length),
     };
   }
   return null;
