@@ -210,27 +210,27 @@ export async function geometryHandler(args: Record<string, unknown>) {
     const op = args.operation as string;
     switch (op) {
       case 'distance':
-        return await distance(args);
+        return distance(args);
       case 'midpoint':
-        return await midpoint(args);
+        return midpoint(args);
       case 'slope':
-        return await slope(args);
+        return slope(args);
       case 'area_triangle':
-        return await areaTriangle(args);
+        return areaTriangle(args);
       case 'area_polygon':
-        return await areaPolygon(args);
+        return areaPolygon(args);
       case 'area_circle':
-        return await areaCircle(args);
+        return areaCircle(args);
       case 'perimeter_polygon':
-        return await perimeterPolygon(args);
+        return perimeterPolygon(args);
       case 'circumference':
-        return await circumference(args);
+        return circumference(args);
       case 'line_intersection':
-        return await lineIntersection(args);
+        return lineIntersection(args);
       case 'point_line_distance':
-        return await pointLineDistance(args);
+        return pointLineDistance(args);
       case 'angle_between_lines':
-        return await angleBetweenLines(args);
+        return angleBetweenLines(args);
       default:
         return formatErrorResponse(`Unknown operation: ${op}`);
     }
