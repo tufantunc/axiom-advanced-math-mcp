@@ -96,6 +96,12 @@ const CAPABILITIES: [string, RegExp][] = [
   ['polynomial_regression([[1,2],[2,5],[3,10]], 2)', /^Equation: ŷ = x\^2 \+ 1\.00000$/m],
   // Sequences
   ['sequence(2,4,6,8)', /^Next 3 terms: 10, 12, 14$/m],
+  // n^2+2: not arithmetic/geometric/known, so this row is what pins the
+  // checkQuadratic wiring — the A/B/C solve, the A===1 'n^2' spelling, and
+  // the three-term extrapolation all show up in these three lines.
+  ['sequence(3,6,11,18)', /^Pattern: Quadratic sequence$/m],
+  ['sequence(3,6,11,18)', /^Formula: a\(n\) = n² \+2$/m],
+  ['sequence(3,6,11,18)', /^Next 3 terms: 27, 38, 51$/m],
   // Geometry — named arguments landed in a `raw` field nobody read
   ['area_circle(radius=2)', /^Result: 12\.5663706144$/m],
   ['area_triangle(base=4, height=3)', /^Result: 6$/m],
