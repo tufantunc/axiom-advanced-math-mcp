@@ -2,6 +2,54 @@ import { giacEngine } from '../giac/index.js';
 import { formatRawResponse, formatRawError, formatErrorResponse } from './response-formatter.js';
 import { parseComplexList } from './output-cleanup.js';
 
+function spectrumLines(
+  complex: { re: number; im: number }[],
+  n: number,
+  sampleRate: number | undefined,
+  outputMagnitude: boolean
+): string[] {
+  const lines: string[] = ['Frequency spectrum (index, real, imag):'];
+  const freqStep = sampleRate ? sampleRate / n : 1 / n;
+  const magLines: string[] = outputMagnitude ? ['', 'Magnitude spectrum:'] : [];
+
+  for (let k = 0; k < complex.length; k++) {
+    const { re, im } = complex[k];
+    const freq = sampleRate ? (k * freqStep).toFixed(4) + ' Hz' : (k / n).toFixed(4);
+    const reStr = re.toFixed(6).padStart(12);
+    const imStr = (im >= 0 ? '+' : '') + im.toFixed(6) + 'i';
+    lines.push(`  [${k}] f=${freq}  ${reStr} ${imStr}`);
+
+    if (outputMagnitude) {
+      const mag = Math.hypot(re, im);
+      magLines.push(`  [${k}] f=${freq}  |X| = ${mag.toFixed(6)}`);
+    }
+  }
+
+  if (outputMagnitude) lines.push(...magLines);
+  if (sampleRate) {
+    lines.push(
+      '',
+      `Frequency resolution: ${freqStep.toFixed(4)} Hz/bin`,
+      `Nyquist frequency: ${(sampleRate / 2).toFixed(4)} Hz`
+    );
+  }
+  return lines;
+}
+
+function reconstructionLines(complex: { re: number; im: number }[]): string[] {
+  const lines: string[] = ['Reconstructed time-domain signal:'];
+  for (let k = 0; k < complex.length; k++) {
+    const { re, im } = complex[k];
+    let imaginaryPart = '';
+    if (Math.abs(im) > 1e-10) {
+      const sign = im < 0 ? '-' : '+';
+      imaginaryPart = ` ${sign} ${Math.abs(im).toFixed(8)}i`;
+    }
+    lines.push(`  [${k}]  ${re.toFixed(8)}${imaginaryPart}`);
+  }
+  return lines;
+}
+
 export async function fourierTransformHandler(args: Record<string, unknown>) {
   const mode = args.mode as string;
   const data = args.data as number[];
@@ -32,42 +80,9 @@ export async function fourierTransformHandler(args: Record<string, unknown>) {
     const lines: string[] = [`${mode.toUpperCase()}: n = ${n} samples`, ``];
 
     if (mode === 'fft') {
-      lines.push('Frequency spectrum (index, real, imag):');
-      const freqStep = sampleRate ? sampleRate / n : 1 / n;
-      const magLines: string[] = outputMagnitude ? ['', 'Magnitude spectrum:'] : [];
-
-      for (let k = 0; k < complex.length; k++) {
-        const { re, im } = complex[k];
-        const freq = sampleRate ? (k * freqStep).toFixed(4) + ' Hz' : (k / n).toFixed(4);
-        const reStr = re.toFixed(6).padStart(12);
-        const imStr = (im >= 0 ? '+' : '') + im.toFixed(6) + 'i';
-        lines.push(`  [${k}] f=${freq}  ${reStr} ${imStr}`);
-
-        if (outputMagnitude) {
-          const mag = Math.hypot(re, im);
-          magLines.push(`  [${k}] f=${freq}  |X| = ${mag.toFixed(6)}`);
-        }
-      }
-
-      if (outputMagnitude) lines.push(...magLines);
-      if (sampleRate) {
-        lines.push(
-          '',
-          `Frequency resolution: ${freqStep.toFixed(4)} Hz/bin`,
-          `Nyquist frequency: ${(sampleRate / 2).toFixed(4)} Hz`
-        );
-      }
+      lines.push(...spectrumLines(complex, n, sampleRate, outputMagnitude));
     } else {
-      lines.push('Reconstructed time-domain signal:');
-      for (let k = 0; k < complex.length; k++) {
-        const { re, im } = complex[k];
-        let imaginaryPart = '';
-        if (Math.abs(im) > 1e-10) {
-          const sign = im < 0 ? '-' : '+';
-          imaginaryPart = ` ${sign} ${Math.abs(im).toFixed(8)}i`;
-        }
-        lines.push(`  [${k}]  ${re.toFixed(8)}${imaginaryPart}`);
-      }
+      lines.push(...reconstructionLines(complex));
     }
 
     return formatRawResponse(lines);
