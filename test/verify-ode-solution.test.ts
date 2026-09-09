@@ -390,4 +390,13 @@ describe('verifyOdeSolution', () => {
       expect(out?.verified, answer).not.toBe(false);
     }
   });
+
+  it('declines, without a verdict, when the equation cut leaves nothing', async () => {
+    // Pathological text (leading comma, bare join), but it is the decline
+    // state of extractBareEquation: an empty cut must stay a no-verdict —
+    // a mutant returning verified:false here ships an accusation built
+    // from nothing.
+    const out = await verifyOdeSolution(',y(0)=1', 'y', 'x', 'exp(x)', evaluate);
+    expect(out).toBeUndefined();
+  });
 });
