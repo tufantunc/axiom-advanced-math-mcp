@@ -125,4 +125,24 @@ describe('Verify Tool', () => {
       expect(parsed.evaluated).toBe(true);
     });
   });
+
+  describe('Comparison-operator claims', () => {
+    it('a bare == comparison has no main equals: 5 == 5 stays UNKNOWN', async () => {
+      // The == skip must consume BOTH characters: a single-char version
+      // leaves the second '=' as the main equals, and a true comparison
+      // reports as refuted. This regression shipped once and was caught
+      // only by review — the row exists so the suite catches it next time.
+      const res = await verifyHandler({ claim: '5 == 5', format: 'json' });
+      const parsed = JSON.parse(getText(res));
+      expect(parsed.evaluated).toBe(false);
+    });
+
+    it('numeric tolerance sits below the wrong-claim band: x/3 = 0.3333*x stays FALSE', async () => {
+      // The sampled check's residual is ~3.3e-5*|x| — above the 1e-6
+      // tolerance, far below 1e-2. Loosening the threshold certifies this
+      // false claim as an identity.
+      const t = getText(await verifyHandler({ claim: 'x/3 = 0.3333*x', method: 'numeric' }));
+      expect(t).toContain('Verified: FALSE');
+    });
+  });
 });
