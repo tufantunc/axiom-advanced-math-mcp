@@ -66,3 +66,47 @@ describe('analyzeNumberCore', () => {
     expect(lines.join('\n')).not.toContain('Divisors:');
   });
 });
+
+describe('handlers refuse non-finite numbers before analyzeNumberCore', () => {
+  // The extractors run parseInt on caller text with no NaN check; before the
+  // guards, these shipped analyzeNumberCore's degenerate report (and
+  // ifactor's raw GIAC_ERROR) at isError:false. The pins drive the handlers,
+  // which is where the refusal now lives.
+  it('number_theory analyze refuses NaN (isprime(x), euler(n), analyze(foo))', async () => {
+    const { numberTheoryHandler } = await import('../src/server/tools/number-theory.js');
+    for (const number of [Number.NaN]) {
+      const r = await numberTheoryHandler({ operation: 'analyze', number });
+      expect(r.isError).toBe(true);
+      expect(r.content[0].text).toContain('finite integer');
+    }
+  });
+
+  it('number_theory prime_factorize refuses NaN (ifactor(foo))', async () => {
+    const { numberTheoryHandler } = await import('../src/server/tools/number-theory.js');
+    const r = await numberTheoryHandler({ operation: 'prime_factorize', number: Number.NaN });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain('finite integer');
+  });
+
+  it('number_properties refuses NaN (number_properties(foo))', async () => {
+    const { numberPropertiesHandler } = await import('../src/server/tools/number-properties.js');
+    const r = await numberPropertiesHandler({ number: Number.NaN });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain('finite integer');
+  });
+
+  it('a throwing analyzeNumberCore resolves to an error envelope, not a rejection', async () => {
+    // Pins the 'return await' discipline in number-theory's dispatch: a bare
+    // 'return analyzeNumber(n)' lets the rejection escape the handler's catch.
+    const { numberTheoryHandler } = await import('../src/server/tools/number-theory.js');
+    const utils = await import('../src/server/tools/number-utils.js');
+    const spy = vi.spyOn(utils, 'analyzeNumberCore').mockRejectedValue(new Error('engine down'));
+    try {
+      const r = await numberTheoryHandler({ operation: 'analyze', number: 97 });
+      expect(r.isError).toBe(true);
+      expect(r.content[0].text).toContain('engine down');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
