@@ -31,6 +31,93 @@ import {
   extractGeometry3d,
 } from './extractors.js';
 
+// Same alternations the one-line literals spelled, assembled from lists so the
+// verb sets read as sets. Sources are byte-identical to the previous literals.
+const CAS_VERBS = [
+  'solve',
+  'csolve',
+  'diff',
+  'int',
+  'integrate',
+  'limit',
+  'taylor',
+  'desolve',
+  'factor',
+  'cfactor',
+  'simplify',
+  'expand',
+  'partfrac',
+  'det',
+  'inv',
+  'eigenvals',
+  'rref',
+  'rank',
+  'tran',
+  'ker',
+  'qr',
+  'lu',
+  'cholesky',
+  'svd',
+  'norm',
+  'cond',
+  'ifactor',
+  'isprime',
+  'euler',
+  'laplace',
+  'ilaplace',
+  'sum',
+  'product',
+  'grad',
+  'curl',
+  'divergence',
+  'hessian',
+  'jacobian',
+  'C',
+  'P',
+  'comb',
+  'perm',
+];
+const CAS_VERB_PATTERN = new RegExp(`^(${CAS_VERBS.join('|')})\\s*\\(`, 'i');
+
+const KNOWN_MATH_FNS = [
+  'sin',
+  'cos',
+  'tan',
+  'asin',
+  'acos',
+  'atan',
+  'atan2',
+  'sinh',
+  'cosh',
+  'tanh',
+  'asinh',
+  'acosh',
+  'atanh',
+  'sqrt',
+  'cbrt',
+  'abs',
+  'ceil',
+  'floor',
+  'round',
+  'log',
+  'log2',
+  'log10',
+  'ln',
+  'exp',
+  'pow',
+  'min',
+  'max',
+  'sign',
+  'mod',
+  'gcd',
+  'lcm',
+  'nCr',
+  'nPr',
+  'factorial',
+  'gamma',
+];
+const KNOWN_MATH_FN_PATTERN = new RegExp(`^(${KNOWN_MATH_FNS.join('|')})\\s*\\(`, 'i');
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -196,20 +283,16 @@ function isPureArithmetic(problem: string): boolean {
   // Must not be empty
   if (!trimmed) return false;
   // Should not start with known CAS function calls
-  const casPatterns =
-    /^(solve|csolve|diff|int|integrate|limit|taylor|desolve|factor|cfactor|simplify|expand|partfrac|det|inv|eigenvals|rref|rank|tran|ker|qr|lu|cholesky|svd|norm|cond|ifactor|isprime|euler|laplace|ilaplace|sum|product|grad|curl|divergence|hessian|jacobian|C|P|comb|perm)\s*\(/i;
-  if (casPatterns.test(trimmed)) return false;
+  if (CAS_VERB_PATTERN.test(trimmed)) return false;
   // Should not look like a system of equations
   if (isSystemOfEquations(trimmed)) return false;
   // Check for unknown function calls — if there's a word followed by '(' that isn't
   // a known math function, it's likely a CAS command and should go to giac_raw
-  const knownMathFns =
-    /^(sin|cos|tan|asin|acos|atan|atan2|sinh|cosh|tanh|asinh|acosh|atanh|sqrt|cbrt|abs|ceil|floor|round|log|log2|log10|ln|exp|pow|min|max|sign|mod|gcd|lcm|nCr|nPr|factorial|gamma)\s*\(/i;
   const fnCallPattern = /\b([a-zA-Z_]\w*)\s*\(/g;
   let match;
   while ((match = fnCallPattern.exec(trimmed)) !== null) {
     const fnName = match[1];
-    if (!knownMathFns.test(fnName + '(')) {
+    if (!KNOWN_MATH_FN_PATTERN.test(fnName + '(')) {
       return false;
     }
   }

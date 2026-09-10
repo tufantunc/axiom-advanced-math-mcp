@@ -80,11 +80,10 @@ function finish(code: number): void {
   process.exitCode = code;
 }
 
-main()
-  .then((code) => {
-    if (code !== null) finish(code);
-  })
-  .catch((err) => {
-    console.error(`axiom-math: ${err instanceof Error ? err.message : String(err)}`);
-    finish(1);
-  });
+try {
+  const code = await main();
+  if (code !== null) finish(code);
+} catch (err) {
+  console.error(`axiom-math: ${err instanceof Error ? err.message : String(err)}`);
+  finish(1);
+}
