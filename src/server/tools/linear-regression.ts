@@ -42,7 +42,9 @@ async function polynomialFit(
 }
 
 function formatTerm(c: number, i: number, variable: string, isFirst: boolean): string {
-  const sign = isFirst ? (c < 0 ? '-' : '') : c >= 0 ? ' + ' : ' - ';
+  let sign: string;
+  if (isFirst) sign = c < 0 ? '-' : '';
+  else sign = c >= 0 ? ' + ' : ' - ';
   const absC = Math.abs(c);
   const coefStr = absC === 1 && i > 0 ? '' : absC.toPrecision(6);
   let varStr: string;

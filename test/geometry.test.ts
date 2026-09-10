@@ -122,22 +122,14 @@ describe('geometry — 2D distances and magnitudes', () => {
     expect(allText(r)).toContain('points must be (x, y) pairs');
   });
 
-  it('refuses one bad line among two (paren first)', async () => {
-    // The line rows pin each clause separately: deleting only the line1 or
-    // only the line2 check used to leave the other firing, reviving (NaN, NaN).
+  // The line rows pin each clause separately: deleting only the line1 or
+  // only the line2 check used to leave the other firing, reviving (NaN, NaN).
+  it.each([
+    ['paren first', 'line_intersection((1,1,0), [1,0,0])'],
+    ['paren second', 'line_intersection([1,0,0], (1,1,-2))'],
+  ])('refuses one bad line among two (%s)', async (_name, problem) => {
     const { extractGeometry } = await import('../src/server/tools/compute/extractors.js');
-    const r = await geometryHandler({
-      ...extractGeometry('line_intersection((1,1,0), [1,0,0])').args,
-    });
-    expect(r.isError).toBe(true);
-    expect(allText(r)).toContain('lines [a, b, c] triples');
-  });
-
-  it('refuses one bad line among two (paren second)', async () => {
-    const { extractGeometry } = await import('../src/server/tools/compute/extractors.js');
-    const r = await geometryHandler({
-      ...extractGeometry('line_intersection([1,0,0], (1,1,-2))').args,
-    });
+    const r = await geometryHandler({ ...extractGeometry(problem).args });
     expect(r.isError).toBe(true);
     expect(allText(r)).toContain('lines [a, b, c] triples');
   });

@@ -39,41 +39,45 @@ async function sequenceIdentify(terms: number[]) {
   return formatToolResponse({ result: mainResult, notes: lines });
 }
 
+async function runPrimeFactorize(args: Record<string, unknown>) {
+  const n = args.number as number | undefined;
+  if (n === undefined) return formatErrorResponse("'number' is required for prime_factorize");
+  // The extractors run Number.parseInt on the caller's text with no NaN
+  // check, so `ifactor(foo)` arrives here as NaN and used to be answered
+  // ("NaN has no prime factors", isError:false). Refused, not answered.
+  if (!Number.isFinite(n)) {
+    return formatErrorResponse('number must be a finite integer, e.g. ifactor(360)');
+  }
+  return await primeFactorize(n);
+}
+
+async function runAnalyze(args: Record<string, unknown>) {
+  const n = args.number as number | undefined;
+  if (n === undefined) return formatErrorResponse("'number' is required for analyze");
+  // Same extractor gap: `isprime(x)` / `euler(n)` arrive as NaN and
+  // analyzeNumberCore used to ship its degenerate report at isError:false.
+  if (!Number.isFinite(n)) {
+    return formatErrorResponse('number must be a finite integer, e.g. isprime(97)');
+  }
+  return await analyzeNumber(n);
+}
+
+async function runSequenceIdentify(args: Record<string, unknown>) {
+  const seq = args.sequence as number[] | undefined;
+  if (!seq || seq.length < 3)
+    return formatErrorResponse(
+      "'sequence' array with at least 3 terms is required for sequence_identify"
+    );
+  return await sequenceIdentify(seq);
+}
+
 export async function numberTheoryHandler(args: Record<string, unknown>) {
   try {
     const operation = args.operation as string;
 
-    if (operation === 'prime_factorize') {
-      const n = args.number as number | undefined;
-      if (n === undefined) return formatErrorResponse("'number' is required for prime_factorize");
-      // The extractors run Number.parseInt on the caller's text with no NaN
-      // check, so `ifactor(foo)` arrives here as NaN and used to be answered
-      // ("NaN has no prime factors", isError:false). Refused, not answered.
-      if (!Number.isFinite(n)) {
-        return formatErrorResponse('number must be a finite integer, e.g. ifactor(360)');
-      }
-      return await primeFactorize(n);
-    }
-
-    if (operation === 'analyze') {
-      const n = args.number as number | undefined;
-      if (n === undefined) return formatErrorResponse("'number' is required for analyze");
-      // Same extractor gap: `isprime(x)` / `euler(n)` arrive as NaN and
-      // analyzeNumberCore used to ship its degenerate report at isError:false.
-      if (!Number.isFinite(n)) {
-        return formatErrorResponse('number must be a finite integer, e.g. isprime(97)');
-      }
-      return await analyzeNumber(n);
-    }
-
-    if (operation === 'sequence_identify') {
-      const seq = args.sequence as number[] | undefined;
-      if (!seq || seq.length < 3)
-        return formatErrorResponse(
-          "'sequence' array with at least 3 terms is required for sequence_identify"
-        );
-      return await sequenceIdentify(seq);
-    }
+    if (operation === 'prime_factorize') return await runPrimeFactorize(args);
+    if (operation === 'analyze') return await runAnalyze(args);
+    if (operation === 'sequence_identify') return await runSequenceIdentify(args);
 
     return formatErrorResponse(`Unknown operation: ${operation}`);
   } catch (error) {
