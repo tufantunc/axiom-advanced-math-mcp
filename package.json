@@ -68,7 +68,7 @@
   "dependencies": {
     "@hono/node-server": "2.1.0",
     "@modelcontextprotocol/sdk": "^1.25.3",
-    "hono": "4.13.1",
+    "hono": "4.13.7",
     "mathjs": "15.2.0",
     "zod": "^4.0.0"
   },
