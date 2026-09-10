@@ -374,31 +374,41 @@ export async function numericalMethodsHandler(args: Record<string, unknown>) {
         return formatErrorResponse(`Unknown method: ${method}`);
     }
 
-    // Matching only `✗ Error:` caught bisection's sign-change return and none of
-    // the five siblings in this file — `✗ Failed: ...` and `✗ Did not converge
-    // within N iterations.` fell through to the headline scan below, where the
-    // label strip turned them into answers: `newton(x^3-2*x+2, x, 0)` reported
-    // "0" for a point where f = 2, and `secant(x^2-2, 1, 1)` reported "division
-    // by zero (f(x1) ≈ f(x0))".
-    const failure = inBandFailure(lines);
-    if (failure) return formatErrorResponse(failure);
-
-    // The answer to "find a root" is the root, not the residual. Scanning only
-    // the last line found `f(root) = 3.154474e-11`, and the `Root|Result` regex
-    // is case-sensitive so lowercase `f(root)` fell through to the raw line —
-    // so `bisection(x^2-2, 1, 2)` answered 3.15e-11 for a root of 1.4142136.
-    const labelled =
-      lines.find((l) => l.startsWith('Root:')) ?? lines.find((l) => l.startsWith('Result'));
-    // Strip the label only from a line that has one. Applying the strip to the
-    // raw last line is what turned `Last x = 0` into a bare `0`.
-    const mainResult = labelled ? labelled.replace(/^[^=:]*[=:]\s*/, '').trim() : lines.at(-1);
-    if (mainResult === undefined) return formatErrorResponse('the method produced no output');
-
-    return formatToolResponse({
-      result: mainResult,
-      notes: lines,
-    });
+    return formatMethodResult(lines);
   } catch (error) {
     return formatErrorResponse(error instanceof Error ? error.message : String(error));
   }
+}
+
+/**
+ * The method's lines become either a refusal (an in-band failure marker) or
+ * the response whose result is the labelled answer line.
+ */
+function formatMethodResult(
+  lines: string[]
+): ReturnType<typeof formatToolResponse> | ReturnType<typeof formatErrorResponse> {
+  // Matching only `✗ Error:` caught bisection's sign-change return and none of
+  // the five siblings in this file — `✗ Failed: ...` and `✗ Did not converge
+  // within N iterations.` fell through to the headline scan below, where the
+  // label strip turned them into answers: `newton(x^3-2*x+2, x, 0)` reported
+  // "0" for a point where f = 2, and `secant(x^2-2, 1, 1)` reported "division
+  // by zero (f(x1) ≈ f(x0))".
+  const failure = inBandFailure(lines);
+  if (failure) return formatErrorResponse(failure);
+
+  // The answer to "find a root" is the root, not the residual. Scanning only
+  // the last line found `f(root) = 3.154474e-11`, and the `Root|Result` regex
+  // is case-sensitive so lowercase `f(root)` fell through to the raw line —
+  // so `bisection(x^2-2, 1, 2)` answered 3.15e-11 for a root of 1.4142136.
+  const labelled =
+    lines.find((l) => l.startsWith('Root:')) ?? lines.find((l) => l.startsWith('Result'));
+  // Strip the label only from a line that has one. Applying the strip to the
+  // raw last line is what turned `Last x = 0` into a bare `0`.
+  const mainResult = labelled ? labelled.replace(/^[^=:]*[=:]\s*/, '').trim() : lines.at(-1);
+  if (mainResult === undefined) return formatErrorResponse('the method produced no output');
+
+  return formatToolResponse({
+    result: mainResult,
+    notes: lines,
+  });
 }

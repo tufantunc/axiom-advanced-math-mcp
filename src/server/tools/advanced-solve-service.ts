@@ -44,31 +44,10 @@ export class AdvancedSolveService {
         if (latex !== undefined) output.latex = latex;
       }
 
-      // Steps: show original expression and simplified result
-      if (steps) {
-        output.steps = [];
-        output.steps.push(`Input: ${expression}`);
-        if (simplify !== false && giacExpression !== expression) {
-          const rawResult = await giacEngine.evaluate(expression);
-          output.steps.push(`Raw result: ${rawResult}`, `Simplified: ${result}`);
-        } else {
-          output.steps.push(`Result: ${result}`);
-        }
-      }
+      if (steps) output.steps = await solveSteps(expression, giacExpression, result, simplify);
 
-      // Extract variables using lname()
-      try {
-        const vars = await giacEngine.evaluate(`lname(${expression})`);
-        if (vars && vars !== '[]' && vars !== 'undef') {
-          // Parse Giac list output: [x,y,z] -> ['x', 'y', 'z']
-          const cleaned = vars.replaceAll(/[[\]]/g, '').trim();
-          if (cleaned) {
-            output.variables = cleaned.split(',').map((v) => v.trim());
-          }
-        }
-      } catch {
-        // Variable extraction is best-effort
-      }
+      const variables = await extractVariables(expression);
+      if (variables !== undefined) output.variables = variables;
 
       return output;
     } catch (error) {
@@ -78,4 +57,36 @@ export class AdvancedSolveService {
       throw new Error(`Giac evaluation error: ${String(error)}`);
     }
   }
+}
+
+/** The steps block: original input plus the raw/simplified pair when simplify ran. */
+async function solveSteps(
+  expression: string,
+  giacExpression: string,
+  result: string,
+  simplify: boolean | undefined
+): Promise<string[]> {
+  const steps = [`Input: ${expression}`];
+  if (simplify !== false && giacExpression !== expression) {
+    const rawResult = await giacEngine.evaluate(expression);
+    steps.push(`Raw result: ${rawResult}`, `Simplified: ${result}`);
+  } else {
+    steps.push(`Result: ${result}`);
+  }
+  return steps;
+}
+
+/** Free variables via lname(), best-effort — undefined rather than an error. */
+async function extractVariables(expression: string): Promise<string[] | undefined> {
+  try {
+    const vars = await giacEngine.evaluate(`lname(${expression})`);
+    if (vars && vars !== '[]' && vars !== 'undef') {
+      // Parse Giac list output: [x,y,z] -> ['x', 'y', 'z']
+      const cleaned = vars.replaceAll(/[[\]]/g, '').trim();
+      if (cleaned) return cleaned.split(',').map((v) => v.trim());
+    }
+  } catch {
+    // Variable extraction is best-effort
+  }
+  return undefined;
 }
