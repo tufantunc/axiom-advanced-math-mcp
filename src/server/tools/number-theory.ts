@@ -46,13 +46,24 @@ export async function numberTheoryHandler(args: Record<string, unknown>) {
     if (operation === 'prime_factorize') {
       const n = args.number as number | undefined;
       if (n === undefined) return formatErrorResponse("'number' is required for prime_factorize");
-      return primeFactorize(n);
+      // The extractors run Number.parseInt on the caller's text with no NaN
+      // check, so `ifactor(foo)` arrives here as NaN and used to be answered
+      // ("NaN has no prime factors", isError:false). Refused, not answered.
+      if (!Number.isFinite(n)) {
+        return formatErrorResponse('number must be a finite integer, e.g. ifactor(360)');
+      }
+      return await primeFactorize(n);
     }
 
     if (operation === 'analyze') {
       const n = args.number as number | undefined;
       if (n === undefined) return formatErrorResponse("'number' is required for analyze");
-      return analyzeNumber(n);
+      // Same extractor gap: `isprime(x)` / `euler(n)` arrive as NaN and
+      // analyzeNumberCore used to ship its degenerate report at isError:false.
+      if (!Number.isFinite(n)) {
+        return formatErrorResponse('number must be a finite integer, e.g. isprime(97)');
+      }
+      return await analyzeNumber(n);
     }
 
     if (operation === 'sequence_identify') {
@@ -61,7 +72,7 @@ export async function numberTheoryHandler(args: Record<string, unknown>) {
         return formatErrorResponse(
           "'sequence' array with at least 3 terms is required for sequence_identify"
         );
-      return sequenceIdentify(seq);
+      return await sequenceIdentify(seq);
     }
 
     return formatErrorResponse(`Unknown operation: ${operation}`);
