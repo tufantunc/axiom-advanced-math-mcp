@@ -24,6 +24,10 @@ describe('numerical_methods', () => {
       expect(result.isError).toBe(false);
       expect(allText(result)).toContain('Converged');
       expect(allText(result)).toContain('1.4142');
+      // Block order: the root precedes its residual. The headline picker
+      // scans for the Root: prefix position-independently, so only this
+      // pins the order (bisection and secant share the cluster shape).
+      expect(allText(result)).toMatch(/✓ Converged[^\n]*\nRoot: x = 1\.41421[^\n]*\nf\(root\) = /);
     });
 
     it('should find root of sin(x) near pi', async () => {

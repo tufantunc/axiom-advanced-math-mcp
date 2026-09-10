@@ -86,15 +86,19 @@ function binomial(op: string, params: Record<string, number>): CalcResult {
   const variance = n * p * q;
 
   if (op === 'expected_value') {
-    lines.push(`E[X] = n×p = ${n}×${p} = ${ev}`);
-    lines.push(`Var(X) = n×p×(1-p) = ${variance}`);
-    lines.push(`Std(X) = ${Math.sqrt(variance)}`);
+    lines.push(
+      `E[X] = n×p = ${n}×${p} = ${ev}`,
+      `Var(X) = n×p×(1-p) = ${variance}`,
+      `Std(X) = ${Math.sqrt(variance)}`
+    );
     return { lines };
   }
 
   if (op === 'variance') {
-    lines.push(`Var(X) = n×p×(1-p) = ${n}×${p}×${q} = ${variance}`);
-    lines.push(`Std(X) = ${Math.sqrt(variance)}`);
+    lines.push(
+      `Var(X) = n×p×(1-p) = ${n}×${p}×${q} = ${variance}`,
+      `Std(X) = ${Math.sqrt(variance)}`
+    );
     return { lines };
   }
 
@@ -104,10 +108,12 @@ function binomial(op: string, params: Record<string, number>): CalcResult {
 
   if (op === 'pmf') {
     const prob = combinations(n, k) * Math.pow(p, k) * Math.pow(q, n - k);
-    lines.push(`P(X = ${k}) = C(${n},${k}) × ${p}^${k} × ${q}^${n - k}`);
-    lines.push(`P(X = ${k}) = ${prob}`);
-    lines.push(`E[X] = ${ev}`);
-    lines.push(`Var(X) = ${variance}`);
+    lines.push(
+      `P(X = ${k}) = C(${n},${k}) × ${p}^${k} × ${q}^${n - k}`,
+      `P(X = ${k}) = ${prob}`,
+      `E[X] = ${ev}`,
+      `Var(X) = ${variance}`
+    );
     return { lines };
   }
 
@@ -120,10 +126,12 @@ function binomial(op: string, params: Record<string, number>): CalcResult {
       k >= n
         ? 1
         : sumLogTerms(k, (i) => lchoose(n, i) + i * Math.log(p) + (n - i) * Math.log1p(-p));
-    lines.push(`P(X ≤ ${k}) = Σ P(X=i) for i=0..${k}`);
-    lines.push(`P(X ≤ ${k}) = ${cumProb}`);
-    lines.push(`E[X] = ${ev}`);
-    lines.push(`Var(X) = ${variance}`);
+    lines.push(
+      `P(X ≤ ${k}) = Σ P(X=i) for i=0..${k}`,
+      `P(X ≤ ${k}) = ${cumProb}`,
+      `E[X] = ${ev}`,
+      `Var(X) = ${variance}`
+    );
     return { lines };
   }
 
@@ -136,15 +144,12 @@ async function normal(op: string, params: Record<string, number>): Promise<CalcR
   const lines: string[] = [`Distribution: Normal(μ=${mu}, σ=${sigma})`];
 
   if (op === 'expected_value') {
-    lines.push(`E[X] = μ = ${mu}`);
-    lines.push(`Var(X) = σ² = ${sigma * sigma}`);
-    lines.push(`Std(X) = σ = ${sigma}`);
+    lines.push(`E[X] = μ = ${mu}`, `Var(X) = σ² = ${sigma * sigma}`, `Std(X) = σ = ${sigma}`);
     return { lines };
   }
 
   if (op === 'variance') {
-    lines.push(`Var(X) = σ² = ${sigma * sigma}`);
-    lines.push(`Std(X) = σ = ${sigma}`);
+    lines.push(`Var(X) = σ² = ${sigma * sigma}`, `Std(X) = σ = ${sigma}`);
     return { lines };
   }
 
@@ -157,8 +162,7 @@ async function normal(op: string, params: Record<string, number>): Promise<CalcR
     const coeff = 1 / (sigma * Math.sqrt(2 * Math.PI));
     const exponent = -0.5 * Math.pow((x - mu) / sigma, 2);
     const pdf = coeff * Math.exp(exponent);
-    lines.push(`f(${x}) = (1/(σ√(2π))) × exp(-½((x-μ)/σ)²)`);
-    lines.push(`f(${x}) = ${pdf}`);
+    lines.push(`f(${x}) = (1/(σ√(2π))) × exp(-½((x-μ)/σ)²)`, `f(${x}) = ${pdf}`);
     const z = (x - mu) / sigma;
     lines.push(`z-score: ${z}`);
     return { lines };
@@ -167,15 +171,13 @@ async function normal(op: string, params: Record<string, number>): Promise<CalcR
   if (op === 'cdf') {
     try {
       const result = await giacEngine.evaluate(`normald_cdf(${mu},${sigma},${x})`);
-      lines.push(`P(X ≤ ${x}) = Φ((${x}-${mu})/${sigma})`);
-      lines.push(`P(X ≤ ${x}) = ${result.trim()}`);
+      lines.push(`P(X ≤ ${x}) = Φ((${x}-${mu})/${sigma})`, `P(X ≤ ${x}) = ${result.trim()}`);
       const z = (x - mu) / sigma;
       lines.push(`z-score: ${z}`);
     } catch {
       const z = (x - mu) / sigma;
       const cdf = 0.5 * (1 + erf(z / Math.sqrt(2)));
-      lines.push(`P(X ≤ ${x}) ≈ ${cdf}`);
-      lines.push(`z-score: ${z}`);
+      lines.push(`P(X ≤ ${x}) ≈ ${cdf}`, `z-score: ${z}`);
     }
     return { lines };
   }
@@ -192,14 +194,12 @@ function poisson(op: string, params: Record<string, number>): CalcResult {
   }
 
   if (op === 'expected_value') {
-    lines.push(`E[X] = λ = ${lambda}`);
-    lines.push(`Var(X) = λ = ${lambda}`);
+    lines.push(`E[X] = λ = ${lambda}`, `Var(X) = λ = ${lambda}`);
     return { lines };
   }
 
   if (op === 'variance') {
-    lines.push(`Var(X) = λ = ${lambda}`);
-    lines.push(`Std(X) = √λ = ${Math.sqrt(lambda)}`);
+    lines.push(`Var(X) = λ = ${lambda}`, `Std(X) = √λ = ${Math.sqrt(lambda)}`);
     return { lines };
   }
 
@@ -210,8 +210,7 @@ function poisson(op: string, params: Record<string, number>): CalcResult {
 
   if (op === 'pmf') {
     const prob = (Math.exp(-lambda) * Math.pow(lambda, k)) / factorial(k);
-    lines.push(`P(X = ${k}) = e^(-${lambda}) × ${lambda}^${k} / ${k}!`);
-    lines.push(`P(X = ${k}) = ${prob}`);
+    lines.push(`P(X = ${k}) = e^(-${lambda}) × ${lambda}^${k} / ${k}!`, `P(X = ${k}) = ${prob}`);
     return { lines };
   }
 
@@ -238,14 +237,15 @@ function geometric(op: string, params: Record<string, number>): CalcResult {
   const q = 1 - p;
 
   if (op === 'expected_value') {
-    lines.push(`E[X] = 1/p = ${1 / p}`);
-    lines.push(`Var(X) = (1-p)/p² = ${q / (p * p)}`);
+    lines.push(`E[X] = 1/p = ${1 / p}`, `Var(X) = (1-p)/p² = ${q / (p * p)}`);
     return { lines };
   }
 
   if (op === 'variance') {
-    lines.push(`Var(X) = (1-p)/p² = ${q / (p * p)}`);
-    lines.push(`Std(X) = √((1-p)/p²) = ${Math.sqrt(q / (p * p))}`);
+    lines.push(
+      `Var(X) = (1-p)/p² = ${q / (p * p)}`,
+      `Std(X) = √((1-p)/p²) = ${Math.sqrt(q / (p * p))}`
+    );
     return { lines };
   }
 
@@ -256,15 +256,13 @@ function geometric(op: string, params: Record<string, number>): CalcResult {
 
   if (op === 'pmf') {
     const prob = Math.pow(q, k - 1) * p;
-    lines.push(`P(X = ${k}) = (1-${p})^${k - 1} × ${p}`);
-    lines.push(`P(X = ${k}) = ${prob}`);
+    lines.push(`P(X = ${k}) = (1-${p})^${k - 1} × ${p}`, `P(X = ${k}) = ${prob}`);
     return { lines };
   }
 
   if (op === 'cdf') {
     const cumProb = 1 - Math.pow(q, k);
-    lines.push(`P(X ≤ ${k}) = 1 - (1-${p})^${k}`);
-    lines.push(`P(X ≤ ${k}) = ${cumProb}`);
+    lines.push(`P(X ≤ ${k}) = 1 - (1-${p})^${k}`, `P(X ≤ ${k}) = ${cumProb}`);
     return { lines };
   }
 
@@ -287,8 +285,7 @@ function hypergeometric(op: string, params: Record<string, number>): CalcResult 
   const variance = (n * K * (N - K) * (N - n)) / (N * N * (N - 1));
 
   if (op === 'expected_value') {
-    lines.push(`E[X] = nK/N = ${n}×${K}/${N} = ${ev}`);
-    lines.push(`Var(X) = ${variance}`);
+    lines.push(`E[X] = nK/N = ${n}×${K}/${N} = ${ev}`, `Var(X) = ${variance}`);
     return { lines };
   }
 
@@ -303,9 +300,11 @@ function hypergeometric(op: string, params: Record<string, number>): CalcResult 
 
   if (op === 'pmf') {
     const prob = (combinations(K, k) * combinations(N - K, n - k)) / combinations(N, n);
-    lines.push(`P(X = ${k}) = C(${K},${k})×C(${N - K},${n - k}) / C(${N},${n})`);
-    lines.push(`P(X = ${k}) = ${prob}`);
-    lines.push(`E[X] = ${ev}`);
+    lines.push(
+      `P(X = ${k}) = C(${K},${k})×C(${N - K},${n - k}) / C(${N},${n})`,
+      `P(X = ${k}) = ${prob}`,
+      `E[X] = ${ev}`
+    );
     return { lines };
   }
 
@@ -317,8 +316,7 @@ function hypergeometric(op: string, params: Record<string, number>): CalcResult 
       k >= Math.min(n, K)
         ? 1
         : sumLogTerms(k, (i) => lchoose(K, i) + lchoose(N - K, n - i) - lchoose(N, n));
-    lines.push(`P(X ≤ ${k}) = ${cumProb}`);
-    lines.push(`E[X] = ${ev}`);
+    lines.push(`P(X ≤ ${k}) = ${cumProb}`, `E[X] = ${ev}`);
     return { lines };
   }
 
@@ -332,8 +330,7 @@ async function chiSquare(op: string, params: Record<string, number>): Promise<Ca
     return { lines: ['Error: chi_square requires param df (degrees of freedom)'] };
 
   if (op === 'expected_value') {
-    lines.push(`E[X] = df = ${df}`);
-    lines.push(`Var(X) = 2×df = ${2 * df}`);
+    lines.push(`E[X] = df = ${df}`, `Var(X) = 2×df = ${2 * df}`);
     return { lines };
   }
   if (op === 'variance') {
@@ -363,8 +360,10 @@ async function studentT(op: string, params: Record<string, number>): Promise<Cal
     return { lines: ['Error: student_t requires param df (degrees of freedom)'] };
 
   if (op === 'expected_value') {
-    lines.push(`E[X] = 0 (df > 1)`);
-    lines.push(df > 2 ? `Var(X) = df/(df-2) = ${df / (df - 2)}` : `Var(X) = undefined (df ≤ 2)`);
+    lines.push(
+      `E[X] = 0 (df > 1)`,
+      df > 2 ? `Var(X) = df/(df-2) = ${df / (df - 2)}` : `Var(X) = undefined (df ≤ 2)`
+    );
     return { lines };
   }
   if (op === 'variance') {
@@ -425,8 +424,7 @@ async function betaDist(op: string, params: Record<string, number>): Promise<Cal
   const variance = (alpha * betaParam) / ((alpha + betaParam) ** 2 * (alpha + betaParam + 1));
 
   if (op === 'expected_value') {
-    lines.push(`E[X] = α/(α+β) = ${ev}`);
-    lines.push(`Var(X) = αβ/((α+β)²(α+β+1)) = ${variance}`);
+    lines.push(`E[X] = α/(α+β) = ${ev}`, `Var(X) = αβ/((α+β)²(α+β+1)) = ${variance}`);
     return { lines };
   }
   if (op === 'variance') {
@@ -451,13 +449,11 @@ function exponentialDist(op: string, params: Record<string, number>): CalcResult
   if (lambda === undefined) return { lines: ['Error: exponential requires param lambda'] };
 
   if (op === 'expected_value') {
-    lines.push(`E[X] = 1/λ = ${1 / lambda}`);
-    lines.push(`Var(X) = 1/λ² = ${1 / (lambda * lambda)}`);
+    lines.push(`E[X] = 1/λ = ${1 / lambda}`, `Var(X) = 1/λ² = ${1 / (lambda * lambda)}`);
     return { lines };
   }
   if (op === 'variance') {
-    lines.push(`Var(X) = 1/λ² = ${1 / (lambda * lambda)}`);
-    lines.push(`Std(X) = 1/λ = ${1 / lambda}`);
+    lines.push(`Var(X) = 1/λ² = ${1 / (lambda * lambda)}`, `Std(X) = 1/λ = ${1 / lambda}`);
     return { lines };
   }
   if (op === 'quantile') {
@@ -468,8 +464,7 @@ function exponentialDist(op: string, params: Record<string, number>): CalcResult
   if (x === undefined) return { lines: ['Error: pmf/cdf requires param x'] };
   if (op === 'pmf') {
     const pdf = lambda * Math.exp(-lambda * x);
-    lines.push(`f(x) = λ×e^(-λx)`);
-    lines.push(`f(${x}) = ${pdf}`);
+    lines.push(`f(x) = λ×e^(-λx)`, `f(${x}) = ${pdf}`);
     return { lines };
   }
   if (op === 'cdf') {

@@ -56,13 +56,11 @@ export interface VerifyResult {
 // ---------------------------------------------------------------------------
 
 /**
- * True when `expr` consists ONLY of top-level additive terms that carry an
- * order_size factor — i.e. it is a series remainder, zero for verification
- * purposes. (stripOrderTerm cannot be used here: it returns the ORIGINAL
- * string when stripping would leave nothing.)
+ * Split an expression into top-level additive terms, keeping each term's
+ * leading sign with what follows it. Boundaries are `+`/`-` at depth 0 only,
+ * and a term that is empty or a lone dash is dropped.
  */
-function isOrderResidueOnly(expr: string): boolean {
-  if (!expr.includes('order_size')) return false;
+function splitAdditiveTerms(expr: string): string[] {
   const terms: string[] = [];
   let depth = 0;
   let cur = '';
@@ -77,6 +75,18 @@ function isOrderResidueOnly(expr: string): boolean {
     }
   }
   if (cur.trim() !== '' && cur.trim() !== '-') terms.push(cur);
+  return terms;
+}
+
+/**
+ * True when `expr` consists ONLY of top-level additive terms that carry an
+ * order_size factor — i.e. it is a series remainder, zero for verification
+ * purposes. (stripOrderTerm cannot be used here: it returns the ORIGINAL
+ * string when stripping would leave nothing.)
+ */
+function isOrderResidueOnly(expr: string): boolean {
+  if (!expr.includes('order_size')) return false;
+  const terms = splitAdditiveTerms(expr);
   return terms.length > 0 && terms.every((t) => t.includes('order_size'));
 }
 
@@ -141,86 +151,98 @@ async function verifySymbolic(
  * Numeric verification: substitute random values for all variables
  * and check if LHS ≈ RHS.
  */
-async function verifyNumeric(
-  lhs: string,
-  rhs: string
-): Promise<{
+interface CheckOutcome {
   verified: boolean;
   evaluated: boolean;
   detail: string;
-}> {
+}
+
+async function verifyNumericDirect(lhs: string, rhs: string): Promise<CheckOutcome> {
+  // No variables — direct numeric evaluation
+  const lhsVal = await giacEngine.evaluate(`evalf(${lhs})`);
+  const rhsVal = await giacEngine.evaluate(`evalf(${rhs})`);
+  const diff = Math.abs(Number.parseFloat(lhsVal) - Number.parseFloat(rhsVal));
+  // A non-numeric side leaves diff NaN: nothing was compared, so this is
+  // "could not check", not "checked and unequal".
+  if (Number.isNaN(diff)) {
+    return {
+      verified: false,
+      evaluated: false,
+      detail: `Direct evaluation produced no number: ${lhsVal} / ${rhsVal}`,
+    };
+  }
+  const verified = diff < 1e-8;
+  return {
+    verified,
+    evaluated: true,
+    detail: verified
+      ? `Direct evaluation: ${lhsVal} ≈ ${rhsVal} ✓`
+      : `Direct evaluation: ${lhsVal} ≠ ${rhsVal} (diff = ${diff})`,
+  };
+}
+
+async function verifyNumericSampled(
+  lhs: string,
+  rhs: string,
+  vars: string[]
+): Promise<CheckOutcome> {
+  // Test with multiple random values
+  const testPoints = [0.5, 1.0, 1.5, 2.0, -1.0];
+  let passCount = 0;
+  let totalTested = 0;
+  const failures: string[] = [];
+
+  for (const val of testPoints) {
+    try {
+      let substExpr = `(${lhs}) - (${rhs})`;
+      for (const v of vars) {
+        substExpr = `subst(${substExpr}, ${v}=${val})`;
+      }
+      const result = await giacEngine.evaluate(`evalf(${substExpr})`);
+      const numResult = Number.parseFloat(result);
+
+      if (!Number.isFinite(numResult)) {
+        continue; // Skip undefined points
+      }
+
+      totalTested++;
+      if (Math.abs(numResult) < 1e-6) {
+        passCount++;
+      } else {
+        const where = vars.map((v) => `${v}=${val}`).join(', ');
+        failures.push(`At ${where}: diff = ${numResult}`);
+      }
+    } catch {
+      // Skip points that cause evaluation errors
+    }
+  }
+
+  if (totalTested === 0) {
+    return { verified: false, evaluated: false, detail: 'Could not evaluate at any test point' };
+  }
+
+  const verified = passCount === totalTested;
+  return {
+    verified,
+    evaluated: true,
+    detail: verified
+      ? `Passed ${passCount}/${totalTested} numeric checks ✓`
+      : `Failed: ${failures.join('; ')}`,
+  };
+}
+
+async function verifyNumeric(lhs: string, rhs: string): Promise<CheckOutcome> {
   try {
     // Extract variables
     const varsResult = await giacEngine.evaluate(`lname(${lhs})`);
     const vars = parseVariableList(varsResult);
 
+    // awaited, not bare-returned: a rejection inside an arm must land in this
+    // catch, not escape it as an unhandled rejection.
     if (vars.length === 0) {
-      // No variables — direct numeric evaluation
-      const lhsVal = await giacEngine.evaluate(`evalf(${lhs})`);
-      const rhsVal = await giacEngine.evaluate(`evalf(${rhs})`);
-      const diff = Math.abs(Number.parseFloat(lhsVal) - Number.parseFloat(rhsVal));
-      // A non-numeric side leaves diff NaN: nothing was compared, so this is
-      // "could not check", not "checked and unequal".
-      if (Number.isNaN(diff)) {
-        return {
-          verified: false,
-          evaluated: false,
-          detail: `Direct evaluation produced no number: ${lhsVal} / ${rhsVal}`,
-        };
-      }
-      const verified = diff < 1e-8;
-      return {
-        verified,
-        evaluated: true,
-        detail: verified
-          ? `Direct evaluation: ${lhsVal} ≈ ${rhsVal} ✓`
-          : `Direct evaluation: ${lhsVal} ≠ ${rhsVal} (diff = ${diff})`,
-      };
+      return await verifyNumericDirect(lhs, rhs);
     }
-
-    // Test with multiple random values
-    const testPoints = [0.5, 1.0, 1.5, 2.0, -1.0];
-    let passCount = 0;
-    let totalTested = 0;
-    const failures: string[] = [];
-
-    for (const val of testPoints) {
-      try {
-        let substExpr = `(${lhs}) - (${rhs})`;
-        for (const v of vars) {
-          substExpr = `subst(${substExpr}, ${v}=${val})`;
-        }
-        const result = await giacEngine.evaluate(`evalf(${substExpr})`);
-        const numResult = Number.parseFloat(result);
-
-        if (!Number.isFinite(numResult)) {
-          continue; // Skip undefined points
-        }
-
-        totalTested++;
-        if (Math.abs(numResult) < 1e-6) {
-          passCount++;
-        } else {
-          const where = vars.map((v) => `${v}=${val}`).join(', ');
-          failures.push(`At ${where}: diff = ${numResult}`);
-        }
-      } catch {
-        // Skip points that cause evaluation errors
-      }
-    }
-
-    if (totalTested === 0) {
-      return { verified: false, evaluated: false, detail: 'Could not evaluate at any test point' };
-    }
-
-    const verified = passCount === totalTested;
-    return {
-      verified,
-      evaluated: true,
-      detail: verified
-        ? `Passed ${passCount}/${totalTested} numeric checks ✓`
-        : `Failed: ${failures.join('; ')}`,
-    };
+    return await verifyNumericSampled(lhs, rhs, vars);
   } catch (error) {
     return {
       verified: false,
@@ -363,19 +385,24 @@ function findMainEquals(expr: string): number {
       if (ch === ')') depth--;
       else bracketDepth--;
     } else if (ch === '=' && depth === 0 && bracketDepth === 0) {
-      // Skip == (comparison operator)
+      // Skip == (comparison operator) — BOTH characters, by advancing past
+      // the second '=' here; consuming only the first would leave the second
+      // as a candidate for the main equals (an extraction regression this
+      // file has already shipped once).
       if (expr[i + 1] === '=') {
         i++;
         continue;
       }
       // Skip != or <=, >=
-      if (i > 0 && (expr[i - 1] === '!' || expr[i - 1] === '<' || expr[i - 1] === '>')) {
-        continue;
-      }
-      return i;
+      if (!isTrailingComparisonEquals(expr, i)) return i;
     }
   }
   return -1;
+}
+
+/** Whether this `=` is the tail of `!=`, `<=`, or `>=` rather than a main equals. */
+function isTrailingComparisonEquals(expr: string, i: number): boolean {
+  return i > 0 && (expr[i - 1] === '!' || expr[i - 1] === '<' || expr[i - 1] === '>');
 }
 
 // ---------------------------------------------------------------------------

@@ -11,6 +11,34 @@ describe('probability_calc extended distributions', () => {
     return r.content.map((c) => c.text).join('\n');
   }
 
+  describe('binomial summary notes', () => {
+    // The headline values are pinned elsewhere; these pin the E[X]/Var(X)
+    // notes a model reads for the distribution summary — a dropped or
+    // reordered note survives the rest of the suite (verified by mutation).
+    it('pmf reports the expectation and variance', async () => {
+      const t = allText(
+        await probabilityCalcHandler({
+          distribution: 'binomial',
+          operation: 'pmf',
+          params: { n: 10, p: 0.5, k: 5 },
+        })
+      );
+      expect(t).toMatch(/^E\[X\] = 5$/m);
+      expect(t).toMatch(/^Var\(X\) = 2\.5$/m);
+    });
+
+    it('expected_value reports expectation before variance', async () => {
+      const t = allText(
+        await probabilityCalcHandler({
+          distribution: 'binomial',
+          operation: 'expected_value',
+          params: { n: 10, p: 0.5 },
+        })
+      );
+      expect(t).toMatch(/^E\[X\] = n×p = 10×0\.5 = 5\nVar\(X\) = n×p×\(1-p\) = 2\.5$/m);
+    });
+  });
+
   describe('chi_square', () => {
     it('should compute expected value and variance', async () => {
       const result = await probabilityCalcHandler({

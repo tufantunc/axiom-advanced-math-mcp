@@ -58,6 +58,171 @@ function parseSolutionPoints(raw: string): string[][] {
   return points;
 }
 
+function classifyCriticalPoint(dNum: number, fxxNum: number): string {
+  if (!Number.isFinite(dNum)) return 'inconclusive (could not evaluate discriminant)';
+  if (dNum === 0) return 'inconclusive (second-derivative test fails, D=0)';
+  if (dNum < 0) return 'saddle point';
+  if (!Number.isFinite(fxxNum)) return 'inconclusive (could not evaluate f_xx)';
+  if (fxxNum > 0) return 'local minimum';
+  return 'local maximum';
+}
+
+async function tangentPlane(
+  expression: string,
+  variables: string[],
+  args: Record<string, unknown>
+) {
+  const point = (args.point as string[]) ?? [];
+  if (point.length !== variables.length) {
+    return formatErrorResponse("'point' length must match 'variables' length");
+  }
+  const sub = substList(variables, point);
+  const f0 = await giac(`subst(${expression},${sub})`);
+  const terms: string[] = [f0];
+  // O(n+1) Giac calls by design: one per partial derivative + one final simplify.
+  for (let i = 0; i < variables.length; i++) {
+    const slope = await giac(`subst(diff(${expression},${variables[i]}),${sub})`);
+    terms.push(`(${slope})*(${variables[i]}-(${point[i]}))`);
+  }
+  const plane = await giac(`simplify(${terms.join('+')})`);
+  const latex = await toLatex(plane);
+  return formatToolResponse({
+    result: `z = ${plane}`,
+    latex,
+    notes: [`Expansion point: (${point.join(', ')})`, `f at point = ${f0}`],
+  });
+}
+
+async function directionalDerivative(
+  expression: string,
+  variables: string[],
+  args: Record<string, unknown>
+) {
+  const point = (args.point as string[]) ?? [];
+  const direction = (args.direction as string[]) ?? [];
+  if (point.length !== variables.length) {
+    return formatErrorResponse("'point' length must match 'variables' length");
+  }
+  if (direction.length !== variables.length) {
+    return formatErrorResponse("'direction' length must match 'variables' length");
+  }
+  const sub = substList(variables, point);
+  const squaredComponents = direction.map((d) => `(${d})^2`).join('+');
+  const norm = await giac(`sqrt(${squaredComponents})`);
+  if (norm === '0') return formatErrorResponse('direction vector cannot be zero');
+  const parts: string[] = [];
+  for (let i = 0; i < variables.length; i++) {
+    const gi = await giac(`subst(diff(${expression},${variables[i]}),${sub})`);
+    parts.push(`(${gi})*(${direction[i]})`);
+  }
+  const dv = await giac(`simplify((${parts.join('+')})/(${norm}))`);
+  const latex = await toLatex(dv);
+  return formatToolResponse({
+    result: dv,
+    latex,
+    notes: [
+      `Point: (${point.join(', ')})`,
+      `Direction: [${direction.join(', ')}]`,
+      `‖direction‖ = ${norm}`,
+    ],
+  });
+}
+
+async function criticalPoints(expression: string, variables: string[]) {
+  // Classification via the second-derivative test is supported for exactly 2 variables by design:
+  // D = f_xx*f_yy - f_xy^2 is the standard 2-variable discriminant; the n-variable case would require full Hessian analysis.
+  if (variables.length !== 2) {
+    return formatErrorResponse(
+      'critical_points classification is supported for exactly 2 variables'
+    );
+  }
+  const [x, y] = variables;
+  const stationary = `[diff(${expression},${x}),diff(${expression},${y})]`;
+  const grad = await giac(stationary);
+  const raw = await giac(`solve(${stationary},[${x},${y}])`);
+  if (!/^\s*(list)?\s*[[(]/.test(raw)) {
+    return formatErrorResponse(`Could not parse solve output: ${raw}`);
+  }
+  const points = parseSolutionPoints(raw);
+  if (points.length === 0) {
+    return formatToolResponse({
+      result: 'No critical points in the real domain',
+      notes: [`Gradient: ${grad}`, `solve returned: ${raw}`],
+    });
+  }
+
+  // Second-derivative test symbols.
+  const fxx = `diff(${expression},${x},2)`;
+  const fyy = `diff(${expression},${y},2)`;
+  const fxy = `diff(diff(${expression},${x}),${y})`;
+  const discriminant = `(${fxx})*(${fyy})-(${fxy})^2`;
+
+  const classified: string[] = [];
+  for (const pt of points) {
+    const sub = substList(variables, pt);
+    const Dexact = await giac(`subst(${discriminant},${sub})`);
+    const fxxExact = await giac(`subst(${fxx},${sub})`);
+    const dNum = Number(await giac(`evalf(${Dexact})`));
+    const fxxNum = Number(await giac(`evalf(${fxxExact})`));
+    const kind = classifyCriticalPoint(dNum, fxxNum);
+    classified.push(`(${pt.join(', ')}): ${kind} [D=${Dexact}, f_xx=${fxxExact}]`);
+  }
+
+  return formatToolResponse({
+    result: classified.join('; '),
+    notes: [`Gradient: ${grad}`, `Discriminant D = f_xx*f_yy - f_xy^2`, ...classified],
+  });
+}
+
+async function lagrange(expression: string, variables: string[], args: Record<string, unknown>) {
+  const constraint = args.constraint as string;
+  const value = (args.value as string) ?? '0';
+  if (!constraint) return formatErrorResponse("'constraint' is required for lagrange");
+  const cValidation = validateExpression(constraint);
+  if (cValidation) return formatErrorResponse(cValidation.message);
+
+  // Stationarity: grad(f) = L*grad(g) componentwise, plus constraint g = value.
+  const stationarity = variables.map((v) => `diff(${expression},${v})=L*diff(${constraint},${v})`);
+  const system = `[${stationarity.join(',')},${constraint}=${value}]`;
+  const unknowns = `[${variables.join(',')},L]`;
+  const raw = await giac(`solve(${system},${unknowns})`);
+
+  const candidates = parseSolutionPoints(raw);
+  if (candidates.length === 0) {
+    return formatToolResponse({
+      result: 'No stationary points found in the real domain',
+      notes: [`System: ${system}`, `solve returned: ${raw}`],
+    });
+  }
+
+  // Report each candidate point (dropping the trailing lambda) and the objective value there.
+  const reported: string[] = [];
+  for (const cand of candidates) {
+    if (cand.length < variables.length) continue;
+    const coords = cand.slice(0, variables.length);
+    const sub = substList(variables, coords);
+    const fVal = await giac(`subst(${expression},${sub})`);
+    reported.push(`(${coords.join(', ')}): f = ${fVal}`);
+  }
+
+  if (reported.length === 0) {
+    return formatToolResponse({
+      result: 'No usable stationary points parsed from solve output',
+      notes: [`solve returned: ${raw}`],
+    });
+  }
+
+  return formatToolResponse({
+    result: reported.join('; '),
+    notes: [
+      `Constraint: ${constraint} = ${value}`,
+      `Candidates (Lagrange):`,
+      ...reported,
+      'Note: Lagrange yields stationary points of the constrained problem; compare f values or check second-order conditions to classify max/min/saddle.',
+    ],
+  });
+}
+
 export async function optimizationHandler(args: Record<string, unknown>) {
   try {
     const operation = args.operation as string;
@@ -71,161 +236,16 @@ export async function optimizationHandler(args: Record<string, unknown>) {
     const validation = validateExpression(expression);
     if (validation) return formatErrorResponse(validation.message);
 
-    if (operation === 'tangent_plane') {
-      const point = (args.point as string[]) ?? [];
-      if (point.length !== variables.length) {
-        return formatErrorResponse("'point' length must match 'variables' length");
-      }
-      const sub = substList(variables, point);
-      const f0 = await giac(`subst(${expression},${sub})`);
-      const terms: string[] = [f0];
-      // O(n+1) Giac calls by design: one per partial derivative + one final simplify.
-      for (let i = 0; i < variables.length; i++) {
-        const slope = await giac(`subst(diff(${expression},${variables[i]}),${sub})`);
-        terms.push(`(${slope})*(${variables[i]}-(${point[i]}))`);
-      }
-      const plane = await giac(`simplify(${terms.join('+')})`);
-      const latex = await toLatex(plane);
-      return formatToolResponse({
-        result: `z = ${plane}`,
-        latex,
-        notes: [`Expansion point: (${point.join(', ')})`, `f at point = ${f0}`],
-      });
-    }
-
-    if (operation === 'directional_derivative') {
-      const point = (args.point as string[]) ?? [];
-      const direction = (args.direction as string[]) ?? [];
-      if (point.length !== variables.length) {
-        return formatErrorResponse("'point' length must match 'variables' length");
-      }
-      if (direction.length !== variables.length) {
-        return formatErrorResponse("'direction' length must match 'variables' length");
-      }
-      const sub = substList(variables, point);
-      const squaredComponents = direction.map((d) => `(${d})^2`).join('+');
-      const norm = await giac(`sqrt(${squaredComponents})`);
-      if (norm === '0') return formatErrorResponse('direction vector cannot be zero');
-      const parts: string[] = [];
-      for (let i = 0; i < variables.length; i++) {
-        const gi = await giac(`subst(diff(${expression},${variables[i]}),${sub})`);
-        parts.push(`(${gi})*(${direction[i]})`);
-      }
-      const dv = await giac(`simplify((${parts.join('+')})/(${norm}))`);
-      const latex = await toLatex(dv);
-      return formatToolResponse({
-        result: dv,
-        latex,
-        notes: [
-          `Point: (${point.join(', ')})`,
-          `Direction: [${direction.join(', ')}]`,
-          `‖direction‖ = ${norm}`,
-        ],
-      });
-    }
-
-    // Classification via the second-derivative test is supported for exactly 2 variables by design:
-    // D = f_xx*f_yy - f_xy^2 is the standard 2-variable discriminant; the n-variable case would require full Hessian analysis.
-    if (operation === 'critical_points') {
-      if (variables.length !== 2) {
-        return formatErrorResponse(
-          'critical_points classification is supported for exactly 2 variables'
-        );
-      }
-      const [x, y] = variables;
-      const stationary = `[diff(${expression},${x}),diff(${expression},${y})]`;
-      const grad = await giac(stationary);
-      const raw = await giac(`solve(${stationary},[${x},${y}])`);
-      if (!/^\s*(list)?\s*[[(]/.test(raw)) {
-        return formatErrorResponse(`Could not parse solve output: ${raw}`);
-      }
-      const points = parseSolutionPoints(raw);
-      if (points.length === 0) {
-        return formatToolResponse({
-          result: 'No critical points in the real domain',
-          notes: [`Gradient: ${grad}`, `solve returned: ${raw}`],
-        });
-      }
-
-      // Second-derivative test symbols.
-      const fxx = `diff(${expression},${x},2)`;
-      const fyy = `diff(${expression},${y},2)`;
-      const fxy = `diff(diff(${expression},${x}),${y})`;
-      const discriminant = `(${fxx})*(${fyy})-(${fxy})^2`;
-
-      const classified: string[] = [];
-      for (const pt of points) {
-        const sub = substList(variables, pt);
-        const Dexact = await giac(`subst(${discriminant},${sub})`);
-        const fxxExact = await giac(`subst(${fxx},${sub})`);
-        const dNum = Number(await giac(`evalf(${Dexact})`));
-        const fxxNum = Number(await giac(`evalf(${fxxExact})`));
-        let kind: string;
-        if (!Number.isFinite(dNum)) kind = 'inconclusive (could not evaluate discriminant)';
-        else if (dNum === 0) kind = 'inconclusive (second-derivative test fails, D=0)';
-        else if (dNum < 0) kind = 'saddle point';
-        else if (!Number.isFinite(fxxNum)) kind = 'inconclusive (could not evaluate f_xx)';
-        else if (fxxNum > 0) kind = 'local minimum';
-        else kind = 'local maximum';
-        classified.push(`(${pt.join(', ')}): ${kind} [D=${Dexact}, f_xx=${fxxExact}]`);
-      }
-
-      return formatToolResponse({
-        result: classified.join('; '),
-        notes: [`Gradient: ${grad}`, `Discriminant D = f_xx*f_yy - f_xy^2`, ...classified],
-      });
-    }
-
-    if (operation === 'lagrange') {
-      const constraint = args.constraint as string;
-      const value = (args.value as string) ?? '0';
-      if (!constraint) return formatErrorResponse("'constraint' is required for lagrange");
-      const cValidation = validateExpression(constraint);
-      if (cValidation) return formatErrorResponse(cValidation.message);
-
-      // Stationarity: grad(f) = L*grad(g) componentwise, plus constraint g = value.
-      const stationarity = variables.map(
-        (v) => `diff(${expression},${v})=L*diff(${constraint},${v})`
-      );
-      const system = `[${stationarity.join(',')},${constraint}=${value}]`;
-      const unknowns = `[${variables.join(',')},L]`;
-      const raw = await giac(`solve(${system},${unknowns})`);
-
-      const candidates = parseSolutionPoints(raw);
-      if (candidates.length === 0) {
-        return formatToolResponse({
-          result: 'No stationary points found in the real domain',
-          notes: [`System: ${system}`, `solve returned: ${raw}`],
-        });
-      }
-
-      // Report each candidate point (dropping the trailing lambda) and the objective value there.
-      const reported: string[] = [];
-      for (const cand of candidates) {
-        if (cand.length < variables.length) continue;
-        const coords = cand.slice(0, variables.length);
-        const sub = substList(variables, coords);
-        const fVal = await giac(`subst(${expression},${sub})`);
-        reported.push(`(${coords.join(', ')}): f = ${fVal}`);
-      }
-
-      if (reported.length === 0) {
-        return formatToolResponse({
-          result: 'No usable stationary points parsed from solve output',
-          notes: [`solve returned: ${raw}`],
-        });
-      }
-
-      return formatToolResponse({
-        result: reported.join('; '),
-        notes: [
-          `Constraint: ${constraint} = ${value}`,
-          `Candidates (Lagrange):`,
-          ...reported,
-          'Note: Lagrange yields stationary points of the constrained problem; compare f values or check second-order conditions to classify max/min/saddle.',
-        ],
-      });
-    }
+    // `return await`, not bare `return promise`: a bare return lets the
+    // extracted function's rejection escape this catch, so a Giac throw
+    // (undef, timeout, crash) surfaced as an uncaught rejection instead of
+    // an error response — breaking the json-format error envelope (found by
+    // review; the throw path needs the catch every inline body used to have).
+    if (operation === 'tangent_plane') return await tangentPlane(expression, variables, args);
+    if (operation === 'directional_derivative')
+      return await directionalDerivative(expression, variables, args);
+    if (operation === 'critical_points') return await criticalPoints(expression, variables);
+    if (operation === 'lagrange') return await lagrange(expression, variables, args);
 
     return formatErrorResponse(`Unknown optimization operation: ${operation}`);
   } catch (error) {

@@ -74,4 +74,31 @@ describe('geometry — 2D distances and magnitudes', () => {
     expect(allText(r)).not.toContain('Infinity');
     expect(allText(r)).toMatch(/d = hypot\(/);
   });
+
+  it('refuses the slope of a vertical line rather than answering Infinity', async () => {
+    // The guard is ordinary input, not an edge case — deleting it ships
+    // "Result: Infinity" at isError:false (found unpinned by mutation).
+    const r = await geometryHandler({ operation: 'slope', points: [[1, 2], [1, 5]] });
+    expect(r.isError).toBe(true);
+    expect(allText(r)).toMatch(/undefined/i);
+  });
+
+  it('clamps cos rounding so near-parallel lines answer 0°, not NaN°', async () => {
+    // cos computes to 1.0000000000000002 for these coefficients; without
+    // the clamp acos(NaN)s and ships "Result: NaN°" as a success.
+    const r = await geometryHandler({
+      operation: 'angle_between_lines',
+      line1: [3, 5, 0],
+      line2: [33, 55, 1],
+    });
+    expect(r.isError).toBe(false);
+    expect(allText(r)).toContain('Result: 0°');
+  });
+
+  it('converts a malformed-tuple throw into an error response, not a rejection', async () => {
+    // Destructuring null throws inside the per-op function; the handler's
+    // catch must keep resolving to formatErrorResponse.
+    const r = await geometryHandler({ operation: 'distance', points: [[0, 0], null] });
+    expect(r.isError).toBe(true);
+  });
 });

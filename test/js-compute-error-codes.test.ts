@@ -133,9 +133,10 @@ describe('every failure the worker host reports carries the right code', () => {
     // timeoutMs is deliberately far above what the heap death needs (~8s idle),
     // because the two bounds RACE: whichever fires first names the failure, and
     // this row is about the memory one. The sibling test in input-bounds.test.ts
-    // uses 30s and loses that race under a loaded machine — three agents running
-    // suites at once was enough — reporting `the computation exceeded its time
-    // budget` instead. Widening the budget removes the race rather than
+    // now uses 150s too (widened from 30s precisely to remove this race) — under
+    // a loaded machine three agents running suites at once was enough for 30s to
+    // lose it, reporting `the computation exceeded its time budget` instead.
+    // Widening the budget removes the race rather than
     // weakening the assertion; a genuinely wedged child still fails on the
     // per-test timeout below.
     const host = createJsComputeHost({ timeoutMs: 150_000, heapMb: 32 });

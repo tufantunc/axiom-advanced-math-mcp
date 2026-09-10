@@ -7,12 +7,7 @@ export interface ExactResult {
   latex?: string;
 }
 
-export async function tryExactResult(
-  originalExpression: string,
-  numericResult: number
-): Promise<ExactResult | null> {
-  if (!Number.isFinite(numericResult)) return null;
-
+function snapToInteger(numericResult: number): ExactResult | null {
   // Snapping is for float noise around a real integer — 0.9999999999999999 is
   // 1. But a tiny non-zero value also rounds to 0 within the 1e-9 window, and
   // claiming `0` for it is a wrong answer with the truth relegated to the
@@ -21,7 +16,10 @@ export async function tryExactResult(
   if (Math.abs(numericResult - rounded) < 1e-9 && (rounded !== 0 || numericResult === 0)) {
     return { exact: String(rounded), decimal: numericResult };
   }
+  return null;
+}
 
+function trustedFraction(numericResult: number): ExactResult | null {
   // With the snap refused, a tiny value reaches floatToFraction, whose best
   // bounded-denominator approximation is 0/1 — the same wrong claim wearing a
   // fraction bar ("Result: 0/1"). A zero numerator for a non-zero value is
@@ -46,7 +44,13 @@ export async function tryExactResult(
       latex: den === 1 ? String(num) : String.raw`${sign}\frac{${absNum}}{${den}}`,
     };
   }
+  return null;
+}
 
+async function symbolicExactForm(
+  originalExpression: string,
+  numericResult: number
+): Promise<ExactResult | null> {
   if (looksLikeGiacExpression(originalExpression)) {
     try {
       let giacExpr = originalExpression;
@@ -88,8 +92,20 @@ export async function tryExactResult(
       /* Giac failed, continue */
     }
   }
-
   return null;
+}
+
+export async function tryExactResult(
+  originalExpression: string,
+  numericResult: number
+): Promise<ExactResult | null> {
+  if (!Number.isFinite(numericResult)) return null;
+
+  return (
+    snapToInteger(numericResult) ??
+    trustedFraction(numericResult) ??
+    (await symbolicExactForm(originalExpression, numericResult))
+  );
 }
 
 function looksLikeGiacExpression(expr: string): boolean {

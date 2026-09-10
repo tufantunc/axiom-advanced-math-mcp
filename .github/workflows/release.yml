@@ -27,6 +27,7 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
           cache: npm
+          cache-dependency-path: '**/package-lock.json'
 
       # The bundled npm is often older than 11.5.1, which is the floor for
       # trusted publishing. Pin the floor rather than trusting the image.
@@ -37,6 +38,12 @@ jobs:
           npm --version
 
       - run: npm ci
+      # Same reason as ci.yml's static job: the typecheck gate reaches
+      # benchmark code through test imports, and its provider SDKs live only
+      # in benchmark's lockfile. Without this the publish job fails before
+      # anything reaches the registry.
+      - run: npm ci
+        working-directory: benchmark
 
       # A tag that disagrees with package.json publishes something other than
       # what the tag names. Fail here rather than after it is on the registry

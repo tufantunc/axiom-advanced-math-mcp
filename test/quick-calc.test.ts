@@ -369,6 +369,14 @@ describe('degree expressions', () => {
     expect(exact).not.toBeNull();
     expect(exact?.exact).toBe('√3/2');
   });
+
+  it('rewrites only the number adjacent to the degree sign', async () => {
+    // A loosened regex (degree sign optional) rewrites the 2 as well and
+    // answers 2*pi/180*√3/2 here — an Exact line that contradicts the
+    // decimal line beside it.
+    const exact = await tryExactResult('2*sin(60°)', 2 * Math.sin(Math.PI / 3));
+    expect(exact?.exact).toBe('2*√3/2');
+  });
 });
 
 // quick_calc must render `precision` exactly like to_decimal: the worker's

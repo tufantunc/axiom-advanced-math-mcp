@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { giacEngine } from '../src/server/giac/index.js';
 import { computeHandler } from '../src/server/tools/compute/index.js';
+import { computeTool } from '../src/server/tools.js';
 import { detectFailure } from '../src/server/tools/compute/silent-failure.js';
 import { exactValueHandler } from '../src/server/tools/exact-value.js';
 
@@ -67,6 +68,11 @@ const CAPABILITIES: [string, RegExp][] = [
   // square, and nothing else in the suite would notice the No branch dying.
   ['analyze(28)', /^Perfect square: No$/m],
   ['analyze(36)', /^Perfect square: Yes \(6²\)$/m],
+  // Asymmetric picks so an argument swap cannot pass either: 28 is triangular
+  // T7 and not Fibonacci; 13 is Fibonacci and not triangular.
+  ['analyze(28)', /^Triangular: Yes \(T7\)$/m],
+  ['analyze(28)', /^Fibonacci: No$/m],
+  ['analyze(13)', /^Fibonacci: Yes$/m],
   // Combinatorics
   ['C(10,3)', /^Result: 120$/m],
   ['multinomial(5, [2,2,1])', /^Result: 30$/m],
@@ -90,6 +96,12 @@ const CAPABILITIES: [string, RegExp][] = [
   ['polynomial_regression([[1,2],[2,5],[3,10]], 2)', /^Equation: ŷ = x\^2 \+ 1\.00000$/m],
   // Sequences
   ['sequence(2,4,6,8)', /^Next 3 terms: 10, 12, 14$/m],
+  // n^2+2: not arithmetic/geometric/known, so this row is what pins the
+  // checkQuadratic wiring — the A/B/C solve, the A===1 'n^2' spelling, and
+  // the three-term extrapolation all show up in these three lines.
+  ['sequence(3,6,11,18)', /^Pattern: Quadratic sequence$/m],
+  ['sequence(3,6,11,18)', /^Formula: a\(n\) = n² \+2$/m],
+  ['sequence(3,6,11,18)', /^Next 3 terms: 27, 38, 51$/m],
   // Geometry — named arguments landed in a `raw` field nobody read
   ['area_circle(radius=2)', /^Result: 12\.5663706144$/m],
   ['area_triangle(base=4, height=3)', /^Result: 6$/m],
@@ -1743,10 +1755,6 @@ describe('spellings the router has to tell apart', () => {
       // pinned as well as the direction: legitimate replies are 28 characters for
       // `[y'=z, z'=-y]`, 223 for a nine-equation ring, 329 for a 25-term sum.
       ["desolve([y'=y*z*(x+1)^1000, z'=-y], x)", /expands to 677259 characters of coefficients/],
-      [
-        "desolve([y'=z*(x+1)^1000*(x+2)^1000, z'=-y], x)",
-        /expands to 1199699 characters of coefficients/,
-      ],
     ])('refuses %s for its reply size, worker intact', async (problem, expected) => {
       const [attacker, victim] = await Promise.all([
         computeHandler({ problem }),
@@ -1754,6 +1762,34 @@ describe('spellings the router has to tell apart', () => {
       ]);
       expect(attacker.isError).toBe(true);
       expect(text(attacker)).toMatch(expected);
+      expect(text(attacker)).not.toMatch(/RuntimeError/);
+      expect(victim.isError).toBe(false);
+      await expect(giacEngine.evaluate('diff(x^3,x)')).resolves.toContain('3*x^2');
+    });
+
+    it('refuses a double-exponential reply, worker intact, whichever bound fires', async () => {
+      // `(x+1)^1000*(x+2)^1000` expands to 1,199,699 characters — on the dev
+      // machine the reply-size refusal names that number. On a CI runner the
+      // same expansion outlives the 10s CAS budget first, and the refusal says
+      // "could not be analysed in the time the CAS allows". Both are refusals
+      // that leave the worker alive — which one wins is machine speed, so this
+      // test pins the containment (refused, no RuntimeError, victim served,
+      // worker answers) and accepts either message.
+      // Driven through computeTool, the lock-wrapped seam every real caller
+      // crosses — the raw handler lets the victim's evaluate dispatch behind
+      // the attacker on the single worker, and in the timeout regime the
+      // victim died with its own expired timer before the fresh child could
+      // answer (found by simulating a slow runner). Under the session lock
+      // the victim starts after the attacker's handler returns and gets a
+      // full budget.
+      const [attacker, victim] = await Promise.all([
+        computeTool({ problem: "desolve([y'=z*(x+1)^1000*(x+2)^1000, z'=-y], x)" }),
+        computeTool({ problem: 'integrate(sin(11*x)*exp(x), x)' }),
+      ]);
+      expect(attacker.isError).toBe(true);
+      expect(text(attacker)).toMatch(
+        /expands to \d+ characters of coefficients|could not be analysed in the time the CAS allows/
+      );
       expect(text(attacker)).not.toMatch(/RuntimeError/);
       expect(victim.isError).toBe(false);
       await expect(giacEngine.evaluate('diff(x^3,x)')).resolves.toContain('3*x^2');

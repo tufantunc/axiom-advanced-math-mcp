@@ -37,9 +37,9 @@ export function renderSvg(opts: SvgOptions): string {
   const lines: string[] = [];
 
   lines.push(
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">`
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">`,
+    `<rect width="${width}" height="${height}" fill="white"/>`
   );
-  lines.push(`<rect width="${width}" height="${height}" fill="white"/>`);
 
   // Grid + axis ticks
   const xStep = niceStep(xMax - xMin, 8);
@@ -95,9 +95,9 @@ export function renderSvg(opts: SvgOptions): string {
 
   // Function curve — clip to plot area
   lines.push(
-    `<defs><clipPath id="plot-area"><rect x="${margin.left}" y="${margin.top}" width="${plotW}" height="${plotH}"/></clipPath></defs>`
+    `<defs><clipPath id="plot-area"><rect x="${margin.left}" y="${margin.top}" width="${plotW}" height="${plotH}"/></clipPath></defs>`,
+    `<g clip-path="url(#plot-area)">`
   );
-  lines.push(`<g clip-path="url(#plot-area)">`);
 
   for (const segment of segments) {
     if (segment.points.length < 2) continue;

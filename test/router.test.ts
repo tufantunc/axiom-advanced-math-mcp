@@ -3,18 +3,12 @@ import { route } from '../src/server/tools/compute/router.js';
 
 describe('Router', () => {
   describe('Solve system (rule 1)', () => {
-    it('should route solve_system() call', () => {
-      const result = route('solve_system([x+y=5, x-y=1], [x, y])');
-      expect(result.handler).toBe('solve_system');
-    });
-
-    it('should route semicolon-separated equations', () => {
-      const result = route('x+y=5; x-y=1');
-      expect(result.handler).toBe('solve_system');
-    });
-
-    it('should route bracket format with multiple =', () => {
-      const result = route('[x+y=5, x-y=1]');
+    it.each([
+      ['solve_system() call', 'solve_system([x+y=5, x-y=1], [x, y])'],
+      ['semicolon-separated equations', 'x+y=5; x-y=1'],
+      ['bracket format with multiple =', '[x+y=5, x-y=1]'],
+    ])('should route %s', (_label, input) => {
+      const result = route(input);
       expect(result.handler).toBe('solve_system');
     });
   });
@@ -108,20 +102,12 @@ describe('Router', () => {
   });
 
   describe('Calculus - ODE (rule 7)', () => {
-    it('should route desolve() call', () => {
-      const result = route("desolve(y'=2*x, x, y)");
-      expect(result.handler).toBe('calculus');
-      expect(result.args.operation).toBe('solve_ode');
-    });
-
-    it("should route implicit ODE with y'", () => {
-      const result = route("y' = x^2 + y");
-      expect(result.handler).toBe('calculus');
-      expect(result.args.operation).toBe('solve_ode');
-    });
-
-    it('should route ODE with dy/dx', () => {
-      const result = route('dy/dx = x + 1');
+    it.each([
+      ['desolve() call', "desolve(y'=2*x, x, y)"],
+      ["implicit ODE with y'", "y' = x^2 + y"],
+      ['ODE with dy/dx', 'dy/dx = x + 1'],
+    ])('should route %s', (_label, input) => {
+      const result = route(input);
       expect(result.handler).toBe('calculus');
       expect(result.args.operation).toBe('solve_ode');
     });
@@ -198,22 +184,14 @@ describe('Router', () => {
   });
 
   describe('Matrix (rules 15-16)', () => {
-    it('should route det() with matrix', () => {
-      const result = route('det([[1,2],[3,4]])');
+    it.each([
+      ['det()', 'det([[1,2],[3,4]])', 'determinant'],
+      ['eigenvals()', 'eigenvals([[2,1],[1,2]])', 'eigenvalues'],
+      ['svd()', 'svd([[1,2],[3,4]])', 'svd'],
+    ])('should route %s with matrix', (_label, input, operation) => {
+      const result = route(input);
       expect(result.handler).toBe('matrix');
-      expect(result.args.operation).toBe('determinant');
-    });
-
-    it('should route eigenvals() with matrix', () => {
-      const result = route('eigenvals([[2,1],[1,2]])');
-      expect(result.handler).toBe('matrix');
-      expect(result.args.operation).toBe('eigenvalues');
-    });
-
-    it('should route svd() with matrix', () => {
-      const result = route('svd([[1,2],[3,4]])');
-      expect(result.handler).toBe('matrix');
-      expect(result.args.operation).toBe('svd');
+      expect(result.args.operation).toBe(operation);
     });
   });
 
@@ -239,22 +217,14 @@ describe('Router', () => {
       expect(result.args.k).toBe(3);
     });
 
-    it('should route P(5,2)', () => {
-      const result = route('P(5, 2)');
+    it.each([
+      ['P(5,2)', 'P(5, 2)', 'permutations'],
+      ['bell keyword', 'bell(10)', 'bell_number'],
+      ['catalan keyword', 'catalan(5)', 'catalan_number'],
+    ])('should route %s', (_label, input, operation) => {
+      const result = route(input);
       expect(result.handler).toBe('combinatorics');
-      expect(result.args.operation).toBe('permutations');
-    });
-
-    it('should route bell keyword', () => {
-      const result = route('bell(10)');
-      expect(result.handler).toBe('combinatorics');
-      expect(result.args.operation).toBe('bell_number');
-    });
-
-    it('should route catalan keyword', () => {
-      const result = route('catalan(5)');
-      expect(result.handler).toBe('combinatorics');
-      expect(result.args.operation).toBe('catalan_number');
+      expect(result.args.operation).toBe(operation);
     });
   });
 
@@ -330,18 +300,12 @@ describe('Router', () => {
   });
 
   describe('Quick calc (rule 28)', () => {
-    it('should route simple arithmetic', () => {
-      const result = route('2 + 3 * 4');
-      expect(result.handler).toBe('quick_calc');
-    });
-
-    it('should route trig expression', () => {
-      const result = route('sin(pi/4) + cos(pi/3)');
-      expect(result.handler).toBe('quick_calc');
-    });
-
-    it('should route sqrt expression', () => {
-      const result = route('sqrt(144) + 2^10');
+    it.each([
+      ['simple arithmetic', '2 + 3 * 4'],
+      ['trig expression', 'sin(pi/4) + cos(pi/3)'],
+      ['sqrt expression', 'sqrt(144) + 2^10'],
+    ])('should route %s', (_label, input) => {
+      const result = route(input);
       expect(result.handler).toBe('quick_calc');
     });
   });

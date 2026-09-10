@@ -68,4 +68,25 @@ describe('geometry3d planes', () => {
     expect(t).toContain('0');
     expect(t.toLowerCase()).toContain('intersect');
   });
+
+  it('clamps cos rounding so near-parallel planes answer 0°, not NaN°', async () => {
+    const r = await planeHandler({
+      operation: 'plane_plane_angle',
+      lists: [
+        [3, 5, 0, 0],
+        [33, 55, 0, 1],
+      ],
+    });
+    expect(r.isError).toBe(false);
+    expect(text(r)).toContain('Result: 0°');
+  });
+
+  it('converts a short-tuple throw into an error response, not a rejection', async () => {
+    const r = await planeHandler({
+      operation: 'plane_from_points',
+      lists: [[0, 0], [1, 0, 0], [0, 1, 0]],
+    });
+    expect(r.isError).toBe(true);
+    expect(text(r)).toContain('P1 must be a list of 3 numbers');
+  });
 });

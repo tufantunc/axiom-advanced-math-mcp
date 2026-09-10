@@ -603,6 +603,222 @@ async function everyConditionHolds(
   return true;
 }
 
+type BareEquation =
+  | { status: 'decline' }
+  | { status: 'refuse'; equationOnly: string }
+  | { status: 'ok'; equationOnly: string };
+
+/**
+ * The caller's equation argument, cut down to the differential equation alone.
+ *
+ * Declines (no verdict) when nothing is left after the cut; refuses (a
+ * disproof-shaped verdict, built by the caller) when what is left is not one
+ * bare equation.
+ */
+function extractBareEquation(equation: string): BareEquation {
+  // The DIFFERENTIAL EQUATION only. The text handed in is the caller's whole
+  // equation argument, which may already carry conditions — they write
+  // `y'=y and y(0)=1` themselves, and the bracketed `[y'=y, y(0)=1]` too.
+  // Substituting into those produced `(exp(x))(0)=1`, a residual of nonsense, and
+  // a confident accusation against a correct answer: `desolve(y'=y and y(0)=1, x,
+  // y)` went from exp(x) to a hard error the first time this check ran. A
+  // verifier that can invent a disproof is worse than no verifier.
+  //
+  // The first top-level member is the equation; conditions follow it in both
+  // spellings. They are cut off HERE and checked separately at the end, against
+  // odeClauses of the built command — substituting an answer into a condition and
+  // into an equation are different operations, and the round that conflated them
+  // produced `(exp(x))(0)=1`.
+  const firstMember = splitTopLevel(stripEnclosingBrackets(equation.trim()), ',')[0] ?? '';
+  const equationOnly = stripEnclosingBrackets(beforeTopLevelConjunction(firstMember).trim()).trim();
+  // The cut is a spelling prediction and has now been wrong twice, so what follows
+  // it does not ask whether the cut worked — it asks whether the result is one bare
+  // equation, which is checkable without knowing any join spelling. Anything else
+  // is declined rather than risked: substituting into a leftover boolean refused
+  // correct answers AND certified a non-solution, depending on whether the boolean
+  // survived normalisation or collapsed to a truth value.
+  if (equationOnly.length === 0) return { status: 'decline' };
+  // Two different declines, and conflating them is what let this family ship.
+  //
+  // "I could not check" — an unknown derivative spelling, an answer too large,
+  // an answer that mentions the function — is a no-verdict, and a no-verdict
+  // ships. That is right: the answer is probably fine and nothing here knows
+  // otherwise.
+  //
+  // "This text carries something that is not the equation" is a different
+  // statement. A join the cut did not recognise leaves the caller's condition
+  // sitting in the equation, and every measured instance of that shipped a
+  // non-solution — 26 of 26 for the unspaced operators alone. So it refuses.
+  //
+  // This is the part no join spelling can walk past: it does not ask what the
+  // join was, only whether what is left is one equation. `et`, `⋀`, or whatever
+  // the next round would have found lands here rather than in a shipped answer.
+  if (!isOneBareEquation(equationOnly)) {
+    return { status: 'refuse', equationOnly };
+  }
+  return { status: 'ok', equationOnly };
+}
+
+function substituteAnswer(
+  equationOnly: string,
+  answer: string,
+  functionName: string,
+  variable: string
+): string {
+  const fn = escapeForRegExp(functionName);
+  const v = escapeForRegExp(variable);
+  const sub = `(${answer})`;
+  // Longest spelling first, so `diff(y(x),x,2)` is not eaten by the `y(x)` rule.
+  // The same three spellings derivativeTarget reads, and the prime rule is anchored
+  // the way derivativeTarget anchors it: `y'` is a derivative, `y'(x)` is not one of
+  // the three. Unanchored it ate the prime and left `(x)` applied to the substituted
+  // expression, which Giac reads as multiplication — a residual mentioning no `y`, so
+  // the guard below could not catch it, and a correct `c_0*exp(x)` was refuted for
+  // `y'(x)=y(x)`.
+  //
+  // Two lookaheads, because one was not enough: `('+)` backtracks, so a single
+  // `(?!\s*\()` let `y''(x)` give up a prime and match anyway, and the bare-`y`
+  // fallback then substituted the `y` of `y'(x)` because `'` is not `(`. With both,
+  // anything outside the three spellings is left intact and the residual still names
+  // the function, which is what makes the decline below sound rather than lucky —
+  // before this it was the numeric stage returning NaN that happened to save it.
+  return equationOnly
+    .replaceAll(
+      new RegExp(
+        String.raw`\b(?:diff|derive|deriver)\s*\(\s*${fn}\s*\(\s*${v}\s*\)\s*,\s*${v}\s*,\s*(\d+)\s*\)`,
+        'g'
+      ),
+      `diff(${sub},${variable},$1)`
+    )
+    .replaceAll(
+      new RegExp(
+        String.raw`\b(?:diff|derive|deriver)\s*\(\s*${fn}\s*\(\s*${v}\s*\)\s*,\s*${v}\s*\)`,
+        'g'
+      ),
+      `diff(${sub},${variable})`
+    )
+    .replaceAll(new RegExp(String.raw`\bd${fn}\s*/\s*d${v}\b`, 'g'), `diff(${sub},${variable})`)
+    .replaceAll(
+      new RegExp(String.raw`\b${fn}('+)(?!['\s]*\()`, 'g'),
+      (_m, primes: string) => `diff(${sub},${variable},${primes.length})`
+    )
+    .replaceAll(new RegExp(String.raw`\b${fn}\s*\(\s*${v}\s*\)`, 'g'), sub)
+    .replaceAll(new RegExp(String.raw`\b${fn}\b(?!\s*\()(?!')`, 'g'), sub);
+}
+
+async function checkConditions(
+  clauseSource: string,
+  equationOnly: string,
+  functionName: string,
+  variable: string,
+  answer: string,
+  evaluate: (expr: string) => Promise<string>
+): Promise<VerificationResult | undefined> {
+  const method = 'substitution';
+  // The equation is only half of an IVP. Everything above proves the answer
+  // solves `equationOnly`; these are the caller's conditions, and without them
+  // `2*exp(x)` was marked ✓ for `desolve(y'=y, y(0)=1, x, y)` — a genuine
+  // solution of a DIFFERENT initial-value problem, exactly the failure
+  // verifyOdeSystem's condition block was added to stop on the system path.
+  const clauses = odeClauses(clauseSource);
+  // The cross-check, not an assumption. `conditionSource` is a second text
+  // and this is the one thing that has to be true of it: its first clause is
+  // the caller's equation, because the fold embeds that verbatim and only
+  // appends. Where the two disagree, the clauses after the first are not
+  // known to be this equation's conditions, so nothing is claimed about them.
+  if (clauses[0] !== equationOnly) return undefined;
+  const conditions = clauses.slice(1);
+  if (!(await everyConditionHolds(conditions, functionName, variable, answer, evaluate))) {
+    return undefined;
+  }
+  return {
+    verified: true,
+    method,
+    detail:
+      conditions.length === 0
+        ? `substitutes back into ${equationOnly} exactly`
+        : `substitutes back into ${equationOnly} exactly and meets the conditions`,
+  };
+}
+
+async function disproveResidual(
+  residual: string,
+  equationOnly: string,
+  variable: string,
+  evaluate: (expr: string) => Promise<string>
+): Promise<VerificationResult | undefined> {
+  const method = 'substitution';
+  // A residual that carries a branch marker is not evidence. For a separable ODE
+  // integrated through a square root the CONSTANT is the domain boundary — the
+  // solution family of `y'=sqrt(y)` is [((x-c_0)/2)^2], valid for x >= c_0 — so
+  // probing at x=13/10 with c_0=2 asks whether a correct answer holds at a point
+  // it never claimed. It does not, and the answer was refused: six correct
+  // answers, all of which main returned, turned into hard errors blaming the CAS.
+  //
+  // Whether it fired was luck. The same equation with y(0)=1 gives [(1+x/2)^2],
+  // where 13/10 happens to land inside the branch, and shipped.
+  //
+  // `abs(` / `sign(` is the signature for those six: all carry one and none of
+  // the disproofs this suite pins does. This is a could-not-check, not a
+  // disproof — the distinction this file already draws everywhere else.
+  if (/\b(?:abs|sign)\s*\(/.test(residual)) return undefined;
+  // A marker list is not enough, because the same domain problem arrives without
+  // one. `desolve(y'=sqrt(1-y^2), y(0)=1/2, x, y)` answers [sin(x+pi/6)], which is
+  // CORRECT, and its residual is cos(θ)-√(1-sin²θ) — that is cos(θ)-|cos(θ)|
+  // wearing a square root, so it is zero while cos θ >= 0 and nonzero after. A
+  // single probe at x=13/10 sits past that boundary, so a correct answer was
+  // refuted, and adding `sqrt` to the marker list would have gutted the disproof
+  // for every equation with a radical in it.
+  //
+  // So the domain is SAMPLED rather than assumed: a disproof requires the residual
+  // to be nonzero at every point, and a residual that vanishes anywhere on the
+  // sample is a domain artifact rather than evidence. Measured, the five disproofs
+  // this suite pins are nonzero at all three points (-5, 2*x*exp(x), 2*x,
+  // 4*x*cos(x)+2*sin(x), 2*x*exp(x^2/2)) while the residual above is 3.6e-15 at
+  // x=1/10 and 0.5 at x=13/10, so it declines.
+  //
+  // The small point earns its place: with only points past pi/3 every sample is
+  // outside the branch and the false refusal survives. Zero is deliberately NOT a
+  // point — `2*x` and `2*x*exp(x)` vanish there, and a genuine disproof must not
+  // be discarded for having a root at the origin.
+  const probePoints = ['1/10', '13/10', '23/10'];
+  let magnitude = Number.POSITIVE_INFINITY;
+  for (const point of probePoints) {
+    magnitude = Math.min(magnitude, await residualMagnitudeAt(point));
+    if (magnitude < 1e-6) break;
+  }
+  async function residualMagnitudeAt(point: string): Promise<number> {
+    let at = 0;
+    // The free constants have to go too, or nothing with a `c_0` in it can ever be
+    // disproved. `desolve(y''=-y, y'(x)=0)` answers a disguised `c_1/sin(x)`,
+    // which is not a solution; its residual is plainly nonzero but still mentions
+    // c_1, so evaluating at a point alone gave NaN and the check declined. A
+    // solution FAMILY has to satisfy the equation for every constant, so any
+    // assignment that leaves a residual is a disproof — two are used only because
+    // one unlucky assignment could cancel a term that does not cancel in general.
+    const assignments = [(k: number) => 2 + k, (k: number) => 1 - 2 * k];
+    for (const value of assignments) {
+      const constants = [...new Set(residual.match(/\bc_\d+\b/g) ?? [])]
+        .map((name, k) => `${name}=${value(k)}`)
+        .join(',');
+      const substs = [`${variable}=${point}`, ...(constants ? [constants] : [])].join(',');
+      const settled = await evaluate(`evalf(subst(${residual},${substs}))`);
+      const here = Math.abs(Number(settled.trim()));
+      // Max over the constant assignments, as before: a solution FAMILY has to
+      // satisfy the equation for every constant, so one assignment leaving a
+      // residual is enough at this point.
+      if (Number.isFinite(here)) at = Math.max(at, here);
+    }
+    return at;
+  }
+  if (magnitude < 1e-6) return undefined;
+  return {
+    verified: false,
+    method,
+    detail: `the CAS returned an answer that does not satisfy ${equationOnly}; residual ${residual}`,
+  };
+}
+
 /**
  * Substitutes a candidate solution into a SINGLE ODE and reports whether it
  * satisfies it.
@@ -646,8 +862,7 @@ async function everyConditionHolds(
  * command. Conditions written into the equation are in both, and taking them from
  * the built command picks up those as well, since the fold embeds the caller's
  * equation verbatim. The two are cross-checked below rather than assumed to agree.
- */
-export async function verifyOdeSolution(
+ */ export async function verifyOdeSolution(
   equation: string,
   functionName: string,
   variable: string,
@@ -668,92 +883,20 @@ export async function verifyOdeSolution(
   const answer = inner !== undefined && splitTopLevel(inner, ',').length === 1 ? inner : raw;
   if (answer.startsWith('[')) return undefined;
 
-  // The DIFFERENTIAL EQUATION only. The text handed in is the caller's whole
-  // equation argument, which may already carry conditions — they write
-  // `y'=y and y(0)=1` themselves, and the bracketed `[y'=y, y(0)=1]` too.
-  // Substituting into those produced `(exp(x))(0)=1`, a residual of nonsense, and
-  // a confident accusation against a correct answer: `desolve(y'=y and y(0)=1, x,
-  // y)` went from exp(x) to a hard error the first time this check ran. A
-  // verifier that can invent a disproof is worse than no verifier.
-  //
-  // The first top-level member is the equation; conditions follow it in both
-  // spellings. They are cut off HERE and checked separately at the end, against
-  // odeClauses of the built command — substituting an answer into a condition and
-  // into an equation are different operations, and the round that conflated them
-  // produced `(exp(x))(0)=1`.
-  const firstMember = splitTopLevel(stripEnclosingBrackets(equation.trim()), ',')[0] ?? '';
-  const equationOnly = stripEnclosingBrackets(beforeTopLevelConjunction(firstMember).trim()).trim();
-  // The cut is a spelling prediction and has now been wrong twice, so what follows
-  // it does not ask whether the cut worked — it asks whether the result is one bare
-  // equation, which is checkable without knowing any join spelling. Anything else
-  // is declined rather than risked: substituting into a leftover boolean refused
-  // correct answers AND certified a non-solution, depending on whether the boolean
-  // survived normalisation or collapsed to a truth value.
-  if (equationOnly.length === 0) return undefined;
-  // Two different declines, and conflating them is what let this family ship.
-  //
-  // "I could not check" — an unknown derivative spelling, an answer too large,
-  // an answer that mentions the function — is a no-verdict, and a no-verdict
-  // ships. That is right: the answer is probably fine and nothing here knows
-  // otherwise.
-  //
-  // "This text carries something that is not the equation" is a different
-  // statement. A join the cut did not recognise leaves the caller's condition
-  // sitting in the equation, and every measured instance of that shipped a
-  // non-solution — 26 of 26 for the unspaced operators alone. So it refuses.
-  //
-  // This is the part no join spelling can walk past: it does not ask what the
-  // join was, only whether what is left is one equation. `et`, `⋀`, or whatever
-  // the next round would have found lands here rather than in a shipped answer.
-  if (!isOneBareEquation(equationOnly)) {
+  const cut = extractBareEquation(equation);
+  if (cut.status === 'refuse') {
     return {
       verified: false,
       method,
       detail:
         `the equation as written carries more than one equation or condition ` +
-        `(${equationOnly}), so the answer could not be checked against it`,
+        `(${cut.equationOnly}), so the answer could not be checked against it`,
     };
   }
+  if (cut.status === 'decline') return undefined;
+  const equationOnly = cut.equationOnly;
 
-  const fn = escapeForRegExp(functionName);
-  const v = escapeForRegExp(variable);
-  const sub = `(${answer})`;
-  // Longest spelling first, so `diff(y(x),x,2)` is not eaten by the `y(x)` rule.
-  // The same three spellings derivativeTarget reads, and the prime rule is anchored
-  // the way derivativeTarget anchors it: `y'` is a derivative, `y'(x)` is not one of
-  // the three. Unanchored it ate the prime and left `(x)` applied to the substituted
-  // expression, which Giac reads as multiplication — a residual mentioning no `y`, so
-  // the guard below could not catch it, and a correct `c_0*exp(x)` was refuted for
-  // `y'(x)=y(x)`.
-  //
-  // Two lookaheads, because one was not enough: `('+)` backtracks, so a single
-  // `(?!\s*\()` let `y''(x)` give up a prime and match anyway, and the bare-`y`
-  // fallback then substituted the `y` of `y'(x)` because `'` is not `(`. With both,
-  // anything outside the three spellings is left intact and the residual still names
-  // the function, which is what makes the decline below sound rather than lucky —
-  // before this it was the numeric stage returning NaN that happened to save it.
-  const substituted = equationOnly
-    .replaceAll(
-      new RegExp(
-        String.raw`\b(?:diff|derive|deriver)\s*\(\s*${fn}\s*\(\s*${v}\s*\)\s*,\s*${v}\s*,\s*(\d+)\s*\)`,
-        'g'
-      ),
-      `diff(${sub},${variable},$1)`
-    )
-    .replaceAll(
-      new RegExp(
-        String.raw`\b(?:diff|derive|deriver)\s*\(\s*${fn}\s*\(\s*${v}\s*\)\s*,\s*${v}\s*\)`,
-        'g'
-      ),
-      `diff(${sub},${variable})`
-    )
-    .replaceAll(new RegExp(String.raw`\bd${fn}\s*/\s*d${v}\b`, 'g'), `diff(${sub},${variable})`)
-    .replaceAll(
-      new RegExp(String.raw`\b${fn}('+)(?!['\s]*\()`, 'g'),
-      (_m, primes: string) => `diff(${sub},${variable},${primes.length})`
-    )
-    .replaceAll(new RegExp(String.raw`\b${fn}\s*\(\s*${v}\s*\)`, 'g'), sub)
-    .replaceAll(new RegExp(String.raw`\b${fn}\b(?!\s*\()(?!')`, 'g'), sub);
+  const substituted = substituteAnswer(equationOnly, answer, functionName, variable);
   // Nothing was substituted, so there is nothing to check — an equation this does
   // not understand must not become an accusation.
   if (substituted === equationOnly) return undefined;
@@ -763,108 +906,25 @@ export async function verifyOdeSolution(
   // answer and a correct `cos(x)` was refuted. Checking the substituted TEXT rather
   // than the residual is what makes this independent of the engine — a leftover the
   // engine erases cannot be seen downstream, only here.
+  const fn = escapeForRegExp(functionName);
   if (new RegExp(String.raw`\b${fn}\b`).test(substituted)) return undefined;
 
   try {
     const residual = (await evaluate(`normal(${toZeroForm(substituted)})`)).trim();
     if (isPrintedZero(residual) || allZero(residual)) {
-      // The equation is only half of an IVP. Everything above proves the answer
-      // solves `equationOnly`; these are the caller's conditions, and without them
-      // `2*exp(x)` was marked ✓ for `desolve(y'=y, y(0)=1, x, y)` — a genuine
-      // solution of a DIFFERENT initial-value problem, exactly the failure
-      // verifyOdeSystem's condition block was added to stop on the system path.
-      const clauses = odeClauses(conditionSource ?? equation);
-      // The cross-check, not an assumption. `conditionSource` is a second text
-      // and this is the one thing that has to be true of it: its first clause is
-      // the caller's equation, because the fold embeds that verbatim and only
-      // appends. Where the two disagree, the clauses after the first are not
-      // known to be this equation's conditions, so nothing is claimed about them.
-      if (clauses[0] !== equationOnly) return undefined;
-      const conditions = clauses.slice(1);
-      if (!(await everyConditionHolds(conditions, functionName, variable, answer, evaluate))) {
-        return undefined;
-      }
-      return {
-        verified: true,
-        method,
-        detail:
-          conditions.length === 0
-            ? `substitutes back into ${equationOnly} exactly`
-            : `substitutes back into ${equationOnly} exactly and meets the conditions`,
-      };
+      return checkConditions(
+        conditionSource ?? equation,
+        equationOnly,
+        functionName,
+        variable,
+        answer,
+        evaluate
+      );
     }
     // Kept as a second net: the engine can introduce the name itself, e.g. as
     // `(function_diff(y))(x)`, where nothing was left unsubstituted going in.
     if (new RegExp(String.raw`\b${fn}\b`).test(residual)) return undefined;
-    // The free constants have to go too, or nothing with a `c_0` in it can ever be
-    // disproved. `desolve(y''=-y, y'(x)=0)` answers a disguised `c_1/sin(x)`,
-    // which is not a solution; its residual is plainly nonzero but still mentions
-    // c_1, so evaluating at a point alone gave NaN and the check declined. A
-    // solution FAMILY has to satisfy the equation for every constant, so any
-    // assignment that leaves a residual is a disproof — two are used only because
-    // one unlucky assignment could cancel a term that does not cancel in general.
-    const assignments = [(k: number) => 2 + k, (k: number) => 1 - 2 * k];
-    // A residual that carries a branch marker is not evidence. For a separable ODE
-    // integrated through a square root the CONSTANT is the domain boundary — the
-    // solution family of `y'=sqrt(y)` is [((x-c_0)/2)^2], valid for x >= c_0 — so
-    // probing at x=13/10 with c_0=2 asks whether a correct answer holds at a point
-    // it never claimed. It does not, and the answer was refused: six correct
-    // answers, all of which main returned, turned into hard errors blaming the CAS.
-    //
-    // Whether it fired was luck. The same equation with y(0)=1 gives [(1+x/2)^2],
-    // where 13/10 happens to land inside the branch, and shipped.
-    //
-    // `abs(` / `sign(` is the signature for those six: all carry one and none of
-    // the disproofs this suite pins does. This is a could-not-check, not a
-    // disproof — the distinction this file already draws everywhere else.
-    if (/\b(?:abs|sign)\s*\(/.test(residual)) return undefined;
-    // A marker list is not enough, because the same domain problem arrives without
-    // one. `desolve(y'=sqrt(1-y^2), y(0)=1/2, x, y)` answers [sin(x+pi/6)], which is
-    // CORRECT, and its residual is cos(θ)-√(1-sin²θ) — that is cos(θ)-|cos(θ)|
-    // wearing a square root, so it is zero while cos θ >= 0 and nonzero after. A
-    // single probe at x=13/10 sits past that boundary, so a correct answer was
-    // refuted, and adding `sqrt` to the marker list would have gutted the disproof
-    // for every equation with a radical in it.
-    //
-    // So the domain is SAMPLED rather than assumed: a disproof requires the residual
-    // to be nonzero at every point, and a residual that vanishes anywhere on the
-    // sample is a domain artifact rather than evidence. Measured, the five disproofs
-    // this suite pins are nonzero at all three points (-5, 2*x*exp(x), 2*x,
-    // 4*x*cos(x)+2*sin(x), 2*x*exp(x^2/2)) while the residual above is 3.6e-15 at
-    // x=1/10 and 0.5 at x=13/10, so it declines.
-    //
-    // The small point earns its place: with only points past pi/3 every sample is
-    // outside the branch and the false refusal survives. Zero is deliberately NOT a
-    // point — `2*x` and `2*x*exp(x)` vanish there, and a genuine disproof must not
-    // be discarded for having a root at the origin.
-    const probePoints = ['1/10', '13/10', '23/10'];
-    let magnitude = Number.POSITIVE_INFINITY;
-    for (const point of probePoints) {
-      magnitude = Math.min(magnitude, await residualMagnitudeAt(point));
-      if (magnitude < 1e-6) break;
-    }
-    async function residualMagnitudeAt(point: string): Promise<number> {
-      let at = 0;
-      for (const value of assignments) {
-        const constants = [...new Set(residual.match(/\bc_\d+\b/g) ?? [])]
-          .map((name, k) => `${name}=${value(k)}`)
-          .join(',');
-        const substs = [`${variable}=${point}`, ...(constants ? [constants] : [])].join(',');
-        const settled = await evaluate(`evalf(subst(${residual},${substs}))`);
-        const here = Math.abs(Number(settled.trim()));
-        // Max over the constant assignments, as before: a solution FAMILY has to
-        // satisfy the equation for every constant, so one assignment leaving a
-        // residual is enough at this point.
-        if (Number.isFinite(here)) at = Math.max(at, here);
-      }
-      return at;
-    }
-    if (magnitude < 1e-6) return undefined;
-    return {
-      verified: false,
-      method,
-      detail: `the CAS returned an answer that does not satisfy ${equationOnly}; residual ${residual}`,
-    };
+    return disproveResidual(residual, equationOnly, variable, evaluate);
   } catch {
     return undefined;
   }

@@ -160,4 +160,14 @@ describe('exactValueHandler — dispatch', () => {
     expect(r.isError).toBe(true);
     expect(allText(r)).toContain('Unknown operation: to_hex');
   });
+
+  it('formats a worker refusal as an error response, not a rejection', async () => {
+    // The dispatch must `return await`: without it this rejection bypasses
+    // the handler's catch (the S4123 escape class) and surfaces as a thrown
+    // exception for direct exact_value callers. computeHandler's own catch
+    // masks it end-to-end, which is why the row drives the handler directly.
+    const r = await exactValueHandler({ operation: 'to_decimal', value: 'Let x = 5' });
+    expect(r.isError).toBe(true);
+    expect(allText(r)).toContain('natural language');
+  });
 });

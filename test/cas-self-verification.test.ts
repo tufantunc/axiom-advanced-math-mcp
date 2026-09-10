@@ -54,6 +54,16 @@ describe('factor / integrate annotation', () => {
     const r = await calculusHandler({ operation: 'integrate', expression: '2*x', variable: 'x' });
     expect(allText(r)).toContain('Verified: ✓ (differentiation:');
   });
+
+  it('limit without a point is refused, not answered with sin(undefined)', async () => {
+    // Pins the per-op validator dispatch: wiring limit to the taylor
+    // validator passes the whole suite and ships a computed answer at
+    // isError:false on this seam (the extractor default-fills point:'0',
+    // which is what kept the swap invisible end-to-end).
+    const r = await calculusHandler({ operation: 'limit', expression: 'sin(x)/x', variable: 'x' });
+    expect(r.isError).toBe(true);
+    expect(allText(r)).toMatch(/'point' is required for limit/);
+  });
   it('definite integrate: no verification line', async () => {
     const r = await calculusHandler({
       operation: 'integrate',

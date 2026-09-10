@@ -107,62 +107,38 @@ describe('combinatorics', () => {
   });
 
   describe('catalan_number', () => {
-    it('C(0) = 1', async () => {
-      const result = await combinatoricsHandler({ operation: 'catalan_number', n: 0 });
+    it.each([
+      [0, '1'],
+      [4, '14'],
+      [10, '16796'],
+    ])('C(%d) = %s', async (n, expected) => {
+      const result = await combinatoricsHandler({ operation: 'catalan_number', n });
       expect(result.isError).toBe(false);
-      expect(result.content[0].text).toContain('1');
-    });
-
-    it('C(4) = 14', async () => {
-      const result = await combinatoricsHandler({ operation: 'catalan_number', n: 4 });
-      expect(result.isError).toBe(false);
-      expect(result.content[0].text).toContain('14');
-    });
-
-    it('C(10) = 16796', async () => {
-      const result = await combinatoricsHandler({ operation: 'catalan_number', n: 10 });
-      expect(result.isError).toBe(false);
-      expect(result.content[0].text).toContain('16796');
+      expect(result.content[0].text).toContain(expected);
     });
   });
 
   describe('derangements', () => {
-    it('D(1) = 0', async () => {
-      const result = await combinatoricsHandler({ operation: 'derangements', n: 1 });
+    it.each([
+      [1, '0'],
+      [4, '9'],
+      [6, '265'],
+    ])('D(%d) = %s', async (n, expected) => {
+      const result = await combinatoricsHandler({ operation: 'derangements', n });
       expect(result.isError).toBe(false);
-      expect(result.content[0].text).toContain('0');
-    });
-
-    it('D(4) = 9', async () => {
-      const result = await combinatoricsHandler({ operation: 'derangements', n: 4 });
-      expect(result.isError).toBe(false);
-      expect(result.content[0].text).toContain('9');
-    });
-
-    it('D(6) = 265', async () => {
-      const result = await combinatoricsHandler({ operation: 'derangements', n: 6 });
-      expect(result.isError).toBe(false);
-      expect(result.content[0].text).toContain('265');
+      expect(result.content[0].text).toContain(expected);
     });
   });
 
   describe('partition_count', () => {
-    it('p(5) = 7', async () => {
-      const result = await combinatoricsHandler({ operation: 'partition_count', n: 5 });
+    it.each([
+      [5, 'Result: 7'],
+      [10, 'Result: 42'],
+      [100, 'Result: 190569292'],
+    ])('p(%d) = %s', async (n, expected) => {
+      const result = await combinatoricsHandler({ operation: 'partition_count', n });
       expect(result.isError).toBe(false);
-      expect(result.content[0].text).toBe('Result: 7');
-    });
-
-    it('p(10) = 42', async () => {
-      const result = await combinatoricsHandler({ operation: 'partition_count', n: 10 });
-      expect(result.isError).toBe(false);
-      expect(result.content[0].text).toBe('Result: 42');
-    });
-
-    it('p(100) = 190569292', async () => {
-      const result = await combinatoricsHandler({ operation: 'partition_count', n: 100 });
-      expect(result.isError).toBe(false);
-      expect(result.content[0].text).toBe('Result: 190569292');
+      expect(result.content[0].text).toBe(expected);
     });
   });
 

@@ -21,12 +21,15 @@ describe('Verify Tool', () => {
       expect(text).toContain('Verified');
     });
 
-    it('should verify (a+b)^2 = a^2+2ab+b^2', async () => {
-      const res = await verifyHandler({
-        claim: '(a+b)^2 = a^2+2*a*b+b^2',
-      });
+    it.each([
+      ['(a+b)^2 = a^2+2ab+b^2', '(a+b)^2 = a^2+2*a*b+b^2'],
+      ['2+3 = 5', '2+3 = 5'],
+    ])('should verify %s', async (_label, claim) => {
+      const res = await verifyHandler({ claim });
       const text = getText(res);
-      expect(text).toContain('TRUE');
+      // Full verdict line: every FALSE output also contains the letter T,
+      // so a shorter matcher cannot discriminate (found by mutation).
+      expect(text).toContain('Verified: TRUE');
     });
 
     it('should reject false identity sin(x) = cos(x)', async () => {
@@ -41,14 +44,6 @@ describe('Verify Tool', () => {
       expect(text).toMatch(/At x=[-\d.]+: diff = [-\d.e+]+/);
     });
 
-    it('should verify numeric identity 2+3 = 5', async () => {
-      const res = await verifyHandler({
-        claim: '2+3 = 5',
-      });
-      const text = getText(res);
-      expect(text).toContain('TRUE');
-    });
-
     it('should reject numeric identity 2+3 = 6', async () => {
       const res = await verifyHandler({
         claim: '2+3 = 6',
@@ -59,36 +54,16 @@ describe('Verify Tool', () => {
   });
 
   describe('Solution verification', () => {
-    it('should verify x=2 satisfies x^2-4=0', async () => {
-      const res = await verifyHandler({
-        claim: 'x=2 satisfies x^2-4=0',
-      });
+    it.each([
+      ['x=2 satisfies x^2-4=0', 'TRUE'],
+      ['x=-2 satisfies x^2-4=0', 'TRUE'],
+      ['x=3 satisfies x^2-4=0', 'FALSE'],
+      ['x=1 is a solution of x^3-1=0', 'TRUE'],
+    ])('should rule on %s', async (claim, verdict) => {
+      const res = await verifyHandler({ claim });
       const text = getText(res);
-      expect(text).toContain('TRUE');
-    });
-
-    it('should verify x=-2 satisfies x^2-4=0', async () => {
-      const res = await verifyHandler({
-        claim: 'x=-2 satisfies x^2-4=0',
-      });
-      const text = getText(res);
-      expect(text).toContain('TRUE');
-    });
-
-    it('should reject x=3 satisfies x^2-4=0', async () => {
-      const res = await verifyHandler({
-        claim: 'x=3 satisfies x^2-4=0',
-      });
-      const text = getText(res);
-      expect(text).toContain('FALSE');
-    });
-
-    it('should verify x=1 is a solution of x^3-1=0', async () => {
-      const res = await verifyHandler({
-        claim: 'x=1 is a solution of x^3-1=0',
-      });
-      const text = getText(res);
-      expect(text).toContain('TRUE');
+      // Full verdict line — every FALSE output also contains the letter T.
+      expect(text).toContain(`Verified: ${verdict}`);
     });
   });
 
@@ -127,15 +102,11 @@ describe('Verify Tool', () => {
     // `evaluated` is what separates "checked and refuted" from "never checked".
     // The CLI turns the first into exit 2 and the second into exit 1, so a
     // claim that reported evaluated: true here would be read as a refutation.
-    it('reports evaluated: false for a claim that does not parse', async () => {
-      const res = await verifyHandler({ claim: 'this is not a math claim', format: 'json' });
-      const parsed = JSON.parse(getText(res));
-      expect(parsed.verified).toBe(false);
-      expect(parsed.evaluated).toBe(false);
-    });
-
-    it('reports evaluated: false for a parseable claim Giac cannot evaluate', async () => {
-      const res = await verifyHandler({ claim: 'x + = 1', format: 'json' });
+    it.each([
+      ['a claim that does not parse', 'this is not a math claim'],
+      ['a parseable claim Giac cannot evaluate', 'x + = 1'],
+    ])('reports evaluated: false for %s', async (_label, claim) => {
+      const res = await verifyHandler({ claim, format: 'json' });
       const parsed = JSON.parse(getText(res));
       expect(parsed.verified).toBe(false);
       expect(parsed.evaluated).toBe(false);
@@ -152,6 +123,26 @@ describe('Verify Tool', () => {
       const parsed = JSON.parse(getText(res));
       expect(parsed.verified).toBe(false);
       expect(parsed.evaluated).toBe(true);
+    });
+  });
+
+  describe('Comparison-operator claims', () => {
+    it('a bare == comparison has no main equals: 5 == 5 stays UNKNOWN', async () => {
+      // The == skip must consume BOTH characters: a single-char version
+      // leaves the second '=' as the main equals, and a true comparison
+      // reports as refuted. This regression shipped once and was caught
+      // only by review — the row exists so the suite catches it next time.
+      const res = await verifyHandler({ claim: '5 == 5', format: 'json' });
+      const parsed = JSON.parse(getText(res));
+      expect(parsed.evaluated).toBe(false);
+    });
+
+    it('numeric tolerance sits below the wrong-claim band: x/3 = 0.3333*x stays FALSE', async () => {
+      // The sampled check's residual is ~3.3e-5*|x| — above the 1e-6
+      // tolerance, far below 1e-2. Loosening the threshold certifies this
+      // false claim as an identity.
+      const t = getText(await verifyHandler({ claim: 'x/3 = 0.3333*x', method: 'numeric' }));
+      expect(t).toContain('Verified: FALSE');
     });
   });
 });

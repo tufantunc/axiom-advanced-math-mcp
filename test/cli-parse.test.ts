@@ -72,8 +72,12 @@ describe('parseArgs — compute', () => {
   it.each([
     [['compute', 'x', '--method', 'numeric'], /--method is only valid for verify/],
     [['compute', 'x', '-o', 'f.svg'], /-o is only valid for plot/],
+    // --out's error names its primary spelling -o: the old switch's case
+    // label was `-o`, and the compat table preserves that quirk.
+    [['compute', 'x', '--out', 'f.svg'], /-o is only valid for plot/],
     [['compute', 'x', '--variable', 't'], /--variable is only valid for plot/],
     [['compute', 'x', '--x-min', '0'], /--x-min is only valid for plot/],
+    [['verify', 'x=1', '--width', '100'], /--width is only valid for plot/],
     [['compute', 'x', '--title', 'hi'], /--title is only valid for plot/],
     [['verify', 'x=1', '--domain', 'real'], /--domain is only valid for compute/],
     [['verify', 'x=1', '--precision', '5'], /--precision is only valid for compute/],
@@ -85,6 +89,34 @@ describe('parseArgs — compute', () => {
 
   it('rejects an unknown option', () => {
     expect(() => parseArgs(['compute', 'x', '--frobnicate'])).toThrow(/unknown option/);
+  });
+
+  // The refusal is the CLI's defence against unquoted expressions —
+  // `compute x^2 + 1` arrives as three argv entries. The decomposition
+  // copied the loop three times, so each parser's copy is pinned (dropping
+  // the throw once made the CLI answer the LAST positional with exit 0).
+  it.each([
+    ['compute'],
+    ['verify'],
+    ['plot'],
+  ])('rejects a second positional in %s', (kind) => {
+    expect(() => parseArgs([kind, 'first', 'second'])).toThrow(
+      /unexpected extra argument: second/
+    );
+  });
+
+  // The sentinel is wired per parser now; compute's two cases above cover
+  // only its copy. A leading-minus claim/expression after -- must stay
+  // positional — and -q after -- is data, not a flag.
+  it('verify takes a leading-minus claim after the sentinel', () => {
+    const cmd = parseArgs(['verify', '--', '-x=1']) as { claim?: string };
+    expect(cmd.claim).toBe('-x=1');
+  });
+
+  it('plot takes a flag-looking expression after the sentinel', () => {
+    const cmd = parseArgs(['plot', '--', '-q']) as { expression?: string; output?: string };
+    expect(cmd.expression).toBe('-q');
+    expect(cmd.output).toBe('text');
   });
 
   it('takes a negative number as a value, not as the next flag', () => {

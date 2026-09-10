@@ -117,4 +117,20 @@ describe('fourier: end-to-end through compute', () => {
     expect(text(r)).toContain('numeric samples');
     expect(text(r)).not.toContain('Cannot read properties');
   });
+
+  it('shows the magnitude spectrum when output_magnitude is absent (the compute-path default)', async () => {
+    // The extractor emits only {mode, data} and no other surface ever sets
+    // output_magnitude, so the handler default is what every real caller gets.
+    // Flip `!== false` to `=== true` and this block vanishes with no error.
+    const out = text(await computeHandler({ problem: 'fft([1,2,3,4])' }));
+    expect(out).toContain('Magnitude spectrum:');
+    expect(out).toMatch(/\[0\] f=0\.0000\s+\|X\| = 10\.000000/);
+  });
+
+  it('keeps a small imaginary component in the reconstruction', async () => {
+    // ifft([1,1.01,1,0.99]) bin 1 = 0.005i: above the 1e-10 print gate, below
+    // any coarser cutoff. A drifted gate reports this bin as purely real.
+    const out = text(await computeHandler({ problem: 'ifft([1,1.01,1,0.99])' }));
+    expect(out).toMatch(/\[1\]\s+0\.00000000 \+ 0\.00500000i/);
+  });
 });

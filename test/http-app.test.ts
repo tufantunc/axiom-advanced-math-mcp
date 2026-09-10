@@ -125,6 +125,54 @@ describe('http-app POST /mcp (stateless)', () => {
     expect(names).toEqual(['compute', 'plot', 'verify']);
   });
 
+  it('advertises the load-bearing parts of each tool description', async () => {
+    // Descriptions are the model's tool-selection API: a truncation or
+    // merge-mangle ships silently if only names are pinned (proven by
+    // mutation — deleting the verify-steering sentence passed every suite).
+    const { json } = await post(app, { jsonrpc: '2.0', id: 3, method: 'tools/list', params: {} });
+    const byName = new Map(
+      (json.result.tools as { name: string; description: string }[]).map((t) => [
+        t.name,
+        t.description,
+      ])
+    );
+    const compute: string = byName.get('compute') ?? '';
+    expect(compute.length).toBeGreaterThan(400);
+    expect(compute).toContain('use `verify` instead');
+    const verify: string = byName.get('verify') ?? '';
+    expect(verify.length).toBeGreaterThan(300);
+    expect(verify).toContain('Read `evaluated` before `verified`');
+    const plot: string = byName.get('plot') ?? '';
+    expect(plot.length).toBeGreaterThan(200);
+    expect(plot).toContain('asymptote detection');
+  });
+
+  it('advertises every prompt with its full argument set', async () => {
+    // prompts/list is the client-visible contract for which arguments each
+    // prompt accepts — a dropped argsSchema field survived the entire suite
+    // by mutation. One literal pins all seven.
+    const { json } = await post(app, { jsonrpc: '2.0', id: 4, method: 'prompts/list', params: {} });
+    const byName = new Map(
+      (json.result.prompts as { name: string; arguments?: { name: string }[] }[]).map((p) => [
+        p.name,
+        p.arguments,
+      ])
+    );
+    const argNames = (name: string) =>
+      (byName.get(name) ?? []).map((a: { name: string }) => a.name).sort();
+    expect(argNames('solve-step-by-step')).toEqual(['expression']);
+    expect(argNames('analyze-function')).toEqual(['expression', 'variable']);
+    expect(argNames('verify-identity')).toEqual(['lhs', 'rhs']);
+    expect(argNames('convert-units')).toEqual(['from_unit', 'to_unit', 'value']);
+    expect(argNames('analyze-dataset')).toEqual(['data_type', 'description', 'design', 'groups']);
+    expect(argNames('solve-ode-system')).toEqual(['initial_conditions', 'system', 'variable']);
+    expect(argNames('regression-workflow')).toEqual([
+      'description',
+      'x_description',
+      'y_description',
+    ]);
+  });
+
   it('computes a symbolic integral end to end', async () => {
     const { json } = await post(app, {
       jsonrpc: '2.0',
@@ -318,7 +366,10 @@ describe('http-app method rejection and errors', () => {
       })
     );
     expect(res.status).toBe(413);
-    const body = (await res.json()) as { jsonrpc: string; error: { code: number; message: string } };
+    const body = (await res.json()) as {
+      jsonrpc: string;
+      error: { code: number; message: string };
+    };
     expect(body.jsonrpc).toBe('2.0');
     expect(body.error.code).toBe(-32000);
     expect(body.error.message).toMatch(/exceeds/i);
@@ -339,7 +390,9 @@ describe('http-app method rejection and errors', () => {
     });
     const padLength = targetBytes - withoutPad.length;
     if (padLength < 0) {
-      throw new Error(`target ${targetBytes} is smaller than the unpadded body (${withoutPad.length})`);
+      throw new Error(
+        `target ${targetBytes} is smaller than the unpadded body (${withoutPad.length})`
+      );
     }
     return JSON.stringify({
       jsonrpc: '2.0',
@@ -391,15 +444,18 @@ describe('http-app method rejection and errors', () => {
     expect(body.error.message).toBe('Parse error');
   });
 
-  it('returns a JSON-RPC shaped 404 for unknown paths, using -32000 (not the ' +
-    'spec-defined -32601 "method not found", since no JSON-RPC message was ' +
-    'ever parsed here)', async () => {
-    const res = await app.fetch(new Request('http://localhost/nope'));
-    expect(res.status).toBe(404);
-    const body = (await res.json()) as { jsonrpc: string; error: { code: number } };
-    expect(body.jsonrpc).toBe('2.0');
-    expect(body.error.code).toBe(-32000);
-  });
+  it(
+    'returns a JSON-RPC shaped 404 for unknown paths, using -32000 (not the ' +
+      'spec-defined -32601 "method not found", since no JSON-RPC message was ' +
+      'ever parsed here)',
+    async () => {
+      const res = await app.fetch(new Request('http://localhost/nope'));
+      expect(res.status).toBe(404);
+      const body = (await res.json()) as { jsonrpc: string; error: { code: number } };
+      expect(body.jsonrpc).toBe('2.0');
+      expect(body.error.code).toBe(-32000);
+    }
+  );
 
   it('never leaks a stack trace in an internal error body', async () => {
     const boom = createHttpApp({
@@ -436,29 +492,25 @@ describe('http-app Host header validation (DNS-rebinding protection)', () => {
     );
   }
 
-  it('allows Host: localhost (default allowlist)', async () => {
-    const app = createHttpApp({ healthProbe: () => true, createServer });
-    const res = await postWithHost(app, 'localhost');
-    expect(res.status).toBe(200);
-  });
-
-  it('allows Host: 127.0.0.1:3000 (port ignored, default allowlist)', async () => {
-    const app = createHttpApp({ healthProbe: () => true, createServer });
-    const res = await postWithHost(app, '127.0.0.1:3000');
-    expect(res.status).toBe(200);
-  });
-
-  it('allows Host: [::1]:3000 (bracketed IPv6, port ignored, default allowlist)', async () => {
-    const app = createHttpApp({ healthProbe: () => true, createServer });
-    const res = await postWithHost(app, '[::1]:3000');
-    expect(res.status).toBe(200);
-  });
+  // The default allowlist, one row per spelling: bare localhost, IPv4 with a
+  // port, bracketed IPv6 with a port.
+  it.each([['localhost'], ['127.0.0.1:3000'], ['[::1]:3000']])(
+    'allows Host: %s (default allowlist)',
+    async (host) => {
+      const app = createHttpApp({ healthProbe: () => true, createServer });
+      const res = await postWithHost(app, host);
+      expect(res.status).toBe(200);
+    }
+  );
 
   it('rejects an unrecognized Host with 403 and a JSON-RPC error naming the host', async () => {
     const app = createHttpApp({ healthProbe: () => true, createServer });
     const res = await postWithHost(app, 'evil.example.com');
     expect(res.status).toBe(403);
-    const body = (await res.json()) as { jsonrpc: string; error: { code: number; message: string } };
+    const body = (await res.json()) as {
+      jsonrpc: string;
+      error: { code: number; message: string };
+    };
     expect(body.jsonrpc).toBe('2.0');
     expect(body.error.code).toBe(-32000);
     expect(body.error.message).toContain('evil.example.com');
@@ -562,7 +614,10 @@ describe('http-app Origin header validation', () => {
     const app = createHttpApp({ healthProbe: () => true, createServer });
     const res = await postWithOrigin(app, 'https://evil.example.com');
     expect(res.status).toBe(403);
-    const body = (await res.json()) as { jsonrpc: string; error: { code: number; message: string } };
+    const body = (await res.json()) as {
+      jsonrpc: string;
+      error: { code: number; message: string };
+    };
     expect(body.jsonrpc).toBe('2.0');
     expect(body.error.code).toBe(-32000);
     expect(body.error.message).toContain('evil.example.com');

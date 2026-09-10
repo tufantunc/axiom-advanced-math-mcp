@@ -493,7 +493,8 @@ export async function translateOdeSystem(
   // is already binding. What it gives up is a coefficient that is constant only
   // under a trig identity, which it reports as non-constant.
   const vec = `[${functions.join(',')}]`;
-  const zeroAll = `[${functions.map((f) => `${f}=0`).join(',')}]`;
+  const zeros = functions.map((f) => `${f}=0`).join(',');
+  const zeroAll = `[${zeros}]`;
   const gradients = rhss.map((r) => `normal(grad(${r},${vec}))`).join(',');
   const substituted = `subst([${rhss.join(',')}],${zeroAll})`;
   const composed = rhss
