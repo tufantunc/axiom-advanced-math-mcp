@@ -61,4 +61,13 @@ describe('multivariable operators', () => {
     const r = await operatorHandler({ operation: 'jacobian', variables: ['x', 'y'] });
     expect(r.isError).toBe(true);
   });
+
+  it("surfaces the thrown refusal's message through the catch", async () => {
+    // The command builders throw their refusals (the buildSimpleCommand
+    // convention); this row pins that the catch formats the same message
+    // the old direct return produced, not a generic one.
+    const r = await operatorHandler({ operation: 'jacobian', variables: ['x', 'y'] });
+    expect(r.isError).toBe(true);
+    expect(text(r)).toContain("'functions' (a non-empty list) is required for jacobian");
+  });
 });
