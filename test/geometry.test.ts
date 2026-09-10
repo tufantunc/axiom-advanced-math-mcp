@@ -95,6 +95,89 @@ describe('geometry — 2D distances and magnitudes', () => {
     expect(allText(r)).toContain('Result: 0°');
   });
 
+  it('a single paren point keeps its arity error, not pair guidance', async () => {
+    // distance((0,0)) parses to ONE point; the error must name the shortage,
+    // because the caller did write a pair (a review remedy: the single-part
+    // path used to miss the paren spelling and misdirect to pair guidance).
+    const { extractGeometry } = await import('../src/server/tools/compute/extractors.js');
+    const r = await geometryHandler({ ...extractGeometry('distance((0,-2))').args });
+    expect(r.isError).toBe(true);
+    expect(allText(r)).toContain('requires at least 2 points');
+  });
+
+  it('refuses a non-pair mixed into recognized pairs, not silently dropping it', async () => {
+    // Pins the all-or-nothing loop in parsePointList: a skip-instead-of-refuse
+    // mutant answers Result: 5 here with `foo` discarded, isError:false.
+    const { extractGeometry } = await import('../src/server/tools/compute/extractors.js');
+    const r = await geometryHandler({ ...extractGeometry('distance((0,0), foo, (3,4))').args });
+    expect(r.isError).toBe(true);
+    expect(allText(r)).toContain('points must be (x, y) pairs');
+  });
+
+  it('refuses triples masquerading as points rather than discarding the surplus', async () => {
+    // Pins isPair's arity in the accept direction: a mutant accepting length
+    // 2-or-3 answers Result: 4.2426406871 with the z silently discarded.
+    const r = await geometryHandler({ operation: 'distance', points: [[1, 2, 3], [4, 5, 6]] });
+    expect(r.isError).toBe(true);
+    expect(allText(r)).toContain('points must be (x, y) pairs');
+  });
+
+  it('refuses one bad line among two (paren first)', async () => {
+    // The line rows pin each clause separately: deleting only the line1 or
+    // only the line2 check used to leave the other firing, reviving (NaN, NaN).
+    const { extractGeometry } = await import('../src/server/tools/compute/extractors.js');
+    const r = await geometryHandler({
+      ...extractGeometry('line_intersection((1,1,0), [1,0,0])').args,
+    });
+    expect(r.isError).toBe(true);
+    expect(allText(r)).toContain('lines [a, b, c] triples');
+  });
+
+  it('refuses one bad line among two (paren second)', async () => {
+    const { extractGeometry } = await import('../src/server/tools/compute/extractors.js');
+    const r = await geometryHandler({
+      ...extractGeometry('line_intersection([1,0,0], (1,1,-2))').args,
+    });
+    expect(r.isError).toBe(true);
+    expect(allText(r)).toContain('lines [a, b, c] triples');
+  });
+
+  it('refuses paren line triples end-to-end through the extractor', async () => {
+    // The extractor-side companion to the handler row: the paren triple must
+    // arrive as a refused shape through compute's own routing, not as
+    // characters destructured into (NaN, NaN).
+    const { extractGeometry } = await import('../src/server/tools/compute/extractors.js');
+    const r = await geometryHandler({ ...extractGeometry('line_intersection((1,1,0), (1,-1,2))').args });
+    expect(r.isError).toBe(true);
+    expect(allText(r)).toContain('lines [a, b, c] triples');
+  });
+
+  it('refuses line arguments that are not [a, b, c] triples instead of answering (NaN, NaN)', async () => {
+    // The same unrecognized-shape class as points: a paren triple arrived as
+    // a string, destructured into characters, and line_intersection answered
+    // (NaN, NaN) at isError:false (found in the fallback round's review).
+    const r = await geometryHandler({
+      operation: 'line_intersection',
+      line1: '(1,1,0)',
+      line2: '(1,-1,2)',
+    } as unknown as Record<string, unknown>);
+    expect(r.isError).toBe(true);
+    expect(allText(r)).toContain('lines [a, b, c] triples');
+  });
+
+  it('refuses points that are not (x, y) pairs instead of answering NaN', async () => {
+    // The extractor's fallback used to pass unrecognized argument shapes
+    // through as strings, and destructuring a string answered NaN at
+    // isError:false (the class the paren-tuple recognition closed one way
+    // and this guard closes the other).
+    const r = await geometryHandler({
+      operation: 'distance',
+      points: ['(0,0)', 'foo'] as unknown as [number, number][],
+    });
+    expect(r.isError).toBe(true);
+    expect(allText(r)).toContain('points must be (x, y) pairs');
+  });
+
   it('converts a malformed-tuple throw into an error response, not a rejection', async () => {
     // Destructuring null throws inside the per-op function; the handler's
     // catch must keep resolving to formatErrorResponse.
