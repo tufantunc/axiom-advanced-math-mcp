@@ -306,6 +306,20 @@ function takePositional(current: string | undefined, arg: string): string {
   return arg;
 }
 
+function requireDomain(value: string): string {
+  if (!DOMAINS.includes(value)) {
+    throw new UsageError(`--domain must be one of ${DOMAINS.join('|')}`);
+  }
+  return value;
+}
+
+function requirePrecision(value: number): number {
+  if (!Number.isInteger(value) || value < 1 || value > 50) {
+    throw new UsageError('--precision must be an integer between 1 and 50');
+  }
+  return value;
+}
+
 function parseComputeArgs(rest: string[]): ComputeCommand {
   let expression: string | undefined;
   let output: OutputMode = 'text';
@@ -333,18 +347,11 @@ function parseComputeArgs(rest: string[]): ComputeCommand {
           output = setOutput(output, 'latex');
           break;
         case '--domain':
-          domain = requireValue(arg, rest[++i]);
-          if (!DOMAINS.includes(domain)) {
-            throw new UsageError(`--domain must be one of ${DOMAINS.join('|')}`);
-          }
+          domain = requireDomain(requireValue(arg, rest[++i]));
           break;
-        case '--precision': {
-          precision = parseNumber(arg, requireValue(arg, rest[++i]));
-          if (!Number.isInteger(precision) || precision < 1 || precision > 50) {
-            throw new UsageError('--precision must be an integer between 1 and 50');
-          }
+        case '--precision':
+          precision = requirePrecision(parseNumber(arg, requireValue(arg, rest[++i])));
           break;
-        }
         default:
           rejectForeignFlag('compute', arg);
       }
@@ -448,6 +455,17 @@ function parsePlotArgs(rest: string[]): PlotCommand {
     }
   }
 
+  return buildPlotCommand(expression, output, out, variable, title, range);
+}
+
+function buildPlotCommand(
+  expression: string | undefined,
+  output: OutputMode,
+  out: string | undefined,
+  variable: string | undefined,
+  title: string | undefined,
+  range: Partial<Record<RangeField, number>>
+): PlotCommand {
   // plot: -q prints the written path, so without -o there is nothing to print
   if (output === 'quiet' && out === undefined) {
     throw new UsageError('-q requires -o for plot: without a file there is no path to print');

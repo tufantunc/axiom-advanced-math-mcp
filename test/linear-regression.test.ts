@@ -65,12 +65,42 @@ describe('linear_regression', () => {
       expect(result.content[0].text).toMatch(/b = 1\./);
     });
 
-    it('should reject y with non-positive values', async () => {
+    // y=0 included: loosening the guard to `y < 0` lets it through, and the
+    // fit then degrades into an internal lsq error instead of this refusal.
+    it.each([
+      ['negative y', [-1, 2, 3]],
+      ['zero y (the boundary)', [0, 2, 3]],
+    ])('should reject %s', async (_name, y) => {
       const result = await linearRegressionHandler({
-        x: [1, 2, 3], y: [-1, 2, 3], model: 'exponential',
+        x: [1, 2, 3], y, model: 'exponential',
       });
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('y > 0');
+    });
+  });
+
+  describe('logarithmic model', () => {
+    it('should fit logarithmic data y = ln(x)', async () => {
+      const x = [1, 2, 3, 4];
+      const y = x.map(Math.log);
+      const result = await linearRegressionHandler({
+        x, y, model: 'logarithmic',
+      });
+      expect(result.isError).toBe(false);
+      expect(result.content[0].text).toContain('Logarithmic');
+      // b should be ≈ 1
+      expect(result.content[0].text).toMatch(/b = 1\./);
+    });
+
+    it.each([
+      ['negative x', [-1, 2, 3]],
+      ['zero x (the boundary)', [0, 2, 3]],
+    ])('should reject %s', async (_name, x) => {
+      const result = await linearRegressionHandler({
+        x, y: [1, 2, 3], model: 'logarithmic',
+      });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('x > 0');
     });
   });
 
@@ -85,6 +115,17 @@ describe('linear_regression', () => {
       expect(result.content[0].text).toContain('Power');
       // b should be ≈ 2
       expect(result.content[0].text).toMatch(/b = 2\./);
+    });
+
+    it.each([
+      ['zero x (the boundary)', [0, 2, 3], [1, 2, 3]],
+      ['zero y (the boundary)', [1, 2, 3], [0, 2, 3]],
+    ])('should reject %s', async (_name, x, y) => {
+      const result = await linearRegressionHandler({
+        x, y, model: 'power',
+      });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('x > 0 and y > 0');
     });
   });
 
