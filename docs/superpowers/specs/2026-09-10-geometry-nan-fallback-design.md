@@ -37,3 +37,13 @@ Old-vs-new harness over the geometry extractor+handler matrix: bracket and
 named spellings byte-identical; paren spellings intentionally change (NaN →
 value); unrecognized shapes intentionally change (NaN → refusal). Five
 gates; review-pro correctness → tests-mutation.
+## Review closures
+
+- The line guard also refuses 4-element line inputs
+  (`line_intersection([1,1,0,5], ...)`) that previously answered by silently
+  dropping the surplus coefficient — conscious tightening per AGENTS.md trap 3
+  (silently discarding caller data), same precedent as parseNumberList
+  rejecting `[1,,3]`.
+- `point_line_distance`'s paren point spelling refuses (guidance) rather than
+  working — recorded follow-up; its extractor branch builds points from
+  coerced positionals, never through parsePointList.

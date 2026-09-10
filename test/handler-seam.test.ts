@@ -111,6 +111,19 @@ const CAPABILITIES: [string, RegExp][] = [
   ['area_triangle(base=4, height=3)', /^Result: 6$/m],
   // The positional base+height spelling (two bare numbers), same pin family.
   ['area_triangle(4, 3)', /^Result: 6$/m],
+  // The paren-tuple spelling geometry callers naturally write; it used to
+  // fall through the point parser and answer NaN (found in the extractors
+  // round, fixed with parsePointList recognition + a handler guard).
+  ['distance((0,0), (3,4))', /^Result: 5$/m],
+  ['midpoint((0,0), (3,4))', /^Result: \(1\.5, 2\)$/m],
+  ['slope((0,0), (3,4))', /^Result: 1\.3333333333$/m],
+  // Covers parenPair's sign and decimal allowances — dropping either turns
+  // every signed/decimal paren tuple into a wrong refusal.
+  ['distance((0.5,-2), (3,4))', /^Result: 6\.5$/m],
+  // A single paren point keeps its arity error rather than degrading into
+  // pair guidance (the caller did write a pair).
+  // Paren LINE triples are refused by the same guard that fixed points —
+  // they used to destructure into characters and answer (NaN, NaN).
   ['distance([0,0],[3,4])', /^Result: 5$/m],
   // A polygon given as one bracketed list arrived double-nested — read as a
   // single vertex, so a four-vertex call was "fewer than 3 vertices".
