@@ -296,69 +296,74 @@ export function createJsComputeHost(opts: JsComputeHostOptions = {}) {
     c.unref();
     c.channel?.unref();
 
-    c.on(
-      'message',
-      (msg: { type: string; id: number; value?: string; error?: string; code?: string }) => {
-        if (msg.type === 'ready') {
-          ready = true;
-          // Anything enqueued during the cold start restarts its clock now, so
-          // the fork is not charged against the admission budget.
-          for (const [id, p] of Array.from(pending)) {
-            if (p.phase === 'queued') armAdmission(id);
-          }
-          return;
+    const handleWorkerMessage = (msg: {
+      type: string;
+      id: number;
+      value?: string;
+      error?: string;
+      code?: string;
+    }): void => {
+      if (msg.type === 'ready') {
+        ready = true;
+        // Anything enqueued during the cold start restarts its clock now, so
+        // the fork is not charged against the admission budget.
+        for (const [id, p] of Array.from(pending)) {
+          if (p.phase === 'queued') armAdmission(id);
         }
-
-        const p = pending.get(msg.id);
-        if (!p) return;
-
-        // The worker acks the start of each task. The per-call clock runs from
-        // there, not from enqueue: the child is serial, so charging queue wait
-        // against a call's compute budget refused calls whose own work was
-        // small — 12 concurrent plots and the tenth was told its arguments were
-        // too large for a budget it had spent entirely waiting.
-        if (msg.type === 'start') {
-          if (p.phase !== 'queued') return;
-          if (p.timer) clearTimeout(p.timer);
-          p.phase = 'running';
-          p.timer = setTimeout(() => onExecutionTimeout(msg.id), timeoutMs);
-          return;
-        }
-
-        if (msg.type !== 'result') return;
-        pending.delete(msg.id);
-        if (p.timer) clearTimeout(p.timer);
-        if (msg.error !== undefined) {
-          // A task that threw means the worker is healthy and the expression was
-          // not: `evaluation_failed`, not `worker_failed`. Only the worker's own
-          // faults get that code.
-          //
-          // This ternary is the one place in the product code that BRANCHES on a
-          // code (worker.ts reads one, but only to put it on the message; see
-          // errors.ts). A task that refused an oversized result on purpose keeps
-          // `result_too_large`; everything else — including a plain mathjs throw,
-          // which arrives with no code at all — collapses to `evaluation_failed`.
-          // The distinction is internal; what reaches the caller is the message.
-          p.reject(
-            new JsComputeError(
-              msg.error,
-              msg.code === 'result_too_large' ? 'result_too_large' : 'evaluation_failed'
-            )
-          );
-        } else if (msg.value === undefined) {
-          // Protocol mismatch rather than a caller error: resolving '' here made
-          // both consumers fail inside a bare JSON.parse with no hint of origin.
-          p.reject(
-            new JsComputeError(
-              `the compute worker returned no value for task ${p.task}`,
-              'worker_failed'
-            )
-          );
-        } else {
-          p.resolve(msg.value);
-        }
+        return;
       }
-    );
+
+      const p = pending.get(msg.id);
+      if (!p) return;
+
+      // The worker acks the start of each task. The per-call clock runs from
+      // there, not from enqueue: the child is serial, so charging queue wait
+      // against a call's compute budget refused calls whose own work was
+      // small — 12 concurrent plots and the tenth was told its arguments were
+      // too large for a budget it had spent entirely waiting.
+      if (msg.type === 'start') {
+        if (p.phase !== 'queued') return;
+        if (p.timer) clearTimeout(p.timer);
+        p.phase = 'running';
+        p.timer = setTimeout(() => onExecutionTimeout(msg.id), timeoutMs);
+        return;
+      }
+
+      if (msg.type !== 'result') return;
+      pending.delete(msg.id);
+      if (p.timer) clearTimeout(p.timer);
+      if (msg.error !== undefined) {
+        // A task that threw means the worker is healthy and the expression was
+        // not: `evaluation_failed`, not `worker_failed`. Only the worker's own
+        // faults get that code.
+        //
+        // This ternary is the one place in the product code that BRANCHES on a
+        // code (worker.ts reads one, but only to put it on the message; see
+        // errors.ts). A task that refused an oversized result on purpose keeps
+        // `result_too_large`; everything else — including a plain mathjs throw,
+        // which arrives with no code at all — collapses to `evaluation_failed`.
+        // The distinction is internal; what reaches the caller is the message.
+        p.reject(
+          new JsComputeError(
+            msg.error,
+            msg.code === 'result_too_large' ? 'result_too_large' : 'evaluation_failed'
+          )
+        );
+      } else if (msg.value === undefined) {
+        // Protocol mismatch rather than a caller error: resolving '' here made
+        // both consumers fail inside a bare JSON.parse with no hint of origin.
+        p.reject(
+          new JsComputeError(
+            `the compute worker returned no value for task ${p.task}`,
+            'worker_failed'
+          )
+        );
+      } else {
+        p.resolve(msg.value);
+      }
+    };
+
+    c.on('message', handleWorkerMessage);
 
     const handleFault = (error: Error): void => {
       // A fault matters only while this child is the current one: by the time a

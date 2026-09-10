@@ -130,6 +130,21 @@ async function runVerify(cmd: VerifyCommand): Promise<number> {
   return verified ? 0 : 2;
 }
 
+/** Write the SVG to -o and print the line the output mode calls for. */
+function writePlotFile(cmd: PlotCommand, result: Awaited<ReturnType<typeof plotToSvg>>): void {
+  try {
+    writeFileSync(cmd.out as string, result.svg, 'utf8');
+  } catch (err) {
+    // A raw ENOENT/EACCES from fs names the syscall, not what the user did.
+    throw new Error(
+      `could not write ${cmd.out}: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+  if (cmd.output === 'json') console.log(renderPlotMeta(result, cmd.out as string));
+  else if (cmd.output === 'quiet') console.log(cmd.out);
+  else console.log(`Wrote ${cmd.out} — f(${result.variable}) = ${result.expression}`);
+}
+
 async function runPlot(cmd: PlotCommand): Promise<number> {
   const expression = await resolveInput(cmd.expression, 'expression');
 
@@ -146,17 +161,7 @@ async function runPlot(cmd: PlotCommand): Promise<number> {
   });
 
   if (cmd.out !== undefined) {
-    try {
-      writeFileSync(cmd.out, result.svg, 'utf8');
-    } catch (err) {
-      // A raw ENOENT/EACCES from fs names the syscall, not what the user did.
-      throw new Error(
-        `could not write ${cmd.out}: ${err instanceof Error ? err.message : String(err)}`
-      );
-    }
-    if (cmd.output === 'json') console.log(renderPlotMeta(result, cmd.out));
-    else if (cmd.output === 'quiet') console.log(cmd.out);
-    else console.log(`Wrote ${cmd.out} — f(${result.variable}) = ${result.expression}`);
+    writePlotFile(cmd, result);
     return 0;
   }
 

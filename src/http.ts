@@ -75,7 +75,9 @@ async function start(): Promise<void> {
   process.on('SIGINT', shutdown);
 }
 
-start().catch((err) => {
+try {
+  await start();
+} catch (err) {
   console.error('Failed to start:', err);
   process.exit(1);
-});
+}

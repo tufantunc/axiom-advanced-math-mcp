@@ -25,6 +25,24 @@ export const NON_FINITE_NOTE =
   'infinite value from one that overflowed the range of a double, so treat the ' +
   'magnitude as unknown rather than as a computed number.';
 
+/**
+ * The closing "The answer is ..." line: the decimal line's value, rounded for
+ * display, when there is one; the exact result otherwise.
+ */
+function answerSummary(data: MathToolResponse): string {
+  if (data.decimal && data.decimal !== data.result) {
+    const rounded = Number.parseFloat(data.decimal);
+    if (Number.isFinite(rounded)) {
+      const display = Number.isInteger(rounded)
+        ? String(rounded)
+        : Number.parseFloat(rounded.toPrecision(10)).toString();
+      return `The answer is ${data.result} (≈ ${display})`;
+    }
+    return `The answer is ${data.result}`;
+  }
+  return `The answer is ${data.result}`;
+}
+
 export function formatToolResponse(data: MathToolResponse): {
   content: { type: 'text'; text: string }[];
   isError: boolean;
@@ -41,19 +59,7 @@ export function formatToolResponse(data: MathToolResponse): {
   }
   if (data.notes && data.notes.length > 0) lines.push(...data.notes);
   lines.push('');
-  if (data.decimal && data.decimal !== data.result) {
-    const rounded = Number.parseFloat(data.decimal);
-    if (Number.isFinite(rounded)) {
-      const display = Number.isInteger(rounded)
-        ? String(rounded)
-        : Number.parseFloat(rounded.toPrecision(10)).toString();
-      lines.push(`The answer is ${data.result} (≈ ${display})`);
-    } else {
-      lines.push(`The answer is ${data.result}`);
-    }
-  } else {
-    lines.push(`The answer is ${data.result}`);
-  }
+  lines.push(answerSummary(data));
   return {
     content: lines.map((l) => ({ type: 'text' as const, text: l })),
     isError: false,

@@ -373,18 +373,26 @@ function parseClaim(claim: string): ParsedClaim {
   return { type: 'unknown' };
 }
 
+/**
+ * Depth bookkeeping for one character: how many parens and brackets it opens
+ * or closes. Split out of findMainEquals so the loop body reads as one rule
+ * per character class.
+ */
+function trackDepth(ch: string, depth: number, bracketDepth: number): [number, number] {
+  if (ch === '(') return [depth + 1, bracketDepth];
+  if (ch === '[') return [depth, bracketDepth + 1];
+  if (ch === ')') return [depth - 1, bracketDepth];
+  if (ch === ']') return [depth, bracketDepth - 1];
+  return [depth, bracketDepth];
+}
+
 function findMainEquals(expr: string): number {
   let depth = 0;
   let bracketDepth = 0;
   for (let i = 0; i < expr.length; i++) {
     const ch = expr[i];
-    if (ch === '(' || ch === '[') {
-      if (ch === '(') depth++;
-      else bracketDepth++;
-    } else if (ch === ')' || ch === ']') {
-      if (ch === ')') depth--;
-      else bracketDepth--;
-    } else if (ch === '=' && depth === 0 && bracketDepth === 0) {
+    [depth, bracketDepth] = trackDepth(ch, depth, bracketDepth);
+    if (ch === '=' && depth === 0 && bracketDepth === 0) {
       // Skip == (comparison operator) — BOTH characters, by advancing past
       // the second '=' here; consuming only the first would leave the second
       // as a candidate for the main equals (an extraction regression this

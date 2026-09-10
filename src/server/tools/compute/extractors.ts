@@ -305,8 +305,11 @@ function isCondition(part: string): boolean {
  * that one; making it answerable means excluding the system's own function names
  * from independentVariable's candidates, which is a separate change.
  */
-const UNKNOWNS_LIST =
-  /^\[\s*[A-Za-z]\w*(\s*\(\s*[A-Za-z]\w*\s*\))?(\s*,\s*[A-Za-z]\w*(\s*\(\s*[A-Za-z]\w*\s*\))?)*\s*\]$/;
+const UNKNOWN_NAME = String.raw`[A-Za-z]\w*(\s*\(\s*[A-Za-z]\w*\s*\))?`;
+// Same pattern the one-line literal spelled: a bracketed list of unknown
+// names, applied or bare. Assembled from a template because the literal is
+// past what S5843 considers a maintainable regex.
+const UNKNOWNS_LIST = new RegExp(`^\\[\\s*${UNKNOWN_NAME}(\\s*,\\s*${UNKNOWN_NAME})*\\s*\\]$`);
 
 const BARE_IDENTIFIER = /^[A-Za-z]\w*$/;
 

@@ -1,8 +1,33 @@
 import { runJsCompute, type EvaluatedExpression } from '../js-compute/index.js';
 
 // Words that unambiguously indicate natural language (not valid math operators/identifiers)
-const NATURAL_LANGUAGE_WORDS =
-  /\b(let|then|where|since|assume|given|therefore|thus|hence|find|compute|calculate|what|check|verify|prove|suppose|note|observe|recall|we\s+have|such\s+that)\b/i;
+// Same word-boundary alternation the one-line literal spelled, assembled from
+// a list so the word set reads as a set.
+const NATURAL_LANGUAGE_WORDS = [
+  'let',
+  'then',
+  'where',
+  'since',
+  'assume',
+  'given',
+  'therefore',
+  'thus',
+  'hence',
+  'find',
+  'compute',
+  'calculate',
+  'what',
+  'check',
+  'verify',
+  'prove',
+  'suppose',
+  'note',
+  'observe',
+  'recall',
+  String.raw`we\s+have`,
+  String.raw`such\s+that`,
+];
+const NATURAL_LANGUAGE_PATTERN = new RegExp(`\\b(${NATURAL_LANGUAGE_WORDS.join('|')})\\b`, 'i');
 
 export function detectNaturalLanguage(expression: string): boolean {
   const trimmed = expression.trim();
@@ -14,7 +39,7 @@ export function detectNaturalLanguage(expression: string): boolean {
   )
     return true;
   // Contains unambiguous natural language keywords
-  if (NATURAL_LANGUAGE_WORDS.test(trimmed)) return true;
+  if (NATURAL_LANGUAGE_PATTERN.test(trimmed)) return true;
   // Very long string with many spaces is likely a prose sentence, not an expression
   if (trimmed.length > 150 && (trimmed.match(/ /g) || []).length > 5) return true;
   return false;
