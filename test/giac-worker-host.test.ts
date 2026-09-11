@@ -1,5 +1,6 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import { createWorkerHost } from '../src/server/giac/worker-host.js';
+import { isFatalWasmTrap } from '../src/server/giac/fatal-trap.js';
 
 describe('giac worker host — watchdog + recycle', () => {
   const host = createWorkerHost({ timeoutMs: 3000 });
@@ -51,9 +52,20 @@ describe('giac worker host — a fatal trap fails only the call that caused it',
       // Measured: a huge-exponent initial condition traps the WASM engine
       // fatally, so worker.ts answers THIS call with the trap text and only
       // then exits on purpose.
-      await expect(h.evaluate("desolve([y'=y,y(0)=(2^1000)^1000],x,y)")).rejects.toThrow(
-        /Giac WASM evaluation error/
+      let trapMessage = '';
+      await h.evaluate("desolve([y'=y,y(0)=(2^1000)^1000],x,y)").then(
+        () => {
+          throw new Error('expected the trap input to throw');
+        },
+        (e: Error) => {
+          trapMessage = e.message;
+        }
       );
+      // Precondition, pinned: the error must be one the worker treats as
+      // fatal, or it stays alive and the exit path below is never exercised.
+      // A bare /Giac WASM evaluation error/ match would also accept
+      // recoverable throws isFatalWasmTrap exists to keep alive.
+      expect(isFatalWasmTrap(trapMessage)).toBe(true);
 
       // This call is dispatched in the gap between the trap answer and the
       // 'exit' event — a promise continuation always beats the event loop —
@@ -65,4 +77,26 @@ describe('giac worker host — a fatal trap fails only the call that caused it',
       await h.dispose();
     }
   }, 60000);
+});
+
+describe('giac worker host — a worker that dies before its handshake', () => {
+  it('settles waiting calls promptly with the exit it observed, not a 30s init timeout', async () => {
+    // workerPath is the seam: a path that cannot start makes the child exit
+    // before 'ready', which the real worker cannot be made to do. The two
+    // calls share one init (ensureWorker reuses the in-flight promise), so
+    // both are awaiting it when the exit lands.
+    const h = createWorkerHost({ timeoutMs: 5000, workerPath: '/nonexistent/axiom-worker.ts' });
+    try {
+      const first = h.evaluate('1+1');
+      const second = h.evaluate('2+2');
+      // Pre-fix these waited out the 30s init timer ("Giac worker init timed
+      // out"); the exit path now settles them with what actually happened.
+      // The vitest timeout below is what catches a regression to the 30s
+      // wait — the assertions alone never get to run there.
+      await expect(first).rejects.toThrow(/Giac worker exited \(code \d+\)/);
+      await expect(second).rejects.toThrow(/Giac worker exited \(code \d+\)/);
+    } finally {
+      await h.dispose();
+    }
+  }, 10000);
 });

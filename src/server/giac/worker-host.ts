@@ -4,6 +4,12 @@ import path from 'node:path';
 
 export interface WorkerHostOptions {
   timeoutMs?: number;
+  /**
+   * Overrides the forked worker entry. Test seam only: pointing it at a path
+   * that cannot start pins the died-before-handshake exit path, which the
+   * default worker cannot be made to reach.
+   */
+  workerPath?: string;
 }
 
 interface Pending {
@@ -36,16 +42,22 @@ const MAX_REDISPATCHES = 2;
  *   - per-call timeout  -> only the offending call fails (by its own timer);
  *     the other in-flight calls are re-sent to the fresh worker
  *     (`recycleAndRedispatch`).
- *   - worker crash/exit -> the offender already has its own error — worker.ts
- *     answers a fatal trap before exiting, so its entry is gone by the time
- *     'exit' is processed — and everything still pending is innocent and is
- *     likewise re-sent (`recycleAndRedispatch`).
+ *   - worker crash/exit -> a fatal trap answers the offender before the
+ *     worker exits, so its entry is gone by the time 'exit' is processed and
+ *     everything still pending is innocent and is likewise re-sent
+ *     (`recycleAndRedispatch`). An exit that delivered no answer at all (an
+ *     OS kill, a native crash) leaves the call that was running pending too;
+ *     it is re-sent with the rest — a retry that answers on the pristine
+ *     engine is an answer, and its own timer and MAX_REDISPATCHES bound a
+ *     call that deterministically kills every worker it meets.
  *   - init failure / dispose -> no worker can be produced to serve anyone,
  *     so everything pending fails (`recycle`).
  *
  * Uses child_process.fork (not worker_threads) because tsx's loader rewrites
  * nested `.js`->`.ts` imports correctly in a forked child but not in a worker
- * thread spawned with `--import tsx` (verified empirically).
+ * thread spawned with `--import tsx` (verified empirically). js-compute's
+ * host (src/server/js-compute/host.ts) deliberately mirrors this
+ * recycle-versus-redispatch split.
  *
  * Note: a recycle resets Giac global state (e.g. `sto` assignments) — accepted,
  * documented in the design spec. Three things trigger one: a per-call timeout,
@@ -67,7 +79,8 @@ export function createWorkerHost(opts: WorkerHostOptions = {}) {
   // in the compiled dist it is .js -> fork worker.js plain.
   const here = fileURLToPath(import.meta.url);
   const isTs = here.endsWith('.ts');
-  const workerPath = path.join(path.dirname(here), isTs ? 'worker.ts' : 'worker.js');
+  const defaultWorkerPath = path.join(path.dirname(here), isTs ? 'worker.ts' : 'worker.js');
+  const workerPath = opts.workerPath ?? defaultWorkerPath;
   const execArgv = isTs ? ['--import', 'tsx'] : [];
 
   function failAllPending(err: Error): void {
@@ -100,14 +113,15 @@ export function createWorkerHost(opts: WorkerHostOptions = {}) {
   /**
    * Per-call timeout path and worker-crash path — the two where someone is
    * still alive to serve the innocent. On a timeout exactly ONE call is at
-   * fault and was failed by its own timer before this runs. On a crash the
-   * call that killed the worker already got its own error: worker.ts sends a
-   * fatal trap's result and only then exits, so the offender's entry is gone
-   * from `pending` by the time 'exit' is processed. Either way the wedged or
-   * dead worker still has to go — it will never answer anything again — but
-   * every call still pending is innocent, so it is re-sent to the freshly
-   * spawned worker instead of being rejected with a reason that is not its
-   * caller's.
+   * fault and was failed by its own timer before this runs. On a trap crash
+   * the call that killed the worker already got its own error: worker.ts
+   * sends a fatal trap's result and only then exits, so the offender's entry
+   * is gone from `pending` by the time 'exit' is processed. Either way the
+   * wedged or dead worker still has to go — it will never answer anything
+   * again — but every call still pending is innocent, so it is re-sent to the
+   * freshly spawned worker instead of being rejected with a reason that is
+   * not its caller's. (A crash that delivered no answer — an OS kill — also
+   * re-sends the call that was running; see the header for the bound.)
    *
    * Survivors keep their original timers: each was enqueued against its own
    * deadline and the re-dispatch does not buy it more time.
@@ -164,7 +178,13 @@ export function createWorkerHost(opts: WorkerHostOptions = {}) {
       (e: unknown) => {
         // ensureWorker's own failure paths already call recycle(), which
         // fails everything pending; this only covers anything it missed and
-        // keeps the promise from rejecting unhandled.
+        // keeps the promise from rejecting unhandled. Skipped outright when a
+        // successor worker exists: a replacement that died before its
+        // handshake has already re-queued these survivors onto a newer one,
+        // and failing them here would reject a newer generation's calls with
+        // this generation's reason — the exact collateral this split exists
+        // to prevent (traced by review; requires two consecutive deaths).
+        if (child) return;
         failSurvivors(e instanceof Error ? e : new Error(String(e)));
       }
     );
@@ -189,8 +209,10 @@ export function createWorkerHost(opts: WorkerHostOptions = {}) {
         if (child !== c) {
           // This worker was replaced before the timer fired — its death was
           // already handled. Settle the promise without touching the
-          // replacement's state.
-          reject(new Error('Giac worker init aborted'));
+          // replacement's state. Wording stays in the "worker exited" family
+          // so callers' engine-failure classifiers keep reading it as an
+          // availability fact, not a verdict on their input.
+          reject(new Error('Giac worker exited during initialization (replaced)'));
           return;
         }
         const err = new Error('Giac worker init timed out');
@@ -229,18 +251,26 @@ export function createWorkerHost(opts: WorkerHostOptions = {}) {
       });
       c.on('exit', (code) => {
         if (child !== c) return;
-        // The crash path. Whoever killed this worker already has its own
-        // error (a fatal trap is answered before worker.ts exits), so every
-        // entry still pending is innocent. A promise continuation always
-        // beats this event's turn of the loop, so a call issued right after
-        // the trap answer lands in `pending` before this handler runs.
-        // Measured: the call following
+        // Snapshot before the recycle: detachWorker() resets `ready`, so
+        // testing it after the call could not distinguish the two cases.
+        const diedBeforeHandshake = !ready;
+        // The crash path. A fatal trap answers the offender before worker.ts
+        // exits, so its entry is gone and every call still pending is
+        // innocent. A promise continuation always beats this event's turn of
+        // the loop, so a call issued right after the trap answer lands in
+        // `pending` before this handler runs — measured: the call following
         // `desolve([y'=y,y(0)=(2^1000)^1000],x,y)` was rejected with
         // "Giac worker exited (code 1)", a reason that was not its caller's.
+        // An exit that delivered no answer (an OS kill) leaves the running
+        // call pending too; it is re-sent with the rest, bounded as above.
         recycleAndRedispatch();
+        // The promise is settled here or was at 'ready'; this timer is pure
+        // residue otherwise, and as a ref'd timer it would hold the event
+        // loop for its full 30 s.
+        clearTimeout(initTimer);
         // A worker that died before its handshake leaves callers awaiting
         // its ready promise; settle it now rather than at the init timer.
-        if (!ready) reject(new Error(`Giac worker exited (code ${code})`));
+        if (diedBeforeHandshake) reject(new Error(`Giac worker exited (code ${code})`));
       });
     });
     return readyPromise;
