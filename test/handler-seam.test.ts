@@ -98,7 +98,7 @@ const CAPABILITIES: [string, RegExp][] = [
   // two positional lists are each deletable with the suite green if unpinned
   // (found by mutation in the extractors round).
   ['linear_regression(x=[1,2,3], y=[2,4,6])', /^Equation: ŷ = 2\.00000x$/m],
-  ['linear_regression([1,2,3], [2,4,6])', /^Equation: ŷ = 2\.00000x$/m],  // Sequences
+  ['linear_regression([1,2,3], [2,4,6])', /^Equation: ŷ = 2\.00000x$/m], // Sequences
   ['sequence(2,4,6,8)', /^Next 3 terms: 10, 12, 14$/m],
   // n^2+2: not arithmetic/geometric/known, so this row is what pins the
   // checkQuadratic wiring — the A/B/C solve, the A===1 'n^2' spelling, and
@@ -2069,6 +2069,50 @@ describe('spellings the router has to tell apart', () => {
       const r = await computeHandler({ problem });
       expect(r.isError).toBe(false);
       expect(text(r)).toMatch(/Verified: ✓.*meets the initial conditions/);
+    });
+
+    it('marks a single-equation IVP answer that provably meets its conditions', async () => {
+      // The single-equation path ran the same verifier the system path does but
+      // read only its refutations, so a certified answer shipped with no
+      // `Verified:` line while the system beside it carried one. The mark must
+      // say BOTH halves — the equation and the written conditions — in the same
+      // words the system path uses for the same claim.
+      const r = await computeHandler({ problem: "desolve(y'=y, y(0)=1, x, y)" });
+      expect(r.isError, text(r)).toBe(false);
+      expect(text(r)).toMatch(/^Result: exp\(x\)$/m);
+      expect(text(r)).toMatch(/Verified: ✓ .*and meets the conditions/);
+    });
+
+    it('marks a second-order IVP whose conditions were written inside the equation', async () => {
+      // The mark on a fold spelling — conditions inside the equation, one of
+      // them on the DERIVATIVE — because `and(...)`/`and (...)` are Giac's own
+      // syntax and every spelling of a certified IVP deserves the same mark.
+      const r = await computeHandler({ problem: "desolve(y''=-y and(y(0)=1) and (y'(0)=0), x, y)" });
+      expect(r.isError, text(r)).toBe(false);
+      expect(text(r)).toMatch(/^Result: cos\(x\)$/m);
+      expect(text(r)).toMatch(/Verified: ✓ .*and meets the conditions/);
+    });
+
+    it('marks a single-equation answer for the equation alone when none were written', async () => {
+      // The other half of what the mark means: with no conditions to check the
+      // detail must NOT claim any were — the same distinction the unit suite
+      // pins on verifyOdeSolution's own detail string.
+      const r = await computeHandler({ problem: "desolve(y'=y, x, y)" });
+      expect(r.isError, text(r)).toBe(false);
+      expect(text(r)).toMatch(/Verified: ✓ /);
+      expect(text(r)).not.toMatch(/Verified: ✓ .*conditions/);
+    });
+
+    it('shows no mark at all for a single-equation answer the verifier had no verdict on', async () => {
+      // A branch set is not one answer, so verifyOdeSolution declines — and a
+      // declined check must reach the caller as NEITHER glyph: "did not check"
+      // is not evidence against the answer. Pinned at the handler because the
+      // formatter prints whatever verification it is handed, which is exactly
+      // where an undefined-turned-mark bug would live.
+      const r = await computeHandler({ problem: "desolve(y'^2=x, x, y)" });
+      expect(r.isError, text(r)).toBe(false);
+      expect(text(r)).toMatch(/Result: \[2\/3\*√x\*x\+c_0,-2\/3\*√x\*x\+c_0\]/);
+      expect(text(r)).not.toMatch(/Verified: [✓✗]/);
     });
 
     it.each([

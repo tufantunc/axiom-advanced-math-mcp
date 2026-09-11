@@ -5,6 +5,7 @@ import type { VerificationResult } from './self-verify.js';
 import { detectFailure } from './compute/silent-failure.js';
 import { splitTopLevel } from './output-cleanup.js';
 import { stripEnclosingBrackets } from './compute/arg-parsing.js';
+import { unicodeToAscii } from './unicode-normalize.js';
 import { giacEngine } from '../giac/index.js';
 import { verifyIntegrate, verifyOdeSystem, verifyOdeSolution } from './self-verify.js';
 import { parseOdeSystem } from './ode-system-shape.js';
@@ -194,7 +195,66 @@ function buildVerifyCallback(
         system.condition
       );
   }
+  // A single equation gets the same treatment, with one ordering constraint
+  // the system path does not have: this callback runs INSIDE evalWithLatex,
+  // before the `[]`/`GIAC_ERROR`/`infinity` sentinels that turn an unsolvable
+  // IVP into a clean refusal. Verifying an answer those sentinels are about to
+  // refuse would be a wasted round trip at best and a verdict attached to an
+  // error at worst, so the callback declines first and computes a verdict only
+  // for an answer that passes the same scan the guard refuses on. The scan is
+  // shared (singleEquationFailure) so the two cannot drift — this file already
+  // paid once for letting a sentinel and its copy diverge.
+  if (operation === 'solve_ode') {
+    const original = args.original_equation;
+    if (typeof original !== 'string' || original.length === 0) return undefined;
+    // The evaluation cache keys on the NORMALIZED command, so the verdict must
+    // be a function of normalized text too — a callback fed the raw spelling
+    // could cache a decline under the key an ASCII caller shares (a `y²` call
+    // declined by the verifier, then `y^2` reading that cached absence and
+    // shipping a disproved answer the ASCII spelling refuses). Normalizing
+    // here is also what lets the unicode caller get its own verdict: the
+    // verifier's residual round trip needs the ASCII form regardless.
+    const originalAscii = unicodeToAscii(original);
+    const conditionSourceAscii = unicodeToAscii(args.equation as string);
+    return async (result: string) => {
+      if (singleEquationFailure(result.trim()) !== null) return undefined;
+      return verifyOdeSolution(
+        originalAscii,
+        (args.function_name as string) ?? 'y',
+        (args.variable as string) ?? 'x',
+        result.trim(),
+        (expr) => giacEngine.evaluate(expr).then(String),
+        conditionSourceAscii
+      );
+    };
+  }
   return undefined;
+}
+
+/**
+ * The shape scan a single-equation answer gets: the shared failure detector on
+ * a synthesized `Result:` line, plus the `infinity` arm that is specific to
+ * solutions.
+ *
+ * `infinity` is here and not in detectFailure because it is not a failure in
+ * general — `integrate(1/x^2, x, 0, 1)` correctly diverges — but no SOLUTION of
+ * an ODE is infinity. The solution-vector guard has had this arm all along; the
+ * single-equation path did not, so an inconsistent BVP shipped "infinity" as
+ * the answer at isError:false: `desolve(y''=-y, y(pi/2)=1, y'(0)=0)`, which
+ * looks ordinary and is in fact unsatisfiable.
+ *
+ * Per BRANCH, not over the whole print. Giac answers `2*y*y'=1` with three
+ * branches of which the first is `infinity`; scanning the text refused the
+ * request and threw away the two correct +/-sqrt(x-c_1) branches with it. Only
+ * an answer whose every branch is non-finite is no answer.
+ */
+function singleEquationFailure(resultText: string): string | null {
+  const branches = splitTopLevel(stripEnclosingBrackets(resultText), ',');
+  const everyBranchInfinite =
+    resultText.length > 0 && branches.every((b) => /(^|\W)infinity(\W|$)/.test(b));
+  return (
+    detectFailure(`Result: ${resultText}`) ?? (everyBranchInfinite ? 'non-finite result' : null)
+  );
 }
 
 function solutionVectorGuard(
@@ -298,23 +358,7 @@ async function singleEquationGuard(
   // scanning the whole response would refuse an equation for a coefficient's
   // name.
   const resultText = response.result.trim();
-  // `infinity` is checked here and not in detectFailure because it is not a
-  // failure in general — `integrate(1/x^2, x, 0, 1)` correctly diverges — but
-  // no SOLUTION of an ODE is infinity. The solution-vector guard has had this
-  // arm all along; the single-equation path did not, so an inconsistent BVP
-  // shipped "infinity" as the answer at isError:false:
-  // `desolve(y''=-y, y(pi/2)=1, y'(0)=0)`, which looks ordinary and is in fact
-  // unsatisfiable. Newly reachable, because conditions written as separate
-  // arguments used to be dropped.
-  // Per BRANCH, not over the whole print. Giac answers `2*y*y'=1` with three
-  // branches of which the first is `infinity`; scanning the text refused the
-  // request and threw away the two correct +/-sqrt(x-c_1) branches with it.
-  // Only an answer whose every branch is non-finite is no answer.
-  const branches = splitTopLevel(stripEnclosingBrackets(resultText), ',');
-  const everyBranchInfinite =
-    resultText.length > 0 && branches.every((b) => /(^|\W)infinity(\W|$)/.test(b));
-  const failure =
-    detectFailure(`Result: ${resultText}`) ?? (everyBranchInfinite ? 'non-finite result' : null);
+  const failure = singleEquationFailure(resultText);
   if (failure !== null) {
     // The IVP diagnosis only where the caller actually wrote conditions —
     // `equation` differs from `original_equation` exactly when some were folded
@@ -379,47 +423,33 @@ async function singleEquationGuard(
   // already paid for that once by re-parsing the caller's argument to recover
   // a boolean.
   //
-  // That last argument is INERT TODAY, and this says so rather than leaving a
-  // reader to discover it. Delete it and no test fails and no caller sees a
-  // difference: this path reads only `verified === false`, a missed condition
-  // never produces one (see everyConditionHolds for why no sound disproof of a
-  // condition is available), and unlike the system path this one hands no
-  // `verify` callback to evalWithLatex, so there is no `Verified:` line for a
-  // withheld mark to disappear from.
+  // That last argument used to be inert — the path read only
+  // `verified === false`, and a missed condition never produces one (see
+  // everyConditionHolds for why no sound disproof of a condition is
+  // available) — and the paragraph here said so. It is live now: the verdict
+  // it feeds is the same one the `Verified:` line renders, so a condition the
+  // answer misses withdraws the mark from a line that exists.
   //
-  // Two mutations, two different referents, and an earlier version of this
-  // paragraph gave both answers at once by borrowing one's number for the
-  // other. Measured here, separately:
+  // Two mutations, two different referents, measured separately on the wired
+  // version:
   //
-  //   delete THIS argument at the call site  -> 0 of 1907 rows fail
+  //   delete the argument at the call site
+  //     (in buildVerifyCallback's callback)      -> 1 row fails — the handler
+  //     row asserting the mark says "and meets the conditions"
   //   make the FUNCTION ignore the parameter
-  //     (odeClauses(equation) instead of
-  //      odeClauses(conditionSource ?? equation))  -> 16 rows fail
+  //     (checkConditions handed equation instead
+  //      of conditionSource ?? equation)         -> 17 rows fail
   //
-  // So the SEMANTICS of the parameter are pinned from inside self-verify.ts;
-  // what no row pins is the WIRING here. That distinction is the whole point
-  // of this paragraph — it is the only thing protecting a line with no test —
-  // and reading the 16 as cover for the wiring would tell the next maintainer
-  // the line is guarded when it is not.
+  // The wiring and the semantics are each pinned; the numbers are close enough
+  // that reading one as the other would mislead, which is why both are here.
   //
-  // It ships anyway because it fixes what the ✓ MEANS. Without it that value
-  // can only ever say "solves the equation, conditions unexamined", and the
-  // next consumer of it would inherit exactly the defect this change removes.
-  // Displaying it is the open follow-up, and it needs its own guard work: a
-  // `verify` callback runs inside the evalWithLatex call near the top of the
-  // handler, which is before the `[]`, `GIAC_ERROR` and `infinity` guards at
-  // the head of this guard — and those are what turn an unsolvable IVP into a
-  // clean refusal today.
+  // Displaying the verdict was the follow-up this comment used to record, and
+  // it is done: the verify callback above computes it before the guards run
+  // only for answers the sentinels accept, and this branch reads it from
+  // `response.verification` instead of recomputing it.
   const original = args.original_equation;
   if (typeof original === 'string' && original.length > 0) {
-    const verdict = await verifyOdeSolution(
-      original,
-      (args.function_name as string) ?? 'y',
-      (args.variable as string) ?? 'x',
-      resultText,
-      (expr) => giacEngine.evaluate(expr).then(String),
-      args.equation as string
-    );
+    const verdict = response.verification;
     if (verdict?.verified === false) {
       return formatErrorResponse(`solve_ode cannot solve this equation — ${verdict.detail}`);
     }
