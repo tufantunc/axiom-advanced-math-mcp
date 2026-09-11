@@ -2,6 +2,7 @@ import { route } from './router.js';
 import { dispatch } from './dispatcher.js';
 import { normalize } from './normalize.js';
 import type { ComputeEnvelope } from './types.js';
+import { COMPONENT_ORDER_PREFIX } from '../response-formatter.js';
 import { applyHygiene } from './hygiene.js';
 import { giacEngine } from '../../giac/index.js';
 
@@ -82,7 +83,7 @@ function formatOutput(
               ? [
                   {
                     type: 'text' as const,
-                    text: `Components are in the order: ${envelope.components.join(', ')}`,
+                    text: `${COMPONENT_ORDER_PREFIX} ${envelope.components.join(', ')}`,
                   },
                 ]
               : []),

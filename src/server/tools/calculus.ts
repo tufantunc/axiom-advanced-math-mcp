@@ -1,4 +1,4 @@
-import { formatErrorResponse } from './response-formatter.js';
+import { formatErrorResponse, COMPONENT_ORDER_PREFIX } from './response-formatter.js';
 import { validateExpression } from './expression-validator.js';
 import { evalWithLatex, type EvaluatedResponse } from './giac-eval.js';
 import type { VerificationResult } from './self-verify.js';
@@ -455,7 +455,7 @@ export async function calculusHandler(args: Record<string, unknown>) {
       giacExpr,
       operation,
       verify,
-      ...(functions ? { notes: [`Components are in the order: ${functions.join(', ')}`] } : {}),
+      ...(functions ? { notes: [`${COMPONENT_ORDER_PREFIX} ${functions.join(', ')}`] } : {}),
     });
     if (functions) {
       const refusal = solutionVectorGuard(response, hasConditions);
