@@ -58,3 +58,21 @@ describe('plotToSvg', () => {
     expect(r.segments[1].points.map((p: { x: number }) => p.x)).toEqual([0.5, 1]);
   });
 });
+
+describe('svg geometry pins', () => {
+  it('draws a valid curve: the path starts with M inside the plot clip', async () => {
+    const r = await plotToSvg({ expression: 'sin(x)', xMin: -10, xMax: 10 });
+    // an 'L'-first path (the M/L swap mutation) draws nothing
+    expect(r.svg).toMatch(/<path d="M[\d.]+,[\d.]+ L/);
+    // the clip rect IS the plot frame (left 50, top 40 at the default
+    // canvas), not a transposed or degenerate one
+    expect(r.svg).toMatch(/<clipPath id="plot-area"><rect x="50" y="40"/);
+  });
+
+  it('pins grid density: [-30,30] steps by 5 (13 x-tick labels)', async () => {
+    const r = await plotToSvg({ expression: 'x', xMin: -30, xMax: 30 });
+    const ticks = [...r.svg.matchAll(/<text x="[\d.]+" y="[\d.]+" text-anchor="middle">([^<]*)<\/text>/g)].map((m) => m[1]);
+    // divisor 6 gives step 10 (7 labels); the pinned step is 5
+    expect(ticks).toEqual(['-30','-25','-20','-15','-10','-5','0','5','10','15','20','25','30']);
+  });
+});

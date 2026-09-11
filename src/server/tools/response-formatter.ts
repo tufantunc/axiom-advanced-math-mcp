@@ -25,6 +25,38 @@ export const NON_FINITE_NOTE =
   'infinite value from one that overflowed the range of a double, so treat the ' +
   'magnitude as unknown rather than as a computed number.';
 
+/**
+ * The prefix of the note that names which component of a solution vector is
+ * which. Producers emit `` `${COMPONENT_ORDER_PREFIX} y, z` ``; compute's
+ * normalize.ts recognizes the note by this prefix and lifts the list into the
+ * envelope's `components` field. One constant because the two sides were
+ * handwritten apart and a wording change on the producing side silently
+ * stopped the recognizing side — a coupling mutation-verified as live before
+ * this existed.
+ *
+ * No trailing space: the recognizer matches the prefix alone, and its parse
+ * tolerates a missing separator the same way it did before this was shared.
+ */
+export const COMPONENT_ORDER_PREFIX = 'Components are in the order:';
+
+/**
+ * The closing "The answer is ..." line: the decimal line's value, rounded for
+ * display, when there is one; the exact result otherwise.
+ */
+function answerSummary(data: MathToolResponse): string {
+  if (data.decimal && data.decimal !== data.result) {
+    const rounded = Number.parseFloat(data.decimal);
+    if (Number.isFinite(rounded)) {
+      const display = Number.isInteger(rounded)
+        ? String(rounded)
+        : Number.parseFloat(rounded.toPrecision(10)).toString();
+      return `The answer is ${data.result} (≈ ${display})`;
+    }
+    return `The answer is ${data.result}`;
+  }
+  return `The answer is ${data.result}`;
+}
+
 export function formatToolResponse(data: MathToolResponse): {
   content: { type: 'text'; text: string }[];
   isError: boolean;
@@ -40,20 +72,7 @@ export function formatToolResponse(data: MathToolResponse): {
     lines.push(`Verified: ${mark} (${data.verification.method}: ${data.verification.detail})`);
   }
   if (data.notes && data.notes.length > 0) lines.push(...data.notes);
-  lines.push('');
-  if (data.decimal && data.decimal !== data.result) {
-    const rounded = Number.parseFloat(data.decimal);
-    if (Number.isFinite(rounded)) {
-      const display = Number.isInteger(rounded)
-        ? String(rounded)
-        : Number.parseFloat(rounded.toPrecision(10)).toString();
-      lines.push(`The answer is ${data.result} (≈ ${display})`);
-    } else {
-      lines.push(`The answer is ${data.result}`);
-    }
-  } else {
-    lines.push(`The answer is ${data.result}`);
-  }
+  lines.push('', answerSummary(data));
   return {
     content: lines.map((l) => ({ type: 'text' as const, text: l })),
     isError: false,

@@ -467,40 +467,7 @@ export async function translateOdeSystem(
   if ('error' in shape) return shape;
   const { functions, rhss, conditions } = shape;
 
-  // `grad` gives the whole row at once, and its entries answer BOTH questions a
-  // hand-built residual used to: an entry naming an unknown function means the
-  // system is not linear in them, and an entry naming the independent variable
-  // means the coefficients are not constant. A forcing term in the independent
-  // variable is fine and stays out of the matrix, which is why `exp(x)` in
-  // `y'=z+exp(x)` is still accepted.
-  // Three members: the gradient rows, the constant vector, and the residual.
-  //
-  // The gradient alone is not a test for linearity. It asks whether the gradient
-  // still depends on an unknown, which is a different question: Giac
-  // differentiates floor/ceil/round/sign to the constant 0 and frac to 1, so
-  // `[y'=floor(z), z'=-y]` passed that scan and was answered — and `grad(frac(z))`
-  // is [0,1], indistinguishable from `z` itself. The residual asks directly what
-  // is left of the right-hand side once the linear part and the constant are
-  // removed. It must be identically zero.
-  //
-  // Two members are wrapped in `normal`, not `simplify`. simplify's cost is
-  // exponential in composition depth and no character bound can express that:
-  // `[y'=sin(sin(sin(sin(sin(z))))), z'=-y]` is 50 characters and builds a
-  // 292-character probe — 6.8x inside the cap — yet burnt the whole 10s per-call
-  // budget in the shared worker, a denial of service against every concurrent
-  // caller. `normal` decides the same question, cancels the float terms simplify
-  // leaves (`z+0.5-z-0.5`), and costs 197ms at depth 80 where the character cap
-  // is already binding. What it gives up is a coefficient that is constant only
-  // under a trig identity, which it reports as non-constant.
-  const vec = `[${functions.join(',')}]`;
-  const zeros = functions.map((f) => `${f}=0`).join(',');
-  const zeroAll = `[${zeros}]`;
-  const gradients = rhss.map((r) => `normal(grad(${r},${vec}))`).join(',');
-  const substituted = `subst([${rhss.join(',')}],${zeroAll})`;
-  const composed = rhss
-    .map((r) => `normal(${r}-(grad(${r},${vec})*${vec})-subst(${r},${zeroAll}))`)
-    .join(',');
-  const probe = `[[${gradients}],${substituted},[${composed}]]`;
+  const probe = coefficientsProbe(functions, rhss);
   // The equation cap bounds the count; this bounds the SIZE, which is what the
   // engine actually chokes on — the probe grows as (equations x right-hand-side
   // length), so a few very long equations reach the same place many short ones
@@ -514,6 +481,76 @@ export async function translateOdeSystem(
     };
   }
 
+  const read = await sendProbe(probe, functions, evaluate);
+  if ('error' in read) return read;
+  const parsed = parseCoefficientReply(read.raw);
+  if ('error' in parsed) return parsed;
+  const { matrix, constants, residual } = parsed;
+
+  if (await isNotAffine(residual, evaluate)) {
+    return {
+      error:
+        'is not linear in the unknown functions — what remains after removing the ' +
+        'linear part is not zero, so it has no coefficient matrix',
+    };
+  }
+  const refused = constantCoefficientRefusal(matrix, functions, variable);
+  if (refused) return refused;
+
+  return assembleCommand({ system, variable, functions, conditions, matrix, constants, evaluate });
+}
+
+/**
+ * Builds the one engine call that asks for everything about the system's
+ * coefficients at once: the gradient rows, the constant vector, and the
+ * residual.
+ *
+ * `grad` gives the whole row at once, and its entries answer BOTH questions a
+ * hand-built residual used to: an entry naming an unknown function means the
+ * system is not linear in them, and an entry naming the independent variable
+ * means the coefficients are not constant. A forcing term in the independent
+ * variable is fine and stays out of the matrix, which is why `exp(x)` in
+ * `y'=z+exp(x)` is still accepted.
+ *
+ * The gradient alone is not a test for linearity. It asks whether the gradient
+ * still depends on an unknown, which is a different question: Giac
+ * differentiates floor/ceil/round/sign to the constant 0 and frac to 1, so
+ * `[y'=floor(z), z'=-y]` passed that scan and was answered — and `grad(frac(z))`
+ * is [0,1], indistinguishable from `z` itself. The residual asks directly what
+ * is left of the right-hand side once the linear part and the constant are
+ * removed. It must be identically zero.
+ *
+ * Two members are wrapped in `normal`, not `simplify`. simplify's cost is
+ * exponential in composition depth and no character bound can express that:
+ * `[y'=sin(sin(sin(sin(sin(z))))), z'=-y]` is 50 characters and builds a
+ * 292-character probe — 6.8x inside the cap — yet burnt the whole 10s per-call
+ * budget in the shared worker, a denial of service against every concurrent
+ * caller. `normal` decides the same question, cancels the float terms simplify
+ * leaves (`z+0.5-z-0.5`), and costs 197ms at depth 80 where the character cap
+ * is already binding. What it gives up is a coefficient that is constant only
+ * under a trig identity, which it reports as non-constant.
+ */
+function coefficientsProbe(functions: string[], rhss: string[]): string {
+  const vec = `[${functions.join(',')}]`;
+  const zeros = functions.map((f) => `${f}=0`).join(',');
+  const zeroAll = `[${zeros}]`;
+  const gradients = rhss.map((r) => `normal(grad(${r},${vec}))`).join(',');
+  const substituted = `subst([${rhss.join(',')}],${zeroAll})`;
+  const composed = rhss
+    .map((r) => `normal(${r}-(grad(${r},${vec})*${vec})-subst(${r},${zeroAll}))`)
+    .join(',');
+  return `[[${gradients}],${substituted},[${composed}]]`;
+}
+
+/**
+ * Sends the probe and turns every way it can come back wrong — too long, a
+ * trap or timeout, a GIAC_ERROR — into a refusal.
+ */
+async function sendProbe(
+  probe: string,
+  functions: string[],
+  evaluate: (expr: string) => Promise<string>
+): Promise<{ raw: string } | { error: string }> {
   let raw: string;
   try {
     raw = (await evaluate(probe)).trim();
@@ -546,28 +583,47 @@ export async function translateOdeSystem(
         'those names may be reserved by the CAS; rename it',
     };
   }
+  return { raw };
+}
 
+/**
+ * The three members of a probe reply: coefficient matrix, constant vector,
+ * residual. Anything else is a reply this module cannot read.
+ */
+function parseCoefficientReply(
+  raw: string
+): { matrix: string; constants: string; residual: string } | { error: string } {
   const parts = splitTopLevel(stripEnclosingBrackets(raw), ',');
   if (parts.length !== 3) {
     return { error: 'has coefficients that could not be read' };
   }
-  let [matrix, constants] = parts.map((p) => p.trim());
-  const residual = parts[2].trim();
-  // Numeric, not textual. Giac prints a FLOAT zero as `0.0` (and `-0.0`) whenever
-  // a float survives into the right-hand side, so comparing to the string '0'
-  // refused every system with a decimal coefficient — `[y'=0.5*z, z'=-1.5*y]`,
-  // a damped oscillator, an SIR model — and told the caller its linear system
-  // was not linear. Exact rationals (`z/2`) print as `0` and so were unaffected,
-  // which is why this survived a suite full of them.
-  // A residual entry that is a bare NUMBER is not evidence of nonlinearity. A
-  // nonlinear term always survives as something symbolic — `y*z`, `floor(z)` —
-  // because the linear part and the constant are what were subtracted off. A
-  // lone tiny number is a cancellation artifact: Giac promotes a literal with
-  // 15+ decimal places to extended precision and then does not cancel it, so
-  // `[y'=z, z'=-y+0.000000000000001]` left `0.100000000000000e-14` and was
-  // refused as "not linear", while the same value written `1e-15` cancelled and
-  // solved. Bounded rather than ignored, so a large leftover constant — which
-  // would mean the matrix/constant split itself disagreed — still refuses.
+  const [matrix, constants, residual] = parts.map((p) => p.trim());
+  return { matrix, constants, residual };
+}
+
+/**
+ * Whether the residual is anything but zero, after one allowed round trip.
+ *
+ * Numeric, not textual. Giac prints a FLOAT zero as `0.0` (and `-0.0`) whenever
+ * a float survives into the right-hand side, so comparing to the string '0'
+ * refused every system with a decimal coefficient — `[y'=0.5*z, z'=-1.5*y]`,
+ * a damped oscillator, an SIR model — and told the caller its linear system
+ * was not linear. Exact rationals (`z/2`) print as `0` and so were unaffected,
+ * which is why this survived a suite full of them.
+ * A residual entry that is a bare NUMBER is not evidence of nonlinearity. A
+ * nonlinear term always survives as something symbolic — `y*z`, `floor(z)` —
+ * because the linear part and the constant are what were subtracted off. A
+ * lone tiny number is a cancellation artifact: Giac promotes a literal with
+ * 15+ decimal places to extended precision and then does not cancel it, so
+ * `[y'=z, z'=-y+0.000000000000001]` left `0.100000000000000e-14` and was
+ * refused as "not linear", while the same value written `1e-15` cancelled and
+ * solved. Bounded rather than ignored, so a large leftover constant — which
+ * would mean the matrix/constant split itself disagreed — still refuses.
+ */
+async function isNotAffine(
+  residual: string,
+  evaluate: (expr: string) => Promise<string>
+): Promise<boolean> {
   const negligible = (entry: string): boolean => {
     // The empty check is load-bearing, as it is in isPrintedZero: `Number('')` is 0, so
     // without it a malformed reply with a missing entry reads as a negligible
@@ -601,18 +657,24 @@ export async function translateOdeSystem(
       // Keep the textual verdict.
     }
   }
-  if (notAffine) {
-    return {
-      error:
-        'is not linear in the unknown functions — what remains after removing the ' +
-        'linear part is not zero, so it has no coefficient matrix',
-    };
-  }
+  return notAffine;
+}
 
-  // One scan over the matrix decides both boundaries, and can name what it found.
-  // Constancy is Giac's own limit too — it answers "Non constant linear
-  // differential system" — checked here so it arrives as an error rather than as
-  // a Result line with isError:false.
+/**
+ * The two refusals a coefficient scan of the matrix produces: a coefficient
+ * still depending on an unknown function, or one still naming the independent
+ * variable.
+ *
+ * One scan over the matrix decides both boundaries, and can name what it found.
+ * Constancy is Giac's own limit too — it answers "Non constant linear
+ * differential system" — checked here so it arrives as an error rather than as
+ * a Result line with isError:false.
+ */
+function constantCoefficientRefusal(
+  matrix: string,
+  functions: string[],
+  variable: string
+): { error: string } | undefined {
   const entries = splitTopLevel(stripEnclosingBrackets(matrix), ',').flatMap((row) =>
     splitTopLevel(stripEnclosingBrackets(row), ',')
   );
@@ -636,6 +698,33 @@ export async function translateOdeSystem(
         'an identity (sin(x)^2+cos(x)^2) has to be reduced by hand',
     };
   }
+  return undefined;
+}
+
+/**
+ * validateSystemShape's condition reading, restated here under a name rather
+ * than as an anonymous inline shape. The canonical declaration lives in
+ * ode-system-shape.ts; a type shared by both files would belong there, and
+ * that file is owned by another branch.
+ */
+type CheckedConditions = { point: string; values: string[] };
+
+/**
+ * Everything from the chosen vector symbol to the finished command: domain
+ * reading, the float normalization, the forcing-term caps, and the
+ * matrix-form command itself.
+ */
+async function assembleCommand(input: {
+  system: OdeSystem;
+  variable: string;
+  functions: string[];
+  conditions: CheckedConditions | undefined;
+  matrix: string;
+  constants: string;
+  evaluate: (expr: string) => Promise<string>;
+}): Promise<SystemTranslation> {
+  const { system, variable, functions, conditions, constants, evaluate } = input;
+  let { matrix } = input;
 
   // `variable` belongs in this list as much as the functions do. Without it,
   // solving in a variable named Y collided with the vector: the emitted

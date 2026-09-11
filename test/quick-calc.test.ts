@@ -555,3 +555,13 @@ describe('the Giac exact form must be symbolic or integral', () => {
     );
   });
 });
+
+describe('detectNaturalLanguage word boundaries', () => {
+  it('does not flag identifiers that merely contain an NL word', async () => {
+    const { detectNaturalLanguage } = await import('../src/server/tools/quick-calc-service.js');
+    // \b anchors: without them 'outlet' contains 'let' and valid math is
+    // refused as prose.
+    expect(detectNaturalLanguage('outlet * 3')).toBe(false);
+    expect(detectNaturalLanguage('denoted(5)')).toBe(false);
+  });
+});

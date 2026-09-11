@@ -127,7 +127,18 @@ describe('Verify Tool', () => {
   });
 
   describe('Comparison-operator claims', () => {
-    it('a bare == comparison has no main equals: 5 == 5 stays UNKNOWN', async () => {
+    it('a bracketed identity still finds its main equals', async () => {
+    // trackDepth's paren/bracket bookkeeping: swapping the counters makes
+    // any '[' before the '=' swallow the depth and the claim degrades to
+    // UNKNOWN (evaluated:false) with the suite green. Whether [1,2]=[1,2]
+    // VERIFIES is a different question (simplify answers [0,0], not 0) —
+    // the pin is that the claim parses and gets checked at all.
+    const res = await verifyHandler({ claim: '[1,2] = [1,2]', format: 'json' });
+    const parsed = JSON.parse(getText(res));
+    expect(parsed.evaluated).toBe(true);
+  });
+
+  it('a bare == comparison has no main equals: 5 == 5 stays UNKNOWN', async () => {
       // The == skip must consume BOTH characters: a single-char version
       // leaves the second '=' as the main equals, and a true comparison
       // reports as refuted. This regression shipped once and was caught

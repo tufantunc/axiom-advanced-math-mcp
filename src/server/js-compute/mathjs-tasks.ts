@@ -235,18 +235,26 @@ function scanNonFinite(raw: unknown, depth = 0, seen?: WeakSet<object>): NonFini
   if (visited.has(raw)) return SCAN_CLEAN;
   visited.add(raw);
 
-  const merge = (parts: unknown[]): NonFiniteScan =>
-    parts.reduce<NonFiniteScan>((acc, part) => {
-      const r = scanNonFinite(part, depth + 1, visited);
-      return {
-        nan: acc.nan || r.nan,
-        infinite: acc.infinite || r.infinite,
-        truncated: acc.truncated || r.truncated,
-      };
-    }, SCAN_CLEAN);
+  if (Array.isArray(raw)) return mergeScan(raw, depth, visited);
+  return scanObjectValue(raw, depth, visited);
+}
 
-  if (Array.isArray(raw)) return merge(raw);
+const mergeScan = (parts: unknown[], depth: number, visited: WeakSet<object>): NonFiniteScan =>
+  parts.reduce<NonFiniteScan>((acc, part) => {
+    const r = scanNonFinite(part, depth + 1, visited);
+    return {
+      nan: acc.nan || r.nan,
+      infinite: acc.infinite || r.infinite,
+      truncated: acc.truncated || r.truncated,
+    };
+  }, SCAN_CLEAN);
 
+/**
+ * The object-typed tail of the scan: values that answer for themselves, then
+ * matrices, then the generic walk over own values. Split so the recursion's
+ * trunk reads as one rule per shape.
+ */
+function scanObjectValue(raw: object, depth: number, visited: WeakSet<object>): NonFiniteScan {
   const o = raw as Record<string, unknown>;
   // BigNumber / Decimal / Complex — anything that can answer for itself. Must
   // come before the generic walk: a Decimal's `d` is its digit array.
@@ -269,9 +277,9 @@ function scanNonFinite(raw: unknown, depth = 0, seen?: WeakSet<object>): NonFini
       const count = dims.reduce((a, b) => a * b, 1);
       if (count > MAX_RESULT_CHARS) return { nan: false, infinite: false, truncated: true };
     }
-    return merge([(o as { toArray: () => unknown }).toArray()]);
+    return mergeScan([(o as { toArray: () => unknown }).toArray()], depth, visited);
   }
-  return merge(Object.values(o));
+  return mergeScan(Object.values(o), depth, visited);
 }
 
 function capped(value: string, what: string): string {
@@ -371,18 +379,14 @@ function sampleGrid(
   let firstError: string | undefined;
   for (let i = 0; i < a.numPoints; i++) {
     const x = a.xMin + i * step;
-    try {
-      const y: unknown = compiled.evaluate({ [a.variable]: x });
-      if (typeof y === 'number' && Number.isFinite(y)) {
-        allPoints.push({ x, y });
-        sampled++;
-        if (y < yMin) yMin = y;
-        if (y > yMax) yMax = y;
-      } else {
-        allPoints.push(null);
-      }
-    } catch (e) {
-      firstError ??= e instanceof Error ? e.message : String(e);
+    const point = trySamplePoint(compiled, a.variable, x);
+    if (point.kind === 'point') {
+      allPoints.push({ x, y: point.y });
+      sampled++;
+      if (point.y < yMin) yMin = point.y;
+      if (point.y > yMax) yMax = point.y;
+    } else {
+      firstError ??= point.error;
       allPoints.push(null);
     }
   }
@@ -438,6 +442,22 @@ function splitSegments(allPoints: (PlotPoint | null)[], rawRange: number): PlotS
   }
   if (current.length > 1) segments.push({ points: current });
   return segments;
+}
+
+type SampleOutcome = { kind: 'point'; y: number } | { kind: 'missing'; error: string | undefined };
+
+function trySamplePoint(
+  compiled: { evaluate: (scope: Record<string, number>) => unknown },
+  variable: string,
+  x: number
+): SampleOutcome {
+  try {
+    const y: unknown = compiled.evaluate({ [variable]: x });
+    if (typeof y === 'number' && Number.isFinite(y)) return { kind: 'point', y };
+    return { kind: 'missing', error: undefined };
+  } catch (e) {
+    return { kind: 'missing', error: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 export const MATHJS_TASKS = {

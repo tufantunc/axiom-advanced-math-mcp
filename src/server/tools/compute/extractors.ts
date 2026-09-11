@@ -308,8 +308,11 @@ function isCondition(part: string): boolean {
  * that one; making it answerable means excluding the system's own function names
  * from independentVariable's candidates, which is a separate change.
  */
-const UNKNOWNS_LIST =
-  /^\[\s*[A-Za-z]\w*(\s*\(\s*[A-Za-z]\w*\s*\))?(\s*,\s*[A-Za-z]\w*(\s*\(\s*[A-Za-z]\w*\s*\))?)*\s*\]$/;
+const UNKNOWN_NAME = String.raw`[A-Za-z]\w*(\s*\(\s*[A-Za-z]\w*\s*\))?`;
+// Same pattern the one-line literal spelled: a bracketed list of unknown
+// names, applied or bare. Assembled from a template because the literal is
+// past what S5843 considers a maintainable regex.
+const UNKNOWNS_LIST = new RegExp(`^\\[\\s*${UNKNOWN_NAME}(\\s*,\\s*${UNKNOWN_NAME})*\\s*\\]$`);
 
 const BARE_IDENTIFIER = /^[A-Za-z]\w*$/;
 
@@ -1123,44 +1126,52 @@ export function extractGeometry(problem: string): RouteResult {
   // A named `vertices`/`points` list is already in `args`, and the positional
   // reading below would replace it with an empty list.
   if (Object.keys(named).length === 0 && args['points'] === undefined) {
-    // `callArgs.positional` already holds this — splitArgs plus per-element
-    // coercion — so parsing `inner` again with a second policy meant one
-    // non-JSON element threw and dropped every point, where the shared parser
-    // coerces element by element and keeps the rest.
-    const parsed = callArgs.positional;
-    if (operation === 'area_circle' || operation === 'circumference') {
-      args['radius'] = parsed[0];
-    } else if (
-      operation === 'area_triangle' &&
-      parsed.length === 2 &&
-      parsed.every((n) => typeof n === 'number')
-    ) {
-      // Two bare numbers for a triangle are base and height, not points.
-      args['base'] = parsed[0];
-      args['height'] = parsed[1];
-    } else if (operation === 'angle_between_lines' || operation === 'line_intersection') {
-      args['line1'] = parsed[0];
-      args['line2'] = parsed[1];
-    } else if (operation === 'point_line_distance') {
-      // The handler reads `points[0]` and `line1`; nothing set `line1`, so
-      // every call reported "requires points[0] and line1". The line comes
-      // either as one [a,b,c] argument or as three bare coefficients —
-      // reading the first spelling only left the second destructuring a
-      // number, which surfaced as the raw "line1 is not iterable".
-      args['points'] = [parsed[0]];
-      if (Array.isArray(parsed[1])) {
-        args['line1'] = parsed[1];
-      } else if (parsed.slice(1, 4).every((n) => typeof n === 'number')) {
-        args['line1'] = parsed.slice(1, 4);
-      } else {
-        args['line1'] = undefined;
-      }
-    } else {
-      args['points'] = parsePointList(inner) ?? parsed;
-    }
+    applyPositionalGeometryArgs(args, operation, callArgs.positional, inner);
   }
 
   return { handler: 'geometry', args };
+}
+
+function applyPositionalGeometryArgs(
+  args: Record<string, unknown>,
+  operation: string,
+  parsed: unknown[],
+  inner: string
+): void {
+  // `parsed` already holds this — splitArgs plus per-element coercion — so
+  // parsing `inner` again with a second policy meant one non-JSON element
+  // threw and dropped every point, where the shared parser coerces element
+  // by element and keeps the rest.
+  if (operation === 'area_circle' || operation === 'circumference') {
+    args['radius'] = parsed[0];
+  } else if (
+    operation === 'area_triangle' &&
+    parsed.length === 2 &&
+    parsed.every((n) => typeof n === 'number')
+  ) {
+    // Two bare numbers for a triangle are base and height, not points.
+    args['base'] = parsed[0];
+    args['height'] = parsed[1];
+  } else if (operation === 'angle_between_lines' || operation === 'line_intersection') {
+    args['line1'] = parsed[0];
+    args['line2'] = parsed[1];
+  } else if (operation === 'point_line_distance') {
+    // The handler reads `points[0]` and `line1`; nothing set `line1`, so
+    // every call reported "requires points[0] and line1". The line comes
+    // either as one [a,b,c] argument or as three bare coefficients —
+    // reading the first spelling only left the second destructuring a
+    // number, which surfaced as the raw "line1 is not iterable".
+    args['points'] = [parsed[0]];
+    if (Array.isArray(parsed[1])) {
+      args['line1'] = parsed[1];
+    } else if (parsed.slice(1, 4).every((n) => typeof n === 'number')) {
+      args['line1'] = parsed.slice(1, 4);
+    } else {
+      args['line1'] = undefined;
+    }
+  } else {
+    args['points'] = parsePointList(inner) ?? parsed;
+  }
 }
 
 // --- Numerical methods ---
@@ -1252,6 +1263,30 @@ export function extractExactValue(problem: string): RouteResult {
 
 // --- Linear regression ---
 
+function extractRegressionSeries(
+  named: Record<string, unknown>,
+  positional: unknown[],
+  firstPart: string | undefined
+): { x: number[]; y: number[] } | null {
+  // Named form: `linear_regression(x=[1,2,3], y=[2,4,6])`.
+  if (isNumberList(named['x']) && isNumberList(named['y'])) {
+    return { x: named['x'], y: named['y'] };
+  }
+
+  // Point pairs: `linear_regression([[1,2],[2,4]])`.
+  const points = parsePointPairs(expressionArg(firstPart));
+  if (points) {
+    return { x: points.map((point) => point[0]), y: points.map((point) => point[1]) };
+  }
+
+  // Two separate lists: `linear_regression([1,2,3], [2,4,6])`.
+  const [xs, ys] = positional;
+  if (isNumberList(xs) && isNumberList(ys)) {
+    return { x: xs, y: ys };
+  }
+  return null;
+}
+
 export function extractLinearRegression(problem: string): RouteResult {
   const trimmed = problem.trim().toLowerCase();
   const inner = extractFnArgs(problem);
@@ -1274,26 +1309,10 @@ export function extractLinearRegression(problem: string): RouteResult {
 
   const { named, positional } = parseCallArgs(inner);
 
-  // Named form: `linear_regression(x=[1,2,3], y=[2,4,6])`.
-  if (isNumberList(named['x']) && isNumberList(named['y'])) {
-    args['x'] = named['x'];
-    args['y'] = named['y'];
-  }
-
-  // Point pairs: `linear_regression([[1,2],[2,4]])`.
-  const points = args['x'] === undefined ? parsePointPairs(expressionArg(parts[0])) : null;
-  if (points) {
-    args['x'] = points.map((point) => point[0]);
-    args['y'] = points.map((point) => point[1]);
-  }
-
-  // Two separate lists: `linear_regression([1,2,3], [2,4,6])`.
-  if (args['x'] === undefined) {
-    const [xs, ys] = positional;
-    if (isNumberList(xs) && isNumberList(ys)) {
-      args['x'] = xs;
-      args['y'] = ys;
-    }
+  const series = extractRegressionSeries(named, positional, parts[0]);
+  if (series) {
+    args['x'] = series.x;
+    args['y'] = series.y;
   }
 
   if (trimmed.startsWith('polynomial_regression') || trimmed.includes('polynomial')) {

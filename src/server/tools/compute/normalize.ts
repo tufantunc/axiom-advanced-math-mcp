@@ -1,5 +1,6 @@
 import type { ComputeEnvelope, McpResponse, ResultType, VerificationInfo } from './types.js';
 import { splitTopLevel } from '../output-cleanup.js';
+import { COMPONENT_ORDER_PREFIX } from '../response-formatter.js';
 
 // ---------------------------------------------------------------------------
 // Result type mapping — handler key → result type
@@ -207,9 +208,7 @@ export function normalize(
   const warnings = fields.notes.filter((n) => n.trimStart().startsWith('Warning:'));
   // Lifted the same way, because a vector answer is not interpretable without it
   // and every non-text format discards notes.
-  const componentLine = fields.notes.find((n) =>
-    n.trimStart().startsWith('Components are in the order:')
-  );
+  const componentLine = fields.notes.find((n) => n.trimStart().startsWith(COMPONENT_ORDER_PREFIX));
   const components = componentLine
     ?.slice(componentLine.indexOf(':') + 1)
     .split(',')

@@ -41,61 +41,110 @@ export function renderSvg(opts: SvgOptions): string {
     `<rect width="${width}" height="${height}" fill="white"/>`
   );
 
-  // Grid + axis ticks
-  const xStep = niceStep(xMax - xMin, 8);
-  const yStep = niceStep(yMax - yMin, 6);
-
-  const xStart = Math.ceil(xMin / xStep) * xStep;
-  const yStart = Math.ceil(yMin / yStep) * yStep;
-
-  // Grid lines
-  lines.push(`<g stroke="#e0e0e0" stroke-width="0.5">`);
-  for (let x = xStart; x <= xMax; x += xStep) {
-    const sx = toSvgX(x);
-    lines.push(`<line x1="${sx}" y1="${margin.top}" x2="${sx}" y2="${margin.top + plotH}"/>`);
-  }
-  for (let y = yStart; y <= yMax; y += yStep) {
-    const sy = toSvgY(y);
-    lines.push(`<line x1="${margin.left}" y1="${sy}" x2="${margin.left + plotW}" y2="${sy}"/>`);
-  }
-  lines.push(`</g>`);
-
-  // Axes (if origin is visible)
-  lines.push(`<g stroke="#999" stroke-width="1">`);
-  if (xMin <= 0 && xMax >= 0) {
-    const x0 = toSvgX(0);
-    lines.push(`<line x1="${x0}" y1="${margin.top}" x2="${x0}" y2="${margin.top + plotH}"/>`);
-  }
-  if (yMin <= 0 && yMax >= 0) {
-    const y0 = toSvgY(0);
-    lines.push(`<line x1="${margin.left}" y1="${y0}" x2="${margin.left + plotW}" y2="${y0}"/>`);
-  }
-  lines.push(`</g>`);
-
-  // Tick labels
-  lines.push(`<g font-family="sans-serif" font-size="11" fill="#333">`);
-  for (let x = xStart; x <= xMax; x += xStep) {
-    const sx = toSvgX(x);
-    const label = Math.abs(x) < 1e-10 ? '0' : formatNum(x);
-    lines.push(
-      `<text x="${sx}" y="${margin.top + plotH + 16}" text-anchor="middle">${label}</text>`
-    );
-  }
-  for (let y = yStart; y <= yMax; y += yStep) {
-    const sy = toSvgY(y);
-    const label = Math.abs(y) < 1e-10 ? '0' : formatNum(y);
-    lines.push(`<text x="${margin.left - 6}" y="${sy + 4}" text-anchor="end">${label}</text>`);
-  }
-  lines.push(`</g>`);
+  pushGridAxesAndTicks(
+    lines,
+    { xMin, xMax, yMin, yMax },
+    { left: margin.left, top: margin.top, width: plotW, height: plotH },
+    toSvgX,
+    toSvgY
+  );
 
   // Plot border
   lines.push(
     `<rect x="${margin.left}" y="${margin.top}" width="${plotW}" height="${plotH}" fill="none" stroke="#ccc" stroke-width="1"/>`
   );
 
+  pushCurveAndTitle(
+    lines,
+    segments,
+    title,
+    { left: margin.left, top: margin.top, width: plotW, height: plotH, canvasWidth: width },
+    toSvgX,
+    toSvgY
+  );
+
+  lines.push(`</svg>`);
+  return lines.join('\n');
+}
+
+interface Bounds {
+  xMin: number;
+  xMax: number;
+  yMin: number;
+  yMax: number;
+}
+
+interface Frame {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+function pushGridAxesAndTicks(
+  lines: string[],
+  b: Bounds,
+  f: Frame,
+  toSvgX: (x: number) => number,
+  toSvgY: (y: number) => number
+): void {
+  // Grid + axis ticks
+  const xStep = niceStep(b.xMax - b.xMin, 8);
+  const yStep = niceStep(b.yMax - b.yMin, 6);
+
+  const xStart = Math.ceil(b.xMin / xStep) * xStep;
+  const yStart = Math.ceil(b.yMin / yStep) * yStep;
+
+  // Grid lines
+  lines.push(`<g stroke="#e0e0e0" stroke-width="0.5">`);
+  for (let x = xStart; x <= b.xMax; x += xStep) {
+    const sx = toSvgX(x);
+    lines.push(`<line x1="${sx}" y1="${f.top}" x2="${sx}" y2="${f.top + f.height}"/>`);
+  }
+  for (let y = yStart; y <= b.yMax; y += yStep) {
+    const sy = toSvgY(y);
+    lines.push(`<line x1="${f.left}" y1="${sy}" x2="${f.left + f.width}" y2="${sy}"/>`);
+  }
+  lines.push(`</g>`);
+
+  // Axes (if origin is visible)
+  lines.push(`<g stroke="#999" stroke-width="1">`);
+  if (b.xMin <= 0 && b.xMax >= 0) {
+    const x0 = toSvgX(0);
+    lines.push(`<line x1="${x0}" y1="${f.top}" x2="${x0}" y2="${f.top + f.height}"/>`);
+  }
+  if (b.yMin <= 0 && b.yMax >= 0) {
+    const y0 = toSvgY(0);
+    lines.push(`<line x1="${f.left}" y1="${y0}" x2="${f.left + f.width}" y2="${y0}"/>`);
+  }
+  lines.push(`</g>`);
+
+  // Tick labels
+  lines.push(`<g font-family="sans-serif" font-size="11" fill="#333">`);
+  for (let x = xStart; x <= b.xMax; x += xStep) {
+    const sx = toSvgX(x);
+    const label = Math.abs(x) < 1e-10 ? '0' : formatNum(x);
+    lines.push(`<text x="${sx}" y="${f.top + f.height + 16}" text-anchor="middle">${label}</text>`);
+  }
+  for (let y = yStart; y <= b.yMax; y += yStep) {
+    const sy = toSvgY(y);
+    const label = Math.abs(y) < 1e-10 ? '0' : formatNum(y);
+    lines.push(`<text x="${f.left - 6}" y="${sy + 4}" text-anchor="end">${label}</text>`);
+  }
+  lines.push(`</g>`);
+}
+
+function pushCurveAndTitle(
+  lines: string[],
+  segments: { points: { x: number; y: number }[] }[],
+  title: string | undefined,
+  frame: { left: number; top: number; width: number; height: number; canvasWidth: number },
+  toSvgX: (x: number) => number,
+  toSvgY: (y: number) => number
+): void {
   // Function curve — clip to plot area
   lines.push(
-    `<defs><clipPath id="plot-area"><rect x="${margin.left}" y="${margin.top}" width="${plotW}" height="${plotH}"/></clipPath></defs>`,
+    `<defs><clipPath id="plot-area"><rect x="${frame.left}" y="${frame.top}" width="${frame.width}" height="${frame.height}"/></clipPath></defs>`,
     `<g clip-path="url(#plot-area)">`
   );
 
@@ -113,12 +162,9 @@ export function renderSvg(opts: SvgOptions): string {
   // Title
   if (title) {
     lines.push(
-      `<text x="${width / 2}" y="${24}" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="bold" fill="#333">${escapeXml(title)}</text>`
+      `<text x="${frame.canvasWidth / 2}" y="${24}" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="bold" fill="#333">${escapeXml(title)}</text>`
     );
   }
-
-  lines.push(`</svg>`);
-  return lines.join('\n');
 }
 
 function formatNum(n: number): string {

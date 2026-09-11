@@ -304,6 +304,95 @@ async function simpsonIntegration(
   return lines;
 }
 
+/** What one method produced: its output lines, or a refusal to show instead. */
+type MethodOutcome = string[] | { error: string };
+
+/** The shared arguments the handler parsed and validated, handed to every runner. */
+interface MethodContext {
+  expr: string;
+  variable: string;
+  tol: number;
+  maxIter: number;
+}
+
+async function runNewtonRaphson(
+  args: Record<string, unknown>,
+  ctx: MethodContext
+): Promise<MethodOutcome> {
+  const x0 = args.initial_guess as number;
+  if (x0 === undefined) return { error: 'newton_raphson requires initial_guess' };
+  return newtonRaphson(ctx.expr, ctx.variable, x0, ctx.tol, ctx.maxIter);
+}
+
+async function runBisection(
+  args: Record<string, unknown>,
+  ctx: MethodContext
+): Promise<MethodOutcome> {
+  const a = args.x0 as number,
+    b = args.x1 as number;
+  if (a === undefined || b === undefined)
+    return { error: 'bisection requires x0 (lower) and x1 (upper) bracket' };
+  return bisection(ctx.expr, ctx.variable, a, b, ctx.tol, ctx.maxIter);
+}
+
+async function runSecant(
+  args: Record<string, unknown>,
+  ctx: MethodContext
+): Promise<MethodOutcome> {
+  const x0 = args.x0 as number,
+    x1 = args.x1 as number;
+  if (x0 === undefined || x1 === undefined) return { error: 'secant requires x0 and x1' };
+  return secant(ctx.expr, ctx.variable, x0, x1, ctx.tol, ctx.maxIter);
+}
+
+async function runRomberg(
+  args: Record<string, unknown>,
+  ctx: MethodContext
+): Promise<MethodOutcome> {
+  const a = args.lower_bound as number,
+    b = args.upper_bound as number;
+  if (a === undefined || b === undefined)
+    return { error: 'romberg_integration requires lower_bound and upper_bound' };
+  return rombergIntegration(ctx.expr, ctx.variable, a, b);
+}
+
+async function runSimpson(
+  args: Record<string, unknown>,
+  ctx: MethodContext
+): Promise<MethodOutcome> {
+  const a = args.lower_bound as number,
+    b = args.upper_bound as number;
+  const requested = args.n_points === undefined ? SIMPSON_POINTS : (args.n_points as number);
+  // n_points first, as before: a call with both malformed keeps the message
+  // about the count, which a direct caller can act on; the extractor that
+  // feeds this handler cannot even emit n_points, so this order is for
+  // exactly those callers.
+  if (!Number.isInteger(requested) || requested < 2 || requested > SIMPSON_POINTS) {
+    return {
+      error: `n_points must be an integer between 2 and ${SIMPSON_POINTS}, got ${String(requested)}`,
+    };
+  }
+  if (a === undefined || b === undefined)
+    return { error: 'numerical_integration requires lower_bound and upper_bound' };
+  return simpsonIntegration(ctx.expr, ctx.variable, a, b, requested);
+}
+
+/**
+ * Dispatch by method name. A switch kept every guard at switch-depth, which is
+ * what carried this handler past Sonar's cognitive-complexity threshold; one
+ * runner per method leaves every guard top-level (runSimpson, the busiest,
+ * carries two guards and a ternary). Romberg and Simpson ignore tol/maxIter.
+ */
+type MethodRunner = (args: Record<string, unknown>, ctx: MethodContext) => Promise<MethodOutcome>;
+
+const METHOD_RUNNERS: Record<string, MethodRunner> = {
+  newton_raphson: runNewtonRaphson,
+  bisection: runBisection,
+  secant: runSecant,
+  romberg_integration: runRomberg,
+  numerical_integration: runSimpson,
+};
+
 export async function numericalMethodsHandler(args: Record<string, unknown>) {
   const method = args.method as string;
   const expr = args.expression as string;
@@ -319,86 +408,52 @@ export async function numericalMethodsHandler(args: Record<string, unknown>) {
       `max_iterations must be an integer between 1 and ${MAX_ROOT_ITERATIONS}, got ${String(requestedIter)}`
     );
   }
-  const maxIter = requestedIter;
 
   try {
-    let lines: string[];
-
-    switch (method) {
-      case 'newton_raphson': {
-        const x0 = args.initial_guess as number;
-        if (x0 === undefined) return formatErrorResponse('newton_raphson requires initial_guess');
-        lines = await newtonRaphson(expr, variable, x0, tol, maxIter);
-        break;
-      }
-      case 'bisection': {
-        const a = args.x0 as number,
-          b = args.x1 as number;
-        if (a === undefined || b === undefined)
-          return formatErrorResponse('bisection requires x0 (lower) and x1 (upper) bracket');
-        lines = await bisection(expr, variable, a, b, tol, maxIter);
-        break;
-      }
-      case 'secant': {
-        const x0 = args.x0 as number,
-          x1 = args.x1 as number;
-        if (x0 === undefined || x1 === undefined)
-          return formatErrorResponse('secant requires x0 and x1');
-        lines = await secant(expr, variable, x0, x1, tol, maxIter);
-        break;
-      }
-      case 'romberg_integration': {
-        const a = args.lower_bound as number,
-          b = args.upper_bound as number;
-        if (a === undefined || b === undefined)
-          return formatErrorResponse('romberg_integration requires lower_bound and upper_bound');
-        lines = await rombergIntegration(expr, variable, a, b);
-        break;
-      }
-      case 'numerical_integration': {
-        const a = args.lower_bound as number,
-          b = args.upper_bound as number;
-        const requested = args.n_points === undefined ? SIMPSON_POINTS : (args.n_points as number);
-        if (!Number.isInteger(requested) || requested < 2 || requested > SIMPSON_POINTS) {
-          return formatErrorResponse(
-            `n_points must be an integer between 2 and ${SIMPSON_POINTS}, got ${String(requested)}`
-          );
-        }
-        const n = requested;
-        if (a === undefined || b === undefined)
-          return formatErrorResponse('numerical_integration requires lower_bound and upper_bound');
-        lines = await simpsonIntegration(expr, variable, a, b, n);
-        break;
-      }
-      default:
-        return formatErrorResponse(`Unknown method: ${method}`);
-    }
-
-    // Matching only `✗ Error:` caught bisection's sign-change return and none of
-    // the five siblings in this file — `✗ Failed: ...` and `✗ Did not converge
-    // within N iterations.` fell through to the headline scan below, where the
-    // label strip turned them into answers: `newton(x^3-2*x+2, x, 0)` reported
-    // "0" for a point where f = 2, and `secant(x^2-2, 1, 1)` reported "division
-    // by zero (f(x1) ≈ f(x0))".
-    const failure = inBandFailure(lines);
-    if (failure) return formatErrorResponse(failure);
-
-    // The answer to "find a root" is the root, not the residual. Scanning only
-    // the last line found `f(root) = 3.154474e-11`, and the `Root|Result` regex
-    // is case-sensitive so lowercase `f(root)` fell through to the raw line —
-    // so `bisection(x^2-2, 1, 2)` answered 3.15e-11 for a root of 1.4142136.
-    const labelled =
-      lines.find((l) => l.startsWith('Root:')) ?? lines.find((l) => l.startsWith('Result'));
-    // Strip the label only from a line that has one. Applying the strip to the
-    // raw last line is what turned `Last x = 0` into a bare `0`.
-    const mainResult = labelled ? labelled.replace(/^[^=:]*[=:]\s*/, '').trim() : lines.at(-1);
-    if (mainResult === undefined) return formatErrorResponse('the method produced no output');
-
-    return formatToolResponse({
-      result: mainResult,
-      notes: lines,
-    });
+    // hasOwn, not a bare lookup: a Record inherits Object.prototype, so
+    // METHOD_RUNNERS['constructor'] would resolve to a truthy inherited value
+    // and run it, where the switch this replaced answered "Unknown method".
+    // Reached only by direct callers today, but the handler is exported for
+    // exactly those.
+    const runner = Object.hasOwn(METHOD_RUNNERS, method) ? METHOD_RUNNERS[method] : undefined;
+    if (!runner) return formatErrorResponse(`Unknown method: ${method}`);
+    const outcome = await runner(args, { expr, variable, tol, maxIter: requestedIter });
+    if ('error' in outcome) return formatErrorResponse(outcome.error);
+    return formatMethodResult(outcome);
   } catch (error) {
     return formatErrorResponse(error instanceof Error ? error.message : String(error));
   }
+}
+
+/**
+ * The method's lines become either a refusal (an in-band failure marker) or
+ * the response whose result is the labelled answer line.
+ */
+function formatMethodResult(
+  lines: string[]
+): ReturnType<typeof formatToolResponse> | ReturnType<typeof formatErrorResponse> {
+  // Matching only `✗ Error:` caught bisection's sign-change return and none of
+  // the five siblings in this file — `✗ Failed: ...` and `✗ Did not converge
+  // within N iterations.` fell through to the headline scan below, where the
+  // label strip turned them into answers: `newton(x^3-2*x+2, x, 0)` reported
+  // "0" for a point where f = 2, and `secant(x^2-2, 1, 1)` reported "division
+  // by zero (f(x1) ≈ f(x0))".
+  const failure = inBandFailure(lines);
+  if (failure) return formatErrorResponse(failure);
+
+  // The answer to "find a root" is the root, not the residual. Scanning only
+  // the last line found `f(root) = 3.154474e-11`, and the `Root|Result` regex
+  // is case-sensitive so lowercase `f(root)` fell through to the raw line —
+  // so `bisection(x^2-2, 1, 2)` answered 3.15e-11 for a root of 1.4142136.
+  const labelled =
+    lines.find((l) => l.startsWith('Root:')) ?? lines.find((l) => l.startsWith('Result'));
+  // Strip the label only from a line that has one. Applying the strip to the
+  // raw last line is what turned `Last x = 0` into a bare `0`.
+  const mainResult = labelled ? labelled.replace(/^[^=:]*[=:]\s*/, '').trim() : lines.at(-1);
+  if (mainResult === undefined) return formatErrorResponse('the method produced no output');
+
+  return formatToolResponse({
+    result: mainResult,
+    notes: lines,
+  });
 }

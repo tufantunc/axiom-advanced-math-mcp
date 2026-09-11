@@ -160,7 +160,31 @@ export function parsePointList(inner: string): [number, number][] | null {
   const asSeparateArgs = parsePointPairs(`[${inner}]`);
   if (asSeparateArgs) return asSeparateArgs;
   const parts = splitArgs(inner);
-  return parts.length === 1 ? parsePointPairs(parts[0]) : null;
+  if (parts.length === 1) {
+    const single = parenPair(parts[0]);
+    if (single) return [single];
+    return parsePointPairs(parts[0]);
+  }
+  // The paren spelling geometry callers naturally write — `distance((0,0),
+  // (3,4))` — is not JSON, so it fell through here and the extractor's
+  // fallback passed the raw STRINGS on as points, which the handler
+  // destructured into characters and answered NaN. Recognized instead.
+  const pairs: [number, number][] = [];
+  for (const part of parts) {
+    const pair = parenPair(part);
+    if (!pair) return null;
+    pairs.push(pair);
+  }
+  return pairs.length > 0 ? pairs : null;
+}
+
+/** `(0,0)` as a pair — the spelling JSON cannot express. */
+function parenPair(part: string): [number, number] | null {
+  // Also on the single-argument path: `distance((0,0))` used to degrade its
+  // arity error into pair guidance once the multi-argument path learned the
+  // spelling — the caller did write a pair.
+  const m = /^\(\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\)$/.exec(part);
+  return m ? [Number(m[1]), Number(m[2])] : null;
 }
 
 function tryJson(text: string): unknown {

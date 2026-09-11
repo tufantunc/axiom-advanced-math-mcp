@@ -205,9 +205,40 @@ function angleBetweenLines(args: Record<string, unknown>) {
   });
 }
 
+/**
+ * Points arrive from several extractor spellings; anything the extractor did
+ * not recognize used to pass through as raw strings, which the per-operation
+ * functions destructured into characters and answered NaN (distance((0,0),
+ * foo) -> "Result: NaN", isError:false). Refused with guidance instead.
+ */
+function refuseUnrecognizedPoints(args: Record<string, unknown>): boolean {
+  const isPair = (el: unknown) =>
+    Array.isArray(el) &&
+    el.length === 2 &&
+    el.every((n) => typeof n === 'number' && Number.isFinite(n));
+  const points = args.points as unknown;
+  if (points !== undefined && (!Array.isArray(points) || !points.every(isPair))) return true;
+  // Lines answer to the same rule as points: a paren triple the extractor did
+  // not recognize arrives as a string, destructures into characters, and
+  // line_intersection((1,1,0), (1,-1,2)) answered (NaN, NaN) at isError:false.
+  const isTriple = (el: unknown) =>
+    Array.isArray(el) &&
+    el.length === 3 &&
+    el.every((n) => typeof n === 'number' && Number.isFinite(n));
+  return (
+    (args.line1 !== undefined && !isTriple(args.line1)) ||
+    (args.line2 !== undefined && !isTriple(args.line2))
+  );
+}
+
 export async function geometryHandler(args: Record<string, unknown>) {
   try {
     const op = args.operation as string;
+    if (refuseUnrecognizedPoints(args)) {
+      return formatErrorResponse(
+        'points must be (x, y) pairs and lines [a, b, c] triples, e.g. points=[[0,0],[3,4]] or line_intersection([1,-1,0], [1,1,-2])'
+      );
+    }
     switch (op) {
       case 'distance':
         return distance(args);

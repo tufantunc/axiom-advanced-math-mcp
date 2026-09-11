@@ -253,13 +253,9 @@ async function chiSquareIndependence(data: {
   if (!contingency_table || contingency_table.length < 2)
     return ['Error: chi_square_independence requires contingency_table (2D array)'];
 
+  const { rowSums, colSums, N } = contingencyMargins(contingency_table);
   const rows = contingency_table.length;
   const cols = contingency_table[0].length;
-  const rowSums = contingency_table.map((row) => row.reduce((a, b) => a + b, 0));
-  const colSums = Array.from({ length: cols }, (_, j) =>
-    contingency_table.reduce((a, row) => a + row[j], 0)
-  );
-  const N = rowSums.reduce((a, b) => a + b, 0);
 
   // Every expected count is (rowSum x colSum) / N, so an empty table divides by
   // zero and an empty row or column makes one expected count zero. Either way χ²
@@ -300,13 +296,7 @@ async function chiSquareIndependence(data: {
     ];
   }
 
-  let chi2 = 0;
-  for (let i = 0; i < rows; i++) {
-    for (let j = 0; j < cols; j++) {
-      const expected = (rowSums[i] * colSums[j]) / N;
-      chi2 += (contingency_table[i][j] - expected) ** 2 / expected;
-    }
-  }
+  const chi2 = chiSquareStatistic(contingency_table, rowSums, colSums, N);
   const df = (rows - 1) * (cols - 1);
 
   // Not a backstop: this is the working guard for counts large enough that the
@@ -639,4 +629,32 @@ export async function hypothesisTestingHandler(args: Record<string, unknown>) {
   } catch (error) {
     return formatErrorResponse(error instanceof Error ? error.message : String(error));
   }
+}
+
+function contingencyMargins(table: number[][]): {
+  rowSums: number[];
+  colSums: number[];
+  N: number;
+} {
+  const cols = table[0].length;
+  const rowSums = table.map((row) => row.reduce((a, b) => a + b, 0));
+  const colSums = Array.from({ length: cols }, (_, j) => table.reduce((a, row) => a + row[j], 0));
+  const N = rowSums.reduce((a, b) => a + b, 0);
+  return { rowSums, colSums, N };
+}
+
+function chiSquareStatistic(
+  table: number[][],
+  rowSums: number[],
+  colSums: number[],
+  N: number
+): number {
+  let chi2 = 0;
+  for (let i = 0; i < table.length; i++) {
+    for (let j = 0; j < table[i].length; j++) {
+      const expected = (rowSums[i] * colSums[j]) / N;
+      chi2 += (table[i][j] - expected) ** 2 / expected;
+    }
+  }
+  return chi2;
 }
