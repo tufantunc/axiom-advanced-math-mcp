@@ -16,6 +16,22 @@ import { MAX_EXPRESSION_LENGTH } from '../limits.js';
  * keeping worst-case parsing/evaluation cost bounded.
  */
 
+/**
+ * The limits named in the descriptions below, and where each number comes from:
+ *
+ *   - `problem` at 8 KB: MAX_EXPRESSION_LENGTH (../limits.ts), documented there.
+ *   - 100,000-character result refusal: MAX_RESULT_CHARS
+ *     (js-compute/mathjs-tasks.ts). Measured there: `1:2000000` builds
+ *     24.3 million characters that would land whole in an MCP client's
+ *     context; the cap fires after stringification, bounding what is
+ *     returned, not what is spent computing it.
+ *   - "more than 9 equations": MAX_SYSTEM_EQUATIONS
+ *     (ode-system-shape.ts). Measured there: the linearity probe is
+ *     quadratic in the equation count, and 9 equations produce a
+ *     1,681-character probe while 10 produce 2,006 — past the probe's own
+ *     character cap. Nine is the largest count that can pass, not a round
+ *     number chosen for its shape.
+ */
 export const computeSchema = z.object({
   problem: z
     .string()
@@ -77,6 +93,14 @@ export const computeSchema = z.object({
         '  numeric — force numerical methods\n' +
         '  exact — exact symbolic form'
     ),
+  // Precision is significant digits. The floor of 1 is definitional — fewer
+  // than one significant digit is not a precision. The ceiling of 50 has no
+  // recorded rationale: it arrived with the field and nothing measured it.
+  // What is known is in the description itself — above ~17 digits the result
+  // is a double and carries no more information — so 50 bounds only how far
+  // a caller may ask past the point of effect. The CLI's --precision window
+  // mirrors this 1..50 exactly (requirePrecision in cli/parse.ts, pinned by
+  // test/cli-parse.test.ts).
   precision: z
     .number()
     .min(1)

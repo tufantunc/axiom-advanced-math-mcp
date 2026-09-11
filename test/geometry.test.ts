@@ -95,31 +95,53 @@ describe('geometry — 2D distances and magnitudes', () => {
     expect(allText(r)).toContain('Result: 0°');
   });
 
-  it('a single paren point keeps its arity error, not pair guidance', async () => {
-    // distance((0,0)) parses to ONE point; the error must name the shortage,
-    // because the caller did write a pair (a review remedy: the single-part
-    // path used to miss the paren spelling and misdirect to pair guidance).
-    const { extractGeometry } = await import('../src/server/tools/compute/extractors.js');
-    const r = await geometryHandler({ ...extractGeometry('distance((0,-2))').args });
+  // Three refusals of unrecognized point shapes, one parameterized test. Each
+  // row keeps its own input channel — two through the extractor, one direct
+  // to the handler — because that difference is part of what the row pins.
+  // Array rows with %s, not object rows with $name: chai truncates object
+  // display at 40 characters, which cut these titles to their first two
+  // thirds in every reporter and broke `vitest -t` on the title tails.
+  it.each([
+    [
+      'a single paren point keeps its arity error, not pair guidance',
+      // distance((0,-2)) parses to ONE point; the error must name the shortage,
+      // because the caller did write a pair (a review remedy: the single-part
+      // path used to miss the paren spelling and misdirect to pair guidance).
+      {
+        args: async () => ({
+          ...(await import('../src/server/tools/compute/extractors.js')).extractGeometry(
+            'distance((0,-2))'
+          ).args,
+        }),
+        message: 'requires at least 2 points',
+      },
+    ],
+    [
+      'refuses a non-pair mixed into recognized pairs, not silently dropping it',
+      // Pins the all-or-nothing loop in parsePointList: a skip-instead-of-refuse
+      // mutant answers Result: 5 here with `foo` discarded, isError:false.
+      {
+        args: async () => ({
+          ...(await import('../src/server/tools/compute/extractors.js')).extractGeometry(
+            'distance((0,0), foo, (3,4))'
+          ).args,
+        }),
+        message: 'points must be (x, y) pairs',
+      },
+    ],
+    [
+      'refuses triples masquerading as points rather than discarding the surplus',
+      // Pins isPair's arity in the accept direction: a mutant accepting length
+      // 2-or-3 answers Result: 4.2426406871 with the z silently discarded.
+      {
+        args: async () => ({ operation: 'distance' as const, points: [[1, 2, 3], [4, 5, 6]] }),
+        message: 'points must be (x, y) pairs',
+      },
+    ],
+  ])('%s', async (_name, { args, message }) => {
+    const r = await geometryHandler(await args());
     expect(r.isError).toBe(true);
-    expect(allText(r)).toContain('requires at least 2 points');
-  });
-
-  it('refuses a non-pair mixed into recognized pairs, not silently dropping it', async () => {
-    // Pins the all-or-nothing loop in parsePointList: a skip-instead-of-refuse
-    // mutant answers Result: 5 here with `foo` discarded, isError:false.
-    const { extractGeometry } = await import('../src/server/tools/compute/extractors.js');
-    const r = await geometryHandler({ ...extractGeometry('distance((0,0), foo, (3,4))').args });
-    expect(r.isError).toBe(true);
-    expect(allText(r)).toContain('points must be (x, y) pairs');
-  });
-
-  it('refuses triples masquerading as points rather than discarding the surplus', async () => {
-    // Pins isPair's arity in the accept direction: a mutant accepting length
-    // 2-or-3 answers Result: 4.2426406871 with the z silently discarded.
-    const r = await geometryHandler({ operation: 'distance', points: [[1, 2, 3], [4, 5, 6]] });
-    expect(r.isError).toBe(true);
-    expect(allText(r)).toContain('points must be (x, y) pairs');
+    expect(allText(r)).toContain(message);
   });
 
   // The line rows pin each clause separately: deleting only the line1 or

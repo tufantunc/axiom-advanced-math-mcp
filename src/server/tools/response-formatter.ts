@@ -58,8 +58,7 @@ export function formatToolResponse(data: MathToolResponse): {
     lines.push(`Verified: ${mark} (${data.verification.method}: ${data.verification.detail})`);
   }
   if (data.notes && data.notes.length > 0) lines.push(...data.notes);
-  lines.push('');
-  lines.push(answerSummary(data));
+  lines.push('', answerSummary(data));
   return {
     content: lines.map((l) => ({ type: 'text' as const, text: l })),
     isError: false,

@@ -77,7 +77,7 @@ const CAS_VERBS = [
   'comb',
   'perm',
 ];
-const CAS_VERB_PATTERN = new RegExp(`^(${CAS_VERBS.join('|')})\\s*\\(`, 'i');
+const CAS_VERB_PATTERN = new RegExp(String.raw`^(${CAS_VERBS.join('|')})\s*\(`, 'i');
 
 const KNOWN_MATH_FNS = [
   'sin',
@@ -116,7 +116,7 @@ const KNOWN_MATH_FNS = [
   'factorial',
   'gamma',
 ];
-const KNOWN_MATH_FN_PATTERN = new RegExp(`^(${KNOWN_MATH_FNS.join('|')})\\s*\\(`, 'i');
+const KNOWN_MATH_FN_PATTERN = new RegExp(String.raw`^(${KNOWN_MATH_FNS.join('|')})\s*\(`, 'i');
 
 // ---------------------------------------------------------------------------
 // Helpers
