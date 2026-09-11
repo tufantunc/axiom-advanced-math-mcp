@@ -41,3 +41,28 @@ describe('giac worker host — a timeout fails only the call that timed out', ()
     }
   }, 60000);
 });
+
+describe('giac worker host — a fatal trap fails only the call that caused it', () => {
+  it('the trap call gets its own error; the next call reaches the fresh worker', async () => {
+    const h = createWorkerHost({ timeoutMs: 30000 });
+    try {
+      await h.warmup();
+
+      // Measured: a huge-exponent initial condition traps the WASM engine
+      // fatally, so worker.ts answers THIS call with the trap text and only
+      // then exits on purpose.
+      await expect(h.evaluate("desolve([y'=y,y(0)=(2^1000)^1000],x,y)")).rejects.toThrow(
+        /Giac WASM evaluation error/
+      );
+
+      // This call is dispatched in the gap between the trap answer and the
+      // 'exit' event — a promise continuation always beats the event loop —
+      // so on the old exit path it sat in `pending` when failAllPending ran.
+      // Pre-fix it was rejected with "Giac worker exited (code 1)", a reason
+      // that was not this caller's; it is now re-sent to the fresh worker.
+      await expect(h.evaluate("desolve([y'=y,y(0)=1],x,y)")).resolves.toBe('exp(x)');
+    } finally {
+      await h.dispose();
+    }
+  }, 60000);
+});
