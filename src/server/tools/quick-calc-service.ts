@@ -27,7 +27,10 @@ const NATURAL_LANGUAGE_WORDS = [
   String.raw`we\s+have`,
   String.raw`such\s+that`,
 ];
-const NATURAL_LANGUAGE_PATTERN = new RegExp(`\\b(${NATURAL_LANGUAGE_WORDS.join('|')})\\b`, 'i');
+const NATURAL_LANGUAGE_PATTERN = new RegExp(
+  String.raw`\b(${NATURAL_LANGUAGE_WORDS.join('|')})\b`,
+  'i'
+);
 
 export function detectNaturalLanguage(expression: string): boolean {
   const trimmed = expression.trim();

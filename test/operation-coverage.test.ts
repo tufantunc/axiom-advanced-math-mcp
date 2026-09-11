@@ -240,6 +240,12 @@ function declaredOperations(): string[] {
     for (const record of source.matchAll(/Record<string, TaskName> = \{([^}]*)\}/g)) {
       for (const m of record[1].matchAll(/^\s*([a-z][a-z0-9_]*):/gm)) names.add(m[1]);
     }
+    // A fifth: numerical-methods dispatches the same way with runner functions
+    // as the values (MethodRunner, decomposed out of a switch for Sonar). Same
+    // shape, different value type — the keys are the operations either way.
+    for (const record of source.matchAll(/Record<string, MethodRunner> = \{([^}]*)\}/g)) {
+      for (const m of record[1].matchAll(/^\s*([a-z][a-z0-9_]*):/gm)) names.add(m[1]);
+    }
   }
   return [...names].sort();
 }
