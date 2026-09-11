@@ -31,7 +31,8 @@ export const NON_FINITE_NOTE =
  * normalize.ts recognizes the note by this prefix and lifts the list into the
  * envelope's `components` field. One constant because the two sides were
  * handwritten apart and a wording change on the producing side silently
- * stopped the recognizing side — caught by mutation before this existed.
+ * stopped the recognizing side — a coupling mutation-verified as live before
+ * this existed.
  *
  * No trailing space: the recognizer matches the prefix alone, and its parse
  * tolerates a missing separator the same way it did before this was shared.

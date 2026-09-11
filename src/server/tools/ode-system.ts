@@ -481,13 +481,13 @@ export async function translateOdeSystem(
     };
   }
 
-  const read = await probeReply(probe, functions, evaluate);
+  const read = await sendProbe(probe, functions, evaluate);
   if ('error' in read) return read;
   const parsed = parseCoefficientReply(read.raw);
   if ('error' in parsed) return parsed;
-  let { matrix, constants } = parsed;
+  const { matrix, constants, residual } = parsed;
 
-  if (await isNotAffine(parsed.residual, evaluate)) {
+  if (await isNotAffine(residual, evaluate)) {
     return {
       error:
         'is not linear in the unknown functions — what remains after removing the ' +
@@ -501,8 +501,9 @@ export async function translateOdeSystem(
 }
 
 /**
- * The one engine call that asks for everything about the system's coefficients
- * at once: the gradient rows, the constant vector, and the residual.
+ * Builds the one engine call that asks for everything about the system's
+ * coefficients at once: the gradient rows, the constant vector, and the
+ * residual.
  *
  * `grad` gives the whole row at once, and its entries answer BOTH questions a
  * hand-built residual used to: an entry naming an unknown function means the
@@ -542,9 +543,10 @@ function coefficientsProbe(functions: string[], rhss: string[]): string {
 }
 
 /**
- * Sends the probe and bounds what comes back, in both directions.
+ * Sends the probe and turns every way it can come back wrong — too long, a
+ * trap or timeout, a GIAC_ERROR — into a refusal.
  */
-async function probeReply(
+async function sendProbe(
   probe: string,
   functions: string[],
   evaluate: (expr: string) => Promise<string>
@@ -700,6 +702,14 @@ function constantCoefficientRefusal(
 }
 
 /**
+ * validateSystemShape's condition reading, restated here under a name rather
+ * than as an anonymous inline shape. The canonical declaration lives in
+ * ode-system-shape.ts; a type shared by both files would belong there, and
+ * that file is owned by another branch.
+ */
+type CheckedConditions = { point: string; values: string[] };
+
+/**
  * Everything from the chosen vector symbol to the finished command: domain
  * reading, the float normalization, the forcing-term caps, and the
  * matrix-form command itself.
@@ -708,8 +718,7 @@ async function assembleCommand(input: {
   system: OdeSystem;
   variable: string;
   functions: string[];
-  /** The already-checked condition reading validateSystemShape produced. */
-  conditions: { point: string; values: string[] } | undefined;
+  conditions: CheckedConditions | undefined;
   matrix: string;
   constants: string;
   evaluate: (expr: string) => Promise<string>;
