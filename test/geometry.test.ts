@@ -98,38 +98,47 @@ describe('geometry — 2D distances and magnitudes', () => {
   // Three refusals of unrecognized point shapes, one parameterized test. Each
   // row keeps its own input channel — two through the extractor, one direct
   // to the handler — because that difference is part of what the row pins.
+  // Array rows with %s, not object rows with $name: chai truncates object
+  // display at 40 characters, which cut these titles to their first two
+  // thirds in every reporter and broke `vitest -t` on the title tails.
   it.each([
-    {
-      name: 'a single paren point keeps its arity error, not pair guidance',
-      // distance((0,0)) parses to ONE point; the error must name the shortage,
+    [
+      'a single paren point keeps its arity error, not pair guidance',
+      // distance((0,-2)) parses to ONE point; the error must name the shortage,
       // because the caller did write a pair (a review remedy: the single-part
       // path used to miss the paren spelling and misdirect to pair guidance).
-      args: async () => ({
-        ...(await import('../src/server/tools/compute/extractors.js')).extractGeometry(
-          'distance((0,-2))'
-        ).args,
-      }),
-      message: 'requires at least 2 points',
-    },
-    {
-      name: 'refuses a non-pair mixed into recognized pairs, not silently dropping it',
+      {
+        args: async () => ({
+          ...(await import('../src/server/tools/compute/extractors.js')).extractGeometry(
+            'distance((0,-2))'
+          ).args,
+        }),
+        message: 'requires at least 2 points',
+      },
+    ],
+    [
+      'refuses a non-pair mixed into recognized pairs, not silently dropping it',
       // Pins the all-or-nothing loop in parsePointList: a skip-instead-of-refuse
       // mutant answers Result: 5 here with `foo` discarded, isError:false.
-      args: async () => ({
-        ...(await import('../src/server/tools/compute/extractors.js')).extractGeometry(
-          'distance((0,0), foo, (3,4))'
-        ).args,
-      }),
-      message: 'points must be (x, y) pairs',
-    },
-    {
-      name: 'refuses triples masquerading as points rather than discarding the surplus',
+      {
+        args: async () => ({
+          ...(await import('../src/server/tools/compute/extractors.js')).extractGeometry(
+            'distance((0,0), foo, (3,4))'
+          ).args,
+        }),
+        message: 'points must be (x, y) pairs',
+      },
+    ],
+    [
+      'refuses triples masquerading as points rather than discarding the surplus',
       // Pins isPair's arity in the accept direction: a mutant accepting length
       // 2-or-3 answers Result: 4.2426406871 with the z silently discarded.
-      args: async () => ({ operation: 'distance' as const, points: [[1, 2, 3], [4, 5, 6]] }),
-      message: 'points must be (x, y) pairs',
-    },
-  ])('$name', async ({ args, message }) => {
+      {
+        args: async () => ({ operation: 'distance' as const, points: [[1, 2, 3], [4, 5, 6]] }),
+        message: 'points must be (x, y) pairs',
+      },
+    ],
+  ])('%s', async (_name, { args, message }) => {
     const r = await geometryHandler(await args());
     expect(r.isError).toBe(true);
     expect(allText(r)).toContain(message);

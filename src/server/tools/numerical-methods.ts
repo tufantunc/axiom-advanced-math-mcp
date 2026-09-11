@@ -307,7 +307,7 @@ async function simpsonIntegration(
 /** What one method produced: its output lines, or a refusal to show instead. */
 type MethodOutcome = string[] | { error: string };
 
-/** The four arguments every method in this file shares. */
+/** The shared arguments the handler parsed and validated, handed to every runner. */
 interface MethodContext {
   expr: string;
   variable: string;
@@ -364,7 +364,9 @@ async function runSimpson(
     b = args.upper_bound as number;
   const requested = args.n_points === undefined ? SIMPSON_POINTS : (args.n_points as number);
   // n_points first, as before: a call with both malformed keeps the message
-  // about the argument the caller can actually fix by reading the schema.
+  // about the count, which a direct caller can act on; the extractor that
+  // feeds this handler cannot even emit n_points, so this order is for
+  // exactly those callers.
   if (!Number.isInteger(requested) || requested < 2 || requested > SIMPSON_POINTS) {
     return {
       error: `n_points must be an integer between 2 and ${SIMPSON_POINTS}, got ${String(requested)}`,
@@ -378,7 +380,8 @@ async function runSimpson(
 /**
  * Dispatch by method name. A switch kept every guard at switch-depth, which is
  * what carried this handler past Sonar's cognitive-complexity threshold; one
- * runner per method leaves each at a single top-level guard.
+ * runner per method leaves every guard top-level (runSimpson, the busiest,
+ * carries two guards and a ternary). Romberg and Simpson ignore tol/maxIter.
  */
 type MethodRunner = (args: Record<string, unknown>, ctx: MethodContext) => Promise<MethodOutcome>;
 
@@ -407,7 +410,12 @@ export async function numericalMethodsHandler(args: Record<string, unknown>) {
   }
 
   try {
-    const runner = METHOD_RUNNERS[method];
+    // hasOwn, not a bare lookup: a Record inherits Object.prototype, so
+    // METHOD_RUNNERS['constructor'] would resolve to a truthy inherited value
+    // and run it, where the switch this replaced answered "Unknown method".
+    // Reached only by direct callers today, but the handler is exported for
+    // exactly those.
+    const runner = Object.hasOwn(METHOD_RUNNERS, method) ? METHOD_RUNNERS[method] : undefined;
     if (!runner) return formatErrorResponse(`Unknown method: ${method}`);
     const outcome = await runner(args, { expr, variable, tol, maxIter: requestedIter });
     if ('error' in outcome) return formatErrorResponse(outcome.error);

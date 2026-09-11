@@ -223,5 +223,21 @@ describe('numerical_methods', () => {
       expect(allText(r)).toMatch(/Infinity/);
     });
   });
+
+  describe('method names that are not methods', () => {
+    // The dispatch table is a Record, which inherits Object.prototype: a bare
+    // lookup on 'constructor' or 'toString' resolves to an inherited value and
+    // runs it, answering with internal gibberish. The hasOwn guard keeps the
+    // switch's contract: every name that is not one of the five methods is
+    // "Unknown method", regardless of what Object.prototype happens to carry.
+    it.each(['constructor', 'toString', 'valueOf', '__proto__'])(
+      'answers Unknown method for the inherited name %s',
+      async (method) => {
+        const r = await numericalMethodsHandler({ method, expression: 'x^2-2' });
+        expect(r.isError).toBe(true);
+        expect(allText(r)).toBe(`Error: Unknown method: ${method}`);
+      }
+    );
+  });
 });
 
