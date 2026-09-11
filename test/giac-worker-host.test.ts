@@ -1,4 +1,8 @@
 import { describe, it, expect, afterAll } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createWorkerHost } from '../src/server/giac/worker-host.js';
 import { isFatalWasmTrap } from '../src/server/giac/fatal-trap.js';
 
@@ -92,11 +96,51 @@ describe('giac worker host — a worker that dies before its handshake', () => {
       // Pre-fix these waited out the 30s init timer ("Giac worker init timed
       // out"); the exit path now settles them with what actually happened.
       // The vitest timeout below is what catches a regression to the 30s
-      // wait — the assertions alone never get to run there.
+      // wait — the assertions alone never get to run there. The child's
+      // module-not-found stack on stderr is the expected noise of the seam.
       await expect(first).rejects.toThrow(/Giac worker exited \(code \d+\)/);
       await expect(second).rejects.toThrow(/Giac worker exited \(code \d+\)/);
     } finally {
       await h.dispose();
     }
   }, 10000);
+});
+
+describe('giac worker host — a replacement that dies before its handshake', () => {
+  it('keeps the survivors an earlier recycle already re-queued', async () => {
+    // Two consecutive deaths with an innocent in flight — the compound case
+    // behind the generation-aware stand-down in recycleAndRedispatch's
+    // rejection handler. The trap answers, then kills W1; the innocent is
+    // dispatched in the gap (a continuation beats the 'exit' event), so W1's
+    // exit re-queues it onto W2; W2 dies before ITS handshake, so its exit
+    // re-queues the same call onto W3. Without the stand-down, rejecting W2's
+    // ready promise also fired the FIRST generation's failSurvivors, which
+    // rejected the innocent with "Giac worker exited (code 9)" — a reason
+    // that was neither its caller's nor W3's. The real worker cannot be made
+    // to die on its second fork; the stub can.
+    const dir = mkdtempSync(join(tmpdir(), 'axiom-stub-'));
+    process.env.AXIOM_GIAC_STUB_COUNTER = join(dir, 'counter');
+    try {
+      const h = createWorkerHost({
+        timeoutMs: 15000,
+        workerPath: fileURLToPath(new URL('fixtures/giac-stub-worker.mts', import.meta.url)),
+      });
+      try {
+        await h.evaluate('__STUB_TRAP__').then(
+          () => {
+            throw new Error('expected the stub trap to throw');
+          },
+          () => undefined
+        );
+        // Dispatched after the trap settled but before 'exit' is processed.
+        const innocent = h.evaluate('ping');
+        await expect(innocent).resolves.toBe('stub:ping');
+      } finally {
+        await h.dispose();
+      }
+    } finally {
+      delete process.env.AXIOM_GIAC_STUB_COUNTER;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30000);
 });
