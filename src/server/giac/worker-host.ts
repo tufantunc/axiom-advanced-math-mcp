@@ -1,6 +1,7 @@
 import { fork, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { evalTimeoutMs } from '../env-bounds.js';
 
 export interface WorkerHostOptions {
   timeoutMs?: number;
@@ -22,7 +23,6 @@ interface Pending {
   redispatches: number;
 }
 
-const DEFAULT_TIMEOUT_MS = Number(process.env.AXIOM_EVAL_TIMEOUT_MS ?? 10_000);
 const INIT_TIMEOUT_MS = 30_000;
 
 /**
@@ -67,7 +67,12 @@ const MAX_REDISPATCHES = 2;
  * call can be gone by the next evaluation.
  */
 export function createWorkerHost(opts: WorkerHostOptions = {}) {
-  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  // Read here rather than at module load: the bare module-load
+  // `Number(process.env.AXIOM_EVAL_TIMEOUT_MS ?? 10_000)` this replaces was both
+  // unvalidated (a `10s` typo became NaN, which setTimeout clamps to 1ms, so
+  // every evaluation rejected as "timed out") and unreachable from a test, since
+  // the value was fixed before any test could set the variable.
+  const timeoutMs = opts.timeoutMs ?? evalTimeoutMs();
   let child: ChildProcess | null = null;
   let readyPromise: Promise<void> | null = null;
   let ready = false; // true only between the worker's 'ready' handshake and the next recycle/dispose

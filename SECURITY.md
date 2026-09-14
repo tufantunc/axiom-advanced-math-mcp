@@ -170,7 +170,10 @@ Named plainly, because they are the things most likely to bite you:
   LAN address; the loopback default will reject those.
 - Leave `AXIOM_EVAL_TIMEOUT_MS` at its default unless you have measured a need. It
   also bounds the child process that runs arbitrary-precision integer work and
-  mathjs evaluation, so raising it widens both.
+  mathjs evaluation, so raising it widens both. A value with no number in it, or a
+  non-positive one, is refused back to 10000ms with a warning rather than being
+  coerced: it used to become NaN, which Node clamps to a 1ms timer, so every CAS
+  call failed as a timeout AND the integration budget below silently disappeared.
 - **`AXIOM_JS_COMPUTE_HEAP_MB` is the memory half of that bound.** Arbitrary-precision
   arithmetic and mathjs expressions are unbounded in memory as a function of their
   input, and neither can be interrupted once running, so both execute in a child

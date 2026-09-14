@@ -255,8 +255,8 @@ scales horizontally with no shared state.
 | `MCP_PORT`               | `3000`      | HTTP server port                                    |
 | `MCP_HOST`               | `127.0.0.1` | HTTP server host                                    |
 | `MCP_ALLOWED_HOSTS`      | loopback only (`localhost`, `127.0.0.1`, `[::1]`) | Comma-separated `Host` header allowlist for `POST /mcp` (DNS-rebinding protection). An explicit value replaces the default rather than extending it. |
-| `AXIOM_EVAL_TIMEOUT_MS`  | `10000`     | Per-evaluation timeout, in milliseconds. Bounds one CAS call **and** one js-compute call (arbitrary-precision integer work, arithmetic, plot sampling), so lowering it tightens both. |
-| `AXIOM_INTEGRATION_BUDGET_MS` | `max(3 × AXIOM_EVAL_TIMEOUT_MS, 30000)` | Wall-clock budget for one multi-call numerical routine (integration, root finding). Bounds the SUM of CAS calls, where `AXIOM_EVAL_TIMEOUT_MS` bounds one. |
+| `AXIOM_EVAL_TIMEOUT_MS`  | `10000`     | Per-evaluation timeout, in milliseconds. Bounds one CAS call **and** one js-compute call (arbitrary-precision integer work, arithmetic, plot sampling), so lowering it tightens both. Accepts a plain number or a `ms`/`s` suffix (`10000`, `250ms`, `10s`), clamped into what a timer can hold (`1`–`2147483647`ms); a value with no number in it, or a non-positive one, falls back to `10000` with a warning. An unset or blank value takes the default silently. |
+| `AXIOM_INTEGRATION_BUDGET_MS` | `max(3 × AXIOM_EVAL_TIMEOUT_MS, 30000)` | Wall-clock budget for one multi-call numerical routine (integration, root finding). Bounds the SUM of CAS calls, where `AXIOM_EVAL_TIMEOUT_MS` bounds one. Validated like `AXIOM_EVAL_TIMEOUT_MS`, and a rejected value is named on stderr. |
 | `AXIOM_JS_COMPUTE_HEAP_MB` | `512` | Heap ceiling for the child process that runs arbitrary-precision integer work and mathjs evaluation. Exceeding it fails the computation that caused it — calls queued behind it are re-sent to the replacement worker — and leaves the server up. |
 | `AXIOM_COMPUTE_HYGIENE`  | unset       | Set to `1` to enable compute output post-processing |
 

@@ -80,7 +80,8 @@ With a subcommand it runs that computation and exits.
 The expression is read from stdin when no positional argument is given.
 Use \`--\` before an expression that starts with a minus sign, e.g.
 \`axiom-math compute -- '-2+2'\`.
-Set AXIOM_EVAL_TIMEOUT_MS to change the per-evaluation timeout (default 10000).
+Set AXIOM_EVAL_TIMEOUT_MS to change the per-evaluation timeout (positive milliseconds,
+default 10000).
 Set AXIOM_INTEGRATION_BUDGET_MS to bound one integration or root search (default 3x the
 per-evaluation timeout, minimum 30000). Set AXIOM_JS_COMPUTE_HEAP_MB to cap the memory of
 one arbitrary-precision or arithmetic computation (default 512).

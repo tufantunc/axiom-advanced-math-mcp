@@ -2,6 +2,7 @@ import { fork, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { JsComputeError } from './errors.js';
+import { evalTimeoutMs } from '../env-bounds.js';
 import type { TaskName } from './tasks.js';
 import type { MathJsTaskName } from './mathjs-tasks.js';
 
@@ -55,17 +56,6 @@ const MAX_REDISPATCHES = 2;
 const MAX_QUEUE_DEPTH = 64;
 
 /**
- * Wall-clock bound per computation. Shares AXIOM_EVAL_TIMEOUT_MS with the CAS
- * path: both answer the same operator question, "how long may one evaluation
- * hold the server". Validated rather than coerced — `Number('10s')` is NaN, and
- * a NaN timeout means `setTimeout` fires immediately, failing every call.
- */
-function defaultTimeoutMs(): number {
-  const configured = Number(process.env.AXIOM_EVAL_TIMEOUT_MS);
-  return Number.isFinite(configured) && configured > 0 ? configured : 10_000;
-}
-
-/**
  * Heap ceiling for the child, in MB. Bounds the memory axis that no
  * per-operation input ceiling managed to express: `stirling_first`'s cost is
  * cells × digits(n!), `permutations`' is the width of n!/(n-k)!, and so on.
@@ -77,7 +67,13 @@ function defaultHeapMb(): number {
 }
 
 export function createJsComputeHost(opts: JsComputeHostOptions = {}) {
-  const timeoutMs = opts.timeoutMs ?? defaultTimeoutMs();
+  // Wall-clock bound per computation. Shares AXIOM_EVAL_TIMEOUT_MS with the CAS
+  // path: both answer the same operator question, "how long may one evaluation
+  // hold the server". The validation that used to live in this file — `Number('10s')`
+  // is NaN, and a NaN timeout means `setTimeout` fires immediately, failing every
+  // call — moved to env-bounds.ts, because the two other readers of the same
+  // variable did not have it and failed every CAS call because of it.
+  const timeoutMs = opts.timeoutMs ?? evalTimeoutMs();
   const heapMb = opts.heapMb ?? defaultHeapMb();
   const maxQueueDepth = opts.maxQueueDepth ?? MAX_QUEUE_DEPTH;
   let child: ChildProcess | null = null;
