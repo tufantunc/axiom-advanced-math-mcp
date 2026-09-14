@@ -1,8 +1,18 @@
+import {
+  DEFAULT_HEAP_MB,
+  MATHJS_MIN_HEAP_MB,
+  MAX_HEAP_MB,
+  MIN_HEAP_MB,
+} from '../server/js-compute/heap-config.js';
+
 /**
  * Hand-rolled argument parsing for the three subcommands.
  *
  * Deliberately not a dependency: three subcommands and a dozen flags do not
- * justify adding a package to a tree this project spent effort shrinking.
+ * justify adding a package to a tree this project spent effort shrinking. The
+ * heap bounds ARE imported rather than retyped — heap-config.ts is a leaf module
+ * with no runtime weight (it pulls in env-bounds.ts and nothing else), and the
+ * help text is the surface most likely to drift when a bound moves.
  */
 
 export type Subcommand = 'compute' | 'verify' | 'plot';
@@ -81,10 +91,11 @@ The expression is read from stdin when no positional argument is given.
 Use \`--\` before an expression that starts with a minus sign, e.g.
 \`axiom-math compute -- '-2+2'\`.
 Set AXIOM_EVAL_TIMEOUT_MS to change the per-evaluation timeout (positive milliseconds,
-default 10000).
-Set AXIOM_INTEGRATION_BUDGET_MS to bound one integration or root search (default 3x the
-per-evaluation timeout, minimum 30000). Set AXIOM_JS_COMPUTE_HEAP_MB to cap the memory of
-one arbitrary-precision or arithmetic computation (default 512).
+default 10000). Set AXIOM_INTEGRATION_BUDGET_MS to bound one integration or root search
+(default 3x the per-evaluation timeout, minimum 30000). Set AXIOM_JS_COMPUTE_HEAP_MB to cap
+the memory of one arbitrary-precision or arithmetic computation (whole MB, clamped
+into ${MIN_HEAP_MB}-${MAX_HEAP_MB}, default ${DEFAULT_HEAP_MB}; quick_calc and plot
+need at least ${MATHJS_MIN_HEAP_MB}MB).
 
 Examples:
   axiom-math compute 'integrate(sin(x)^3,x)'

@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { JsComputeError } from './errors.js';
 import { evalTimeoutMs } from '../env-bounds.js';
+import { MATHJS_MIN_HEAP_MB, needsMathjsHeap, resolveHeapMb } from './heap-config.js';
 import type { TaskName } from './tasks.js';
 import type { MathJsTaskName } from './mathjs-tasks.js';
 
@@ -24,6 +25,7 @@ import type { MathJsTaskName } from './mathjs-tasks.js';
  */
 export interface JsComputeHostOptions {
   timeoutMs?: number;
+  /** Whole MB in [16, 1048576]; anything else is clamped or defaulted, with a warning. See heap-config.ts. */
   heapMb?: number;
   /** Overridable so the overflow path is reachable in a test. */
   maxQueueDepth?: number;
@@ -55,17 +57,6 @@ const MAX_REDISPATCHES = 2;
  */
 const MAX_QUEUE_DEPTH = 64;
 
-/**
- * Heap ceiling for the child, in MB. Bounds the memory axis that no
- * per-operation input ceiling managed to express: `stirling_first`'s cost is
- * cells × digits(n!), `permutations`' is the width of n!/(n-k)!, and so on.
- * Exceeding it kills the child and fails the computation that caused it.
- */
-function defaultHeapMb(): number {
-  const configured = Number(process.env.AXIOM_JS_COMPUTE_HEAP_MB);
-  return Number.isFinite(configured) && configured > 0 ? configured : 512;
-}
-
 export function createJsComputeHost(opts: JsComputeHostOptions = {}) {
   // Wall-clock bound per computation. Shares AXIOM_EVAL_TIMEOUT_MS with the CAS
   // path: both answer the same operator question, "how long may one evaluation
@@ -74,7 +65,7 @@ export function createJsComputeHost(opts: JsComputeHostOptions = {}) {
   // call — moved to env-bounds.ts, because the two other readers of the same
   // variable did not have it and failed every CAS call because of it.
   const timeoutMs = opts.timeoutMs ?? evalTimeoutMs();
-  const heapMb = opts.heapMb ?? defaultHeapMb();
+  const heapMb = resolveHeapMb(opts.heapMb);
   const maxQueueDepth = opts.maxQueueDepth ?? MAX_QUEUE_DEPTH;
   let child: ChildProcess | null = null;
   let childReady: () => boolean = () => false;
@@ -424,6 +415,22 @@ export function createJsComputeHost(opts: JsComputeHostOptions = {}) {
      * Runs one task in the child, bounded by the timeout and the heap cap.
      */
     run(task: TaskName | MathJsTaskName, args: Record<string, unknown>): Promise<string> {
+      // Refused here rather than in the child, because the child cannot report
+      // it. Below MATHJS_MIN_HEAP_MB the mathjs import dies BEFORE the worker
+      // sends its `start` ack, so recycleAndRedispatch finds no running entry,
+      // drops the accurate `out_of_memory`, and three dead forks later the call
+      // is abandoned as `worker_failed` — "not the caller's fault", the least
+      // actionable code in the taxonomy, for what is purely a config mistake.
+      // The integer tasks are unaffected and still run at this ceiling.
+      if (heapMb < MATHJS_MIN_HEAP_MB && needsMathjsHeap(task)) {
+        return Promise.reject(
+          new JsComputeError(
+            `this server's compute child is capped at ${heapMb}MB; ${task} needs at least ` +
+              `${MATHJS_MIN_HEAP_MB}MB (raise AXIOM_JS_COMPUTE_HEAP_MB)`,
+            'heap_too_small'
+          )
+        );
+      }
       if (pending.size >= maxQueueDepth) {
         return Promise.reject(
           new JsComputeError(
