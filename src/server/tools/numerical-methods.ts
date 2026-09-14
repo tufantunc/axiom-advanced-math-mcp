@@ -1,6 +1,7 @@
 import { giacEngine } from '../giac/index.js';
 import { formatToolResponse, formatErrorResponse, inBandFailure } from './response-formatter.js';
 import { giacNumber } from './output-cleanup.js';
+import { evalTimeoutMs, msEnv } from '../env-bounds.js';
 
 /** Evaluate f(x) at a point using Giac */
 async function evalAt(expr: string, variable: string, x: number): Promise<number> {
@@ -89,8 +90,6 @@ const SIMPSON_POINTS = 200;
  */
 const MAX_ROOT_ITERATIONS = 100;
 
-const DEFAULT_CALL_TIMEOUT_MS = Number(process.env.AXIOM_EVAL_TIMEOUT_MS ?? 10_000);
-
 /**
  * Wall-clock budget for one multi-call numerical routine.
  *
@@ -123,11 +122,12 @@ function startBudget(label: string): (done: number, total: number) => void {
   };
 }
 
-const integrationBudgetMs = (): number => {
-  const configured = Number(process.env.AXIOM_INTEGRATION_BUDGET_MS);
-  if (Number.isFinite(configured) && configured > 0) return configured;
-  return Math.max(DEFAULT_CALL_TIMEOUT_MS * 3, 30_000);
-};
+const integrationBudgetMs = (): number =>
+  // Same reader as AXIOM_EVAL_TIMEOUT_MS: this used to hand-roll the predicate
+  // three lines from the import that owns it, so `AXIOM_INTEGRATION_BUDGET_MS=30s`
+  // silently yielded the default — the operator typo this module's sibling exists
+  // to stop, on the variable right next to it.
+  msEnv('AXIOM_INTEGRATION_BUDGET_MS', Math.max(evalTimeoutMs() * 3, 30_000));
 
 async function bisection(
   expr: string,
