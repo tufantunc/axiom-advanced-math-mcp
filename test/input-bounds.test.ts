@@ -4,6 +4,7 @@ import { computeHandler } from '../src/server/tools/compute/index.js';
 import { hypothesisTestingHandler } from '../src/server/tools/hypothesis-testing.js';
 import { linearRegressionHandler } from '../src/server/tools/linear-regression.js';
 import { numericalMethodsHandler } from '../src/server/tools/numerical-methods.js';
+import { parseOdeSystem, validateSystemShape } from '../src/server/tools/ode-system-shape.js';
 import { createJsComputeHost } from '../src/server/js-compute/index.js';
 import { probabilityCalcHandler } from '../src/server/tools/probability-calc.js';
 import { plotToSvg } from '../src/server/tools/plot/render.js';
@@ -1384,6 +1385,9 @@ describe('a condition is bounded by what it denotes, not by one operator at a ti
     ['y(0)=1000!^12%7', 30812],
     // the trailing-decimal spelling the local number pattern dropped
     ['y(0)=100.!^200', 31595],
+    // the factorial under a third name: `Gamma(n)` is `(n-1)!`, and the count
+    // asserts that reading rather than merely that something refused
+    ['y(0)=Gamma(50001)', 213237],
     // a token the grammar cannot place no longer discards what was read first
     ['y(0)=1000!^12 2', 30812],
     // `[` groups as well as lists in Giac, and `10^[9]` is a measured spelling —
@@ -1470,6 +1474,17 @@ describe('a condition is bounded by what it denotes, not by one operator at a ti
     expect(text(r)).toContain(expected);
   });
 
+  // Parts inside one bracket are SUMMED, and the separator rule is what decides
+  // that. Depth-gating every separator — tried and reverted — turned this from
+  // refused into admitted, and no row noticed at the time.
+  it('sums the parts of a bracketed condition', async () => {
+    const r = await computeHandler({
+      problem: "desolve(y'=y, y(0)=[999^1000;999^1000;999^1000], x, y)",
+    });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toContain('values denoting 9000 digits together');
+  });
+
   // A superscript carries no `^` for any clause to find. unicodeToAscii runs
   // downstream of this whole bound — at giac-eval.ts, long after it has
   // returned — so the guard has to normalise its own input or it is reading a
@@ -1542,19 +1557,24 @@ describe('a condition is bounded by what it denotes, not by one operator at a ti
   // by four characters. `pow` has no `^` in it at all, so the scan never runs
   // and the reader is the only clause there.
   it.each([
-    'y(0)=1000!^abs(12)',
-    'y(0)=1000!^max(12,1)',
-    'y(0)=1000!**abs(12)',
-    'y(0)=10^abs(100000)',
-    'y(0)=10^floor(100000)',
-    'y(0)=2^abs(400000)',
-    'y(0)=10^sqrt(10^10)',
-    'y(0)=pow(abs(10),100000)',
-    'y(0)=pow(1000!,abs(12))',
-  ])('refuses %s, whose exponent is a call', async (condition) => {
+    ['y(0)=1000!^abs(12)', '1000!^abs(12)'],
+    ['y(0)=1000!^max(12,1)', '1000!^max(12,1)'],
+    ['y(0)=1000!**abs(12)', '1000!^abs(12)'],
+    ['y(0)=10^abs(100000)', '10^abs(100000)'],
+    ['y(0)=10^floor(100000)', '10^floor(100000)'],
+    ['y(0)=2^abs(400000)', '2^abs(400000)'],
+    ['y(0)=10^sqrt(10^10)', '10^sqrt(10^10)'],
+    ['y(0)=pow(abs(10),100000)', 'pow(abs(10),100000)'],
+    ['y(0)=pow(1000!,abs(12))', 'pow(1000!,abs(12))'],
+  ])('refuses %s, whose exponent is a call', async (condition, named) => {
     const r = await computeHandler({ problem: `desolve(y'=y, ${condition}, x, y)` });
     expect(r.isError, text(r)).toBe(true);
-    expect(text(r)).toMatch(/implausible magnitude/);
+    // The clause AND the operand, not merely that something refused: several
+    // clauses here can say "implausible magnitude", so a generic match stays
+    // green if one of these moves to the `^` scan and the branch it was written
+    // for quietly stops running. The `**` row also pins that the name is
+    // reported as measured, not as typed.
+    expect(text(r)).toContain(`a value too large to count the digits of (${named})`);
     expect(text(r)).not.toMatch(/memory access|worker exited|RuntimeError|table index/);
   });
 
@@ -1572,6 +1592,18 @@ describe('a condition is bounded by what it denotes, not by one operator at a ti
     expect(text(r)).toMatch(expected);
   });
 
+  // An unreadable operand and a MISSING one are not the same thing. `y'^2=x` is
+  // an ordinary ODE whose apostrophe ends the run in front of the `^`, so the
+  // reader sees a power with no base at all — and charging that the whole budget
+  // turned a common form away. This is the control on the rule above it: without
+  // the guard, this answer becomes "a value too large to count the digits of
+  // (^2)".
+  it('still answers an ODE whose derivative is squared', async () => {
+    const r = await computeHandler({ problem: "desolve(y'^2=x, x, y)" });
+    expect(r.isError, text(r)).toBe(false);
+    expect(text(r)).toMatch(/2\/3\*√x\*x\+c_0/);
+  });
+
   // A deliberate false refusal, pinned so that widening the rule is a decision
   // rather than an accident. `2^sqrt(2)` is small and harmless, and it is turned
   // away because this reader cannot tell a call that shrinks its argument from
@@ -1580,20 +1612,29 @@ describe('a condition is bounded by what it denotes, not by one operator at a ti
   it('refuses 2^sqrt(2), which is harmless, and says so on purpose', async () => {
     const r = await computeHandler({ problem: "desolve(y'=y, y(0)=2^sqrt(2), x, y)" });
     expect(r.isError, text(r)).toBe(true);
-    expect(text(r)).toMatch(/implausible magnitude/);
+    expect(text(r)).toContain('a value too large to count the digits of (2^sqrt(2))');
   });
 
-  // Leading signs recurse through `unary`, which charged them against nothing
-  // until the depth counter reached it: 8,000 of them — inside
-  // MAX_EXPRESSION_LENGTH, so ordinary caller input — answered "Maximum call
-  // stack size exceeded" where 4,000 refused cleanly. Both are rows because the
-  // smaller one passed before the fix and would keep passing without it.
-  it.each([4000, 8100])('refuses %i leading signs without overflowing', async (count) => {
-    const r = await computeHandler({
-      problem: `desolve([y'=${'-'.repeat(count)}1, z'=-y], x)`,
-    });
-    expect(r.isError, text(r)).toBe(true);
-    expect(text(r)).not.toMatch(/call stack|RangeError/);
+  // Leading signs recurse through `unary`, and the depth check sat AFTER the two
+  // sign arms — so a chain of them never reached it, and the counter they
+  // increment was read only once the chain had ended. An inert bound reads
+  // exactly like a live one.
+  //
+  // Driven through validateSystemShape rather than computeHandler, and that is
+  // the honest scope: MAX_EXPRESSION_LENGTH caps a request at 8,192 characters
+  // and the coefficient-extraction bound refuses 8,100 signs before the reader
+  // is reached, so this is NOT reachable end to end today. It is reachable by
+  // any caller of the exported function, and a guard contracted to return
+  // `string | undefined` must not throw for anyone. An earlier version of this
+  // row went through computeHandler at 4,000 and 8,100 signs and was refused by
+  // the coefficient bound — it passed without exercising anything it named.
+  // Measured: 20,000 signs throw RangeError with the check after the arms, and
+  // again with the check moved but the depth increments reverted, so both halves
+  // are load-bearing.
+  it('refuses a long chain of leading signs without overflowing the stack', () => {
+    const system = parseOdeSystem(`[y'=${'-'.repeat(20_000)}1, z'=-y]`);
+    expect(system, 'the fixture must parse, or this row pins nothing').not.toBeNull();
+    expect(() => validateSystemShape(system as NonNullable<typeof system>, 'x')).not.toThrow();
   });
 
   // The number in a length or depth refusal is measured AFTER normalisation and
@@ -1652,6 +1693,8 @@ describe('a condition is bounded by what it denotes, not by one operator at a ti
     // keep answering: a bracketed exponent, a unary `+`, and a quotient whose
     // denominator cancels rather than accumulates
     ['y(0)=10^[3]', /^Result: 1000\*exp\(x\)$/m],
+    // lowercase `gamma` stays symbolic where `Gamma` is the factorial
+    ['y(0)=gamma(5)', /^Result: gamma\(5\)\*exp\(x\)$/m],
     ['y(0)=+5!^3', /^Result: 1728000\*exp\(x\)$/m],
     ['y(0)=10^500/10^-500', /^Result: 1[0]+\*exp\(x\)$/m],
   ])('still answers %s', async (condition, expected) => {

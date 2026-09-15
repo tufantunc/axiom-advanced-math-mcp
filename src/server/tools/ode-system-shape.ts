@@ -1139,6 +1139,12 @@ function readMagnitude(tokens: MagnitudeToken[]): number | undefined {
 
   // unary -> ('+'|'-') unary | power
   function unary(depth: number): Magnitude {
+    // Checked BEFORE the sign arms, not after them. Placed after, it was never
+    // reached by a chain of signs at all: each arm recurses straight back into
+    // this function, so the counter they increment was read only once the chain
+    // ended — 8,100 signs still overflowed the stack, and the bound read exactly
+    // like a live one while doing nothing.
+    if (!readDepth(depth)) return UNREADABLE;
     // Charged against the SAME bound as every other production. These two arms
     // recursed at the caller's depth, so a chain of leading signs cost a frame
     // each with nothing counting them, and the bound that was supposed to make

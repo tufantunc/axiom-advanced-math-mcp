@@ -17,6 +17,26 @@ import { dirname, resolve } from 'node:path';
  * no-restricted-imports rule over the same four files is an editor-time backstop
  * that fires faster and proves less — see the comment on that test.
  */
+/**
+ * Lines where a docblock butts directly against another docblock — the first has
+ * been orphaned onto the second by something inserted between a comment and the
+ * function it describes.
+ *
+ * ADJACENCY is the rule, and its limit is worth stating rather than papering
+ * over: a blank line between the two is NOT flagged, because that is exactly how
+ * a module header is written — a file-level docblock, a blank line, then the
+ * first symbol's own docblock — and nothing in the shape tells the two apart.
+ * Both real occurrences in this file were adjacent, which is what an insertion
+ * produces. Indentation is allowed on both sides, so a docblock inside a class or
+ * a function body is covered.
+ */
+function orphanedDocblocks(source: string): number[] {
+  const lines = source.split('\n');
+  return lines.flatMap((line, i) =>
+    /^\s*\*\/$/.test(line) && lines[i + 1]?.trimStart().startsWith('/**') === true ? [i + 2] : []
+  );
+}
+
 describe('the shape half evaluates nothing', () => {
   const source = readFileSync('src/server/tools/ode-system-shape.ts', 'utf8');
   const code = source.replaceAll(/\/\*[\s\S]*?\*\//g, '').replaceAll(/\/\/.*/g, '');
@@ -128,11 +148,27 @@ describe('the shape half evaluates nothing', () => {
     ['src/server/tools/ode-system.ts'],
     ['src/server/tools/calculus.ts'],
   ])('orphans no docblock onto another docblock in %s', (path) => {
-    const lines = readFileSync(path, 'utf8').split('\n');
-    const orphaned = lines.flatMap((line, i) =>
-      line.trimEnd() === ' */' && lines[i + 1]?.trimStart().startsWith('/**') ? [i + 2] : []
-    );
+    const orphaned = orphanedDocblocks(readFileSync(path, 'utf8'));
     expect(orphaned, `docblock orphaned before line(s) ${orphaned.join(', ')}`).toEqual([]);
+  });
+
+  // The positive control, without which the row above cannot fail for the right
+  // reason: its assertion is `toEqual([])` over a detector whose own failure mode
+  // is returning `[]`, so a detector that matches nothing is indistinguishable
+  // from a clean file. The indented fixture is a shape the first version missed —
+  // it required the closer at exactly one leading space.
+  it.each([
+    ['at the top level', '/**\n * a\n */\n/**\n * b\n */\nfunction f() {}\n'],
+    ['indented', 'class C {\n  /**\n   * a\n   */\n  /**\n   * b\n   */\n  m() {}\n}\n'],
+  ])('detects an orphaned docblock %s', (_shape, source) => {
+    expect(orphanedDocblocks(source)).not.toEqual([]);
+  });
+
+  // And the shape that must NOT be flagged, which is why adjacency is the rule: a
+  // file-level header, a blank line, then the first symbol's own docblock. Both
+  // guarded files are written that way.
+  it('does not flag a module header above the first docblock', () => {
+    expect(orphanedDocblocks('/**\n * header\n */\n\n/**\n * a\n */\nconst a = 1;\n')).toEqual([]);
   });
 
   it.each([
