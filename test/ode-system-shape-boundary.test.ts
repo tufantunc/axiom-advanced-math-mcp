@@ -115,6 +115,26 @@ describe('the shape half evaluates nothing', () => {
   // named here it must fail, or this comment is doing what it was written to stop.
   // calculus.ts is here because it is the third file whose comments cross into the
   // pair, and it had written "the test below pins it" about a test in another file.
+  // A docblock immediately followed by another one means the first has been
+  // ORPHANED: something was inserted between a comment and the function it
+  // describes, so every tool that binds prose to the next declaration — hover,
+  // TSDoc, `tsc --declaration` — now attributes it to the wrong symbol. This
+  // happened twice to one file in one branch, to implausibleMagnitude's contract
+  // and then to readMagnitude's, the second time inside the commit fixing the
+  // first. That makes it a property of how the file gets edited rather than a
+  // slip, so it is checked rather than watched for.
+  it.each([
+    ['src/server/tools/ode-system-shape.ts'],
+    ['src/server/tools/ode-system.ts'],
+    ['src/server/tools/calculus.ts'],
+  ])('orphans no docblock onto another docblock in %s', (path) => {
+    const lines = readFileSync(path, 'utf8').split('\n');
+    const orphaned = lines.flatMap((line, i) =>
+      line.trimEnd() === ' */' && lines[i + 1]?.trimStart().startsWith('/**') ? [i + 2] : []
+    );
+    expect(orphaned, `docblock orphaned before line(s) ${orphaned.join(', ')}`).toEqual([]);
+  });
+
   it.each([
     ['src/server/tools/ode-system-shape.ts'],
     ['src/server/tools/ode-system.ts'],

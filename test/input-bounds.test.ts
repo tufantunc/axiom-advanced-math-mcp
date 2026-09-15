@@ -1534,6 +1534,103 @@ describe('a condition is bounded by what it denotes, not by one operator at a ti
   // An earlier version of this row used a bare nested CONDITION, which
   // conditionBoundError refuses on length long before the reader sees it — it
   // passed without exercising anything it named.
+  // A CALL in the exponent position. The rule that an exponent nobody can
+  // evaluate costs nothing is true of a free identifier and false of a call:
+  // `abs(12)` is 12, and Giac computes the power for real. Both the reader and
+  // the `^` scan declined the same node, so they failed together and nothing
+  // charged it — `1000!^abs(12)` is the flagship row's own number, re-admitted
+  // by four characters. `pow` has no `^` in it at all, so the scan never runs
+  // and the reader is the only clause there.
+  it.each([
+    'y(0)=1000!^abs(12)',
+    'y(0)=1000!^max(12,1)',
+    'y(0)=1000!**abs(12)',
+    'y(0)=10^abs(100000)',
+    'y(0)=10^floor(100000)',
+    'y(0)=2^abs(400000)',
+    'y(0)=10^sqrt(10^10)',
+    'y(0)=pow(abs(10),100000)',
+    'y(0)=pow(1000!,abs(12))',
+  ])('refuses %s, whose exponent is a call', async (condition) => {
+    const r = await computeHandler({ problem: `desolve(y'=y, ${condition}, x, y)` });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/implausible magnitude/);
+    expect(text(r)).not.toMatch(/memory access|worker exited|RuntimeError|table index/);
+  });
+
+  // The other side of that rule, and the reason the two states it rests on are
+  // not interchangeable: a free identifier really is free. Merging `symbolic`
+  // into `unreadable` for one commit is what let the rows above through, and
+  // these are what fail if it is merged again.
+  it.each([
+    ['y(0)=2^n', /^Result: 2\^n\*exp\(x\)$/m],
+    ['y(0)=n^2', /^Result: n\^2\*exp\(x\)$/m],
+    ['y(0)=2^(n+1)', /^Result: 2\^\(n\+1\)\*exp\(x\)$/m],
+  ])('still answers %s, whose exponent Giac cannot evaluate', async (condition, expected) => {
+    const r = await computeHandler({ problem: `desolve(y'=y, ${condition}, x, y)` });
+    expect(r.isError, text(r)).toBe(false);
+    expect(text(r)).toMatch(expected);
+  });
+
+  // A deliberate false refusal, pinned so that widening the rule is a decision
+  // rather than an accident. `2^sqrt(2)` is small and harmless, and it is turned
+  // away because this reader cannot tell a call that shrinks its argument from
+  // one that explodes it — `exp(1000)` is 10^434. The trade is the file's
+  // standing one: a refusal is visible to the caller, a dead worker is not.
+  it('refuses 2^sqrt(2), which is harmless, and says so on purpose', async () => {
+    const r = await computeHandler({ problem: "desolve(y'=y, y(0)=2^sqrt(2), x, y)" });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/implausible magnitude/);
+  });
+
+  // Leading signs recurse through `unary`, which charged them against nothing
+  // until the depth counter reached it: 8,000 of them — inside
+  // MAX_EXPRESSION_LENGTH, so ordinary caller input — answered "Maximum call
+  // stack size exceeded" where 4,000 refused cleanly. Both are rows because the
+  // smaller one passed before the fix and would keep passing without it.
+  it.each([4000, 8100])('refuses %i leading signs without overflowing', async (count) => {
+    const r = await computeHandler({
+      problem: `desolve([y'=${'-'.repeat(count)}1, z'=-y], x)`,
+    });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).not.toMatch(/call stack|RangeError/);
+  });
+
+  // The number in a length or depth refusal is measured AFTER normalisation and
+  // the caller counted before it — `√` 270 times is 275 typed and 1,085
+  // evaluated. Unqualified, "1085 characters" reads as a miscount against an
+  // input the caller can see is 275, with no shortening it can compute.
+  it('says when a length refusal counted the normalised text', async () => {
+    const r = await computeHandler({
+      problem: `desolve(y'=y, y(0)=${'\u221A'.repeat(270)}, x, y)`,
+    });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toContain('1085 characters after normalising');
+  });
+
+  // An unmarked cut names a DIFFERENT input from the one refused: the excerpt
+  // below denotes 2,002 digits on its own and would be admitted, so a caller
+  // trimming to what the message named would be refused again.
+  it('marks a truncated excerpt so it cannot be read as the whole operand', async () => {
+    const r = await computeHandler({
+      problem: "desolve(y'=y, y(0)=10^1000*10^1000*10^1000*10^1000, x, y)",
+    });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toContain('a value denoting 4001 digits (10^1000*10^1000*10^1\u2026)');
+  });
+
+  // The one refusal that quoted caller text without a cap, on the channel that
+  // has no length bound in front of it: 3,000 digits of exponent came back as a
+  // 3,165-character tool answer.
+  it('caps the exponent refusal instead of echoing the whole operand', async () => {
+    const r = await computeHandler({
+      problem: `desolve([y'=10^${'9'.repeat(3000)}, z'=-y], x)`,
+    });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/an exponent of 99999999999999999999\u2026/);
+    expect(text(r).length).toBeLessThan(300);
+  });
+
   it.each([1500, 4000])('refuses a %i-deep right-hand side without overflowing', async (depth) => {
     const deep = '('.repeat(depth) + '1' + ')'.repeat(depth);
     const r = await computeHandler({ problem: `desolve([y'=z+${deep}, z'=-y], x)` });

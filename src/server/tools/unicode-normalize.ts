@@ -35,5 +35,13 @@ export function unicodeToAscii(s: string): string {
       .replaceAll(/√\s*\(([^()]*)\)/g, 'sqrt($1)')
       .replaceAll(/√\s*([A-Za-z_]\w*|\d+(?:\.\d+)?)/g, 'sqrt($1)')
       .replaceAll('√', 'sqrt')
+      // `**` is Giac's own spelling of `^` — measured, `10**20` answers
+      // 100000000000000000000 — and every guard that scans for `^` was blind to
+      // it. Last in the chain so the rules above keep their measured order (`×`
+      // becomes `*` first, and `2×*2` normalises the same either way), and HERE
+      // rather than in a caller so the one seam that canonicalises caller text
+      // stays the one seam: the evaluation cache keys on this function's output,
+      // and `y**2` and `y^2` were two keys for one expression.
+      .replaceAll('**', '^')
   );
 }
