@@ -170,13 +170,27 @@ Named plainly, because they are the things most likely to bite you:
   LAN address; the loopback default will reject those.
 - Leave `AXIOM_EVAL_TIMEOUT_MS` at its default unless you have measured a need. It
   also bounds the child process that runs arbitrary-precision integer work and
-  mathjs evaluation, so raising it widens both.
+  mathjs evaluation, so raising it widens both. A value with no number in it, or a
+  non-positive one, is refused back to 10000ms with a warning rather than being
+  coerced: it used to become NaN, which Node clamps to a 1ms timer, so every CAS
+  call failed as a timeout AND the integration budget below silently disappeared.
 - **`AXIOM_JS_COMPUTE_HEAP_MB` is the memory half of that bound.** Arbitrary-precision
   arithmetic and mathjs expressions are unbounded in memory as a function of their
   input, and neither can be interrupted once running, so both execute in a child
   process with this heap ceiling. Exceeding it kills the computation that caused
   it — not the calls queued behind it, which are re-sent — and the server stays up. Raising it moves the failure closer to
-  the host's own memory limit, where it is no longer contained.
+  the host's own memory limit, where it is no longer contained. It is floored to whole MB
+  and clamped into [16, 1048576] — below 16 the child cannot boot, and the upper
+  cap is this server's policy rather than V8's limit (V8 honours more, but past
+  ~1.76e13 its size_t arithmetic wraps to a far smaller heap than requested).
+  Corrections are named on stderr and are always DOWNWARD or to the floor, never
+  to a looser ceiling than the one written, since the only reason to set this
+  below the default is to tighten containment; only a value with no number in it
+  falls back to the 512MB default. Below 48MB the child still boots and runs the
+  arbitrary-precision tasks but cannot complete the mathjs import (measured: 44MB
+  dies, 46MB runs), so `quick_calc` and `plot` are refused by name at that
+  ceiling instead of failing as a worker fault — a tight integer-only ceiling
+  stays a legitimate configuration.
 - **`AXIOM_INTEGRATION_BUDGET_MS` bounds a whole routine, not one call.** Numerical
   integration and root finding make up to a few hundred CAS calls each, and the
   caller chooses the expression and therefore the cost of every one of them.

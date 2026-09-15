@@ -34,9 +34,10 @@
  *
  * Everywhere else the code is simply the label attached where the error is built,
  * so that which failure occurred can be asserted without matching prose.
- * test/js-compute-error-codes.test.ts produces all six that way, and lists the
- * four host construction sites whose code it never observes — one `busy`, three
- * `worker_failed`. Before it no test read a code at all,
+ * test/js-compute-error-codes.test.ts produces all seven that way (the
+ * `heap_too_small` row lives in js-compute-heap-config.test.ts, next to the
+ * threshold it depends on), and lists the four host construction sites whose
+ * code it never observes — one `busy`, three `worker_failed`. Before it no test read a code at all,
  * and the loosest of them accepted either of two messages and so could not tell a
  * heap death from a crash.
  *
@@ -57,6 +58,16 @@ export type JsComputeErrorCode =
   | 'evaluation_failed'
   /** The worker died or misbehaved. Not the caller's fault. */
   | 'worker_failed'
+  /**
+   * The configured heap cannot run this task. The operator's fault, not the
+   * caller's and not the worker's — which is why it is not `worker_failed`:
+   * below MATHJS_MIN_HEAP_MB the child dies inside the lazy mathjs import,
+   * BEFORE its `start` ack, so recycleAndRedispatch has no culprit to settle,
+   * discards the accurate `out_of_memory`, and the call ends up abandoned as
+   * "the worker was restarted repeatedly" after three dead forks. This code
+   * exists so the message can name AXIOM_JS_COMPUTE_HEAP_MB instead.
+   */
+  | 'heap_too_small'
   /** Too many computations queued ahead of this one. */
   | 'busy';
 

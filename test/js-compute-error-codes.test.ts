@@ -1,9 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import {
   createJsComputeHost,
   JsComputeError,
   type JsComputeErrorCode,
 } from '../src/server/js-compute/index.js';
+import { beginStderrCapture } from './helpers/stderr.js';
+import { codeOf } from './helpers/js-compute.js';
 
 /**
  * The js-compute failure taxonomy, pinned.
@@ -18,15 +20,18 @@ import {
  *
  * The caller-facing narrowing helper was deleted — the tool boundary is text and
  * cannot carry a code, see errors.ts. These rows exercise the field that stayed:
- * every one of the six codes is produced by a real path and read back off the
- * rejection, so a reworded message no longer changes what a test proves.
+ * every code this file can reach is produced by a real path and read back off the
+ * rejection, so a reworded message no longer changes what a test proves. The
+ * seventh, `heap_too_small`, is produced in js-compute-heap-config.test.ts
+ * instead, next to the measured threshold its refusal depends on.
  *
  * NOT every construction site, and the gap is worth naming rather than implying
  * that any mislabelled failure fails here. host.ts builds a `JsComputeError` at
- * ten sites. These rows observe the code from six of them — seven outcomes, since
- * the relay ternary has two arms, which is how six sites cover all six codes. The
- * remaining four never have their code observed, so relabelling any of them
- * leaves the suite green. One is `busy` and three are `worker_failed`:
+ * eleven sites. These rows observe the code from six of them — seven outcomes,
+ * since the relay ternary has two arms — and js-compute-heap-config.test.ts
+ * observes the eleventh, the heap-gate refusal in `run()`. The remaining four
+ * never have their code observed, so relabelling any of them leaves the suite
+ * green. One is `busy` and three are `worker_failed`:
  *
  *   - the admission timer's `busy`. This one needs no seam: its message says
  *     "was busy" where site 407 says "is busy", so the public API already tells
@@ -52,20 +57,11 @@ import {
  * no one to blame for.
  */
 
-/** The code on a rejection, or the reason it has none. */
-async function codeOf(run: Promise<unknown>): Promise<JsComputeErrorCode | string> {
-  try {
-    await run;
-    return 'resolved-without-error';
-  } catch (e) {
-    if (!(e instanceof JsComputeError)) {
-      return `not-a-JsComputeError: ${e instanceof Error ? e.name : typeof e}`;
-    }
-    return e.code;
-  }
-}
-
 describe('every failure the worker host reports carries the right code', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it('refuses past the queue depth as `busy`', async () => {
     // maxQueueDepth 0 makes run() refuse synchronously on the first call, which
     // is the `busy` site in run() itself. The other `busy` site (the admission
@@ -102,23 +98,48 @@ describe('every failure the worker host reports carries the right code', () => {
 
   it('labels a worker that will not start at all `worker_failed`, after retrying', async () => {
     // Reaches MAX_REDISPATCHES, which needs three consecutive worker deaths with
-    // the call still queued. A non-integer heapMb is the lever: Node rejects
-    // `--max-old-space-size=NaN` outright, so the child exits code 9 before its
-    // `start` ack, leaving no culprit to blame — the call is requeued, dies twice
-    // more, and the third death abandons it. 49ms, and the message is unique to
-    // that site.
+    // the call still queued. The lever is an option Node refuses in NODE_OPTIONS,
+    // which the fork inherits: the child exits code 9 before its `start` ack,
+    // leaving no culprit to blame — so the call is requeued, dies twice more, and
+    // the third death abandons it. ~30ms, and the message is unique to that site.
     //
-    // The lever is a pre-existing validation gap, not a feature: `defaultHeapMb`
-    // accepts any finite positive number, so `AXIOM_JS_COMPUTE_HEAP_MB=1.5` fails
-    // every computation in ~50ms and blames the worker rather than the operator's
-    // env. If that gets validated — it should be — this row needs a new lever, and
-    // whoever validates it should expect to land here.
-    const host = createJsComputeHost({ heapMb: Number.NaN, timeoutMs: 30_000 });
+    // The previous lever was `heapMb: Number.NaN`, which worked only because
+    // the heap resolver accepted any finite positive number and passed it to
+    // `--max-old-space-size` intact; that gap is now closed (an unusable heap is
+    // clamped or defaulted, see js-compute-heap-config.test.ts), so no heap value
+    // kills the child any more. This lever cannot be closed the
+    // same way: the host does not — and should not — sanitize the environment its
+    // child inherits, and a worker that cannot start is exactly the condition
+    // this row is about.
+    //
+    // NODE_OPTIONS is process-wide. `vi.stubEnv` rather than a manual
+    // save/restore so the restore is not tied to this row's control flow: the
+    // describe's `afterEach` unstubs even if an assertion throws or the per-test
+    // timeout abandons the body, either of which would otherwise leave the
+    // variable poisoned and kill every later row's worker with a cause pointing
+    // nowhere near this line.
+    vi.stubEnv('NODE_OPTIONS', `${process.env.NODE_OPTIONS ?? ''} --a-node-option-x`.trim());
+    // The deaths are counted, not just the final code: `after retrying` is half
+    // of what this row's name claims, and without the count a host that
+    // abandoned the call on the FIRST death would still satisfy every assertion
+    // below. `logFault` in host.ts writes one line per death, and this count is
+    // coupled to that line's format; the capture also keeps the three expected
+    // V8 exits out of the suite's output.
+    const stderr = beginStderrCapture();
+    const host = createJsComputeHost({ timeoutMs: 30_000 });
     try {
       const run = host.run('bell_number', { n: 5 });
       await expect(codeOf(run)).resolves.toBe('worker_failed');
       await expect(run).rejects.toThrow(/restarted repeatedly/);
+      // MAX_REDISPATCHES redispatches, plus the death that exhausts them.
+      // `code 9,` is Node refusing the option, which is this row's three deaths.
+      // The trailing comma anchors it — `code 9` alone also matches `code 90`
+      // through `code 99`. Matching `worker exited` alone would additionally
+      // catch the SIGTERM/SIGKILL stragglers from earlier rows' disposed
+      // children, whose `exit` events land inside this capture's window.
+      expect(stderr.lines.filter((l) => l.includes('worker exited: code 9,')).length).toBe(3);
     } finally {
+      stderr.restore();
       await host.dispose();
     }
   }, 60_000);
