@@ -627,11 +627,16 @@ export function extractOde(problem: string): RouteResult {
     // Over every condition the fold will include, members and trailing
     // arguments alike, because they all reach the one command.
     const allConditions = [...memberConditions, ...conditions];
-    const togetherRefusal = isSystem ? undefined : conditionsTogetherError(allConditions);
+    // Evaluated LAST as well as ranked last. Computing it up front handed the
+    // together check conditions that conditionBoundError had already rejected,
+    // so a 3,006-character condition — which has a clean refusal naming the 280
+    // it exceeds — reached the reader anyway. validateSystemShape returns on the
+    // first per-condition refusal before it ever calls this, and the two paths
+    // sharing one function is the only thing that keeps them from drifting.
     const refusalReason =
       memberRefusal ??
       (refused.length > 0 ? effectiveRoles[refused[0]].reason : undefined) ??
-      togetherRefusal;
+      (isSystem ? undefined : conditionsTogetherError(allConditions));
 
     // Two shapes, because the equation has two and only one of them survives an
     // ` and ` suffix.

@@ -1335,29 +1335,57 @@ describe("an initial condition's cost is bounded, not only its size", () => {
  * Every bound on this channel before it named the shapes it refused, and a
  * composition of two ADMITTED shapes escaped it every round. `1000!^12` is the
  * fifth: a factorial well inside the factorial cap, raised to an exponent well
- * inside the exponent cap. Thirteen characters, 30,811 digits, and measured on
- * this branch before the reader landed it killed the shared worker through every
- * route while both caps reported it fine.
+ * inside the exponent cap, denoting 30,812 digits — measured, it killed the
+ * shared worker through every route while both caps reported it fine.
  *
- * The rows below are the axis the earlier suites missed — not more spellings of
- * `!`, and not more bracketings of `^`, but the two operators COMPOSED.
+ * Each row carries the digit count the tool reports, not a `> 3000` band. The
+ * band was the first version of this suite and it proved nothing: the clause
+ * only ever emits that message when the count exceeds 3,000, so asserting the
+ * count exceeds 3,000 re-stated the branch condition and passed by
+ * construction — replacing the reported number with the literal 3001 left the
+ * whole suite green.
  */
 describe('a condition is bounded by what it denotes, not by one operator at a time', () => {
+  // The escapes, each with the size the reader computes for it. Grouped by the
+  // channel that used to let it through rather than by spelling, because the
+  // spelling is what five previous rounds chased.
   it.each([
-    ["desolve(y'=y, y(0)=1000!^12, x, y)", '1000!^12'],
-    ["desolve(y'=y, y(0)=(2^1000)^1000, x, y)", '(2^1000)^1000'],
-    ["desolve(y'=y, y(0)=100!^200, x, y)", '100!^200'],
-    ["desolve(y'=y, y(0)=1142!^10, x, y)", '1142!^10'],
-    ["desolve(y'=y, y(0)=10^1000*10^1000*10^1000, x, y)", 'a product of three powers'],
-  ])('refuses %s, which no single cap can see', async (problem) => {
-    const r = await computeHandler({ problem });
+    // two per-operator caps composed — the original escape
+    ['y(0)=1000!^12', 30812],
+    ['y(0)=(2^1000)^1000', 301030],
+    ['y(0)=100!^200', 31595],
+    ['y(0)=1142!^10', 29979],
+    ['y(0)=10^1000*10^1000*10^1000', 3001],
+    // a sibling operand the reader cannot read used to erase the one it could:
+    // `n*` in front of a refused value is a two-character bypass, and it trapped
+    // the worker on every route.
+    ['y(0)=n*1000!^12', 30812],
+    ['y(0)=1000!^12*n', 30812],
+    ['y(0)=1000!^12+n', 30812],
+    ['y(0)=sin(0)+1000!^12', 30812],
+    // an unknown call's ARGUMENT is charged: Giac evaluates it before it can
+    // apply the function, whatever the function turns out to be.
+    ['y(0)=abs(1000!^12)', 30812],
+    ['y(0)=max(1000!^12,1)', 30812],
+    ['y(0)=sqrt(1000!^12)', 30812],
+    // the denominator costs what the numerator costs
+    ['y(0)=1/1000!^12', 30812],
+    // the other spelling of the same operator, which this file has been burned
+    // by before
+    ['y(0)=factorial(1000)^12', 30812],
+    ['y(0)=factorial(200)^50', 18745],
+    // exponent notation, the reason the tokenizer reads `1e5` as 100000
+    ['y(0)=1e5^1000', 5001],
+    // one character the reader does not model used to end the whole measurement
+    ['y(0)=1000!^12%7', 30812],
+    // the trailing-decimal spelling the local number pattern dropped
+    ['y(0)=100.!^200', 31595],
+    // a token the grammar cannot place no longer discards what was read first
+    ['y(0)=1000!^12 2', 30812],
+  ])('refuses %s as denoting %i digits', async (condition, digits) => {
+    const r = await computeHandler({ problem: `desolve(y'=y, ${condition}, x, y)` });
     expect(r.isError, text(r)).toBe(true);
-    // The digit count itself, not merely "some refusal": this is the one thing
-    // the reader claims, and asserting only isError would pass on any of the
-    // caps above firing for an unrelated reason.
-    const reported = /a value denoting (\d+) digits/.exec(text(r));
-    expect(reported, text(r)).not.toBeNull();
-    expect(Number(reported?.[1])).toBeGreaterThan(3000);
+    expect(text(r)).toMatch(new RegExp(`a value denoting ${digits} digits`));
     // The whole point: the text never reaches the engine.
     expect(text(r)).not.toMatch(/memory access|worker exited|RuntimeError|table index/);
     const after = await computeHandler({ problem: "desolve(y'=y, y(0)=2, x, y)" });
@@ -1365,37 +1393,104 @@ describe('a condition is bounded by what it denotes, not by one operator at a ti
   });
 
   // A superscript carries no `^` for any clause to find. unicodeToAscii runs
-  // downstream of this whole bound — measured at giac-eval.ts, long after it has
+  // downstream of this whole bound — at giac-eval.ts, long after it has
   // returned — so the guard has to normalise its own input or it is reading a
-  // different string from the one Giac gets. Note what the normaliser does with
-  // a two-digit superscript: `⁹⁹` becomes `^9^9`, not `^99`, so this row also
-  // proves the reader composes two exponents rather than reading one.
+  // different string from the one Giac gets. The normaliser maps each
+  // superscript digit separately, so `⁹⁹` is `^9^9`, and this row also proves
+  // the reader composes two exponents rather than reading one.
   it('refuses 1000!⁹⁹, whose `^` only exists after normalisation', async () => {
     const r = await computeHandler({ problem: "desolve(y'=y, y(0)=1000!\u{2079}\u{2079}, x, y)" });
     expect(r.isError, text(r)).toBe(true);
-    expect(text(r)).toMatch(/a value denoting \d+ digits/);
+    expect(text(r)).toMatch(/a value denoting 994742646824 digits/);
     expect(text(r)).not.toMatch(/memory access|worker exited|RuntimeError|table index/);
   });
 
-  // The safe direction, which is what keeps the row above from being satisfied
-  // by a bound that simply refuses `!` next to `^`. These compose the same two
-  // operators and denote ordinary numbers, and every one of them answers.
+  // An exponent too large to hold exactly reports the other message arm, which
+  // nothing else reaches.
+  it('refuses an exponent past the exact-integer window without a digit count', async () => {
+    const r = await computeHandler({ problem: "desolve(y'=y, y(0)=10^1e16, x, y)" });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/a value too large to count the digits of \(10\^1e16\)/);
+  });
+
+  // The bound itself, both sides. Without this pair, `>` and `>=` are the same
+  // suite.
+  it('admits 3,000 denoted digits and refuses 3,001', async () => {
+    const under = await computeHandler({
+      problem: "desolve(y'=y, y(0)=10^999*10^1000*10^1000, x, y)",
+    });
+    expect(under.isError, text(under)).toBe(false);
+    const over = await computeHandler({
+      problem: "desolve(y'=y, y(0)=10^1000*10^1000*10^1000, x, y)",
+    });
+    expect(over.isError, text(over)).toBe(true);
+    expect(text(over)).toMatch(/a value denoting 3001 digits/);
+  });
+
+  // Nine conditions each inside the per-condition bound. The reader sums across
+  // them for the same reason the factorial scan always has: both paths join
+  // their conditions into one command, and a per-condition bound is not a
+  // per-command one. Taking the largest instead made this check a no-op on the
+  // new axis — measured then, 26,109 digits were admitted.
+  it('charges the joined command what all of its conditions denote', async () => {
+    const conditions = Array.from({ length: 9 }, (_, i) => `y(${i})=10^1000*10^1000*10^900`).join(
+      ', '
+    );
+    const r = await computeHandler({ problem: `desolve(y'=y, ${conditions}, x, y)` });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/values denoting 26109 digits together/);
+    const alone = await computeHandler({
+      problem: "desolve(y'=y, y(0)=10^1000*10^1000*10^900, x, y)",
+    });
+    expect(alone.isError, text(alone)).toBe(false);
+  });
+
+  // Named for what it pins, which is NOT the reader's own depth bound: measured,
+  // the coefficient-length check refuses this first and removing the reader's
+  // bound leaves this row green. What it does pin is the property that matters
+  // to a caller — deeply nested text comes back as a refusal naming a bound,
+  // never as a raw `RangeError` from a function contracted to return a string.
+  it('answers deeply nested text with a refusal, not a stack overflow', async () => {
+    const deep = '('.repeat(1500) + '1' + ')'.repeat(1500);
+    const r = await computeHandler({ problem: `desolve([y'=${deep}, z'=0], x, y, z)` });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).not.toMatch(/call stack|RangeError/);
+    expect(text(r)).toMatch(/^Error: solve_ode cannot solve this system — /m);
+  });
+
+  // The safe direction. Without these the escape rows above are satisfied by a
+  // bound that simply refuses `!` anywhere near `^` — measured, replacing the
+  // reader with that cruder rule fails exactly these rows.
   it.each([
-    ["desolve(y'=y, y(0)=3!^2, x, y)", /^Result: 36\*exp\(x\)$/m],
-    ["desolve(y'=y, y(0)=5!^3, x, y)", /^Result: 1728000\*exp\(x\)$/m],
-    ["desolve(y'=y, y(0)=10!^2, x, y)", /^Result: 13168189440000\*exp\(x\)$/m],
-    ["desolve(y'=y, y(0)=1000000*1000000, x, y)", /^Result: 1000000000000\*exp\(x\)$/m],
-  ])('still answers %s', async (problem, expected) => {
-    const r = await computeHandler({ problem });
+    ['y(0)=3!^2', /^Result: 36\*exp\(x\)$/m],
+    ['y(0)=5!^3', /^Result: 1728000\*exp\(x\)$/m],
+    ['y(0)=10!^2', /^Result: 13168189440000\*exp\(x\)$/m],
+    ['y(0)=factorial(5)^3', /^Result: 1728000\*exp\(x\)$/m],
+    ['y(0)=1000000*1000000', /^Result: 1000000000000\*exp\(x\)$/m],
+  ])('still answers %s', async (condition, expected) => {
+    const r = await computeHandler({ problem: `desolve(y'=y, ${condition}, x, y)` });
+    expect(r.isError, text(r)).toBe(false);
+    expect(text(r)).toMatch(expected);
+  });
+
+  // A symbol alone costs nothing real — measured, `n!` and `2^n` come back
+  // unevaluated in a few characters and the worker survives. This guard only
+  // ever ADDS refusals, so over-charging is its characteristic regression and
+  // these are the rows that detect it.
+  it.each([
+    ['y(0)=2^n', /^Result: 2\^n\*exp\(x\)$/m],
+    ['y(0)=2^(n+1)', /^Result: 2\^\(n\+1\)\*exp\(x\)$/m],
+  ])('still answers %s, whose exponent nobody can evaluate', async (condition, expected) => {
+    const r = await computeHandler({ problem: `desolve(y'=y, ${condition}, x, y)` });
     expect(r.isError, text(r)).toBe(false);
     expect(text(r)).toMatch(expected);
   });
 
   // 1000! is 2,568 digits and inside the budget; raising it to the first power
-  // does not change that. A bound that charged for the OPERATOR rather than the
-  // size would refuse this, and refusing it would be wrong.
-  it('still answers a factorial raised to the first power', async () => {
-    const r = await computeHandler({ problem: "desolve(y'=y, y(0)=1000!^1, x, y)" });
+  // does not change that, and putting it under the line does not either. A
+  // bound that charged for the OPERATOR rather than the size would refuse both.
+  it.each(['y(0)=1000!^1', 'y(0)=1/1000!', 'y(0)=1000!'])('still answers %s', async (condition) => {
+    const r = await computeHandler({ problem: `desolve(y'=y, ${condition}, x, y)` });
     expect(r.isError, text(r)).toBe(false);
   });
 });
