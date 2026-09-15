@@ -870,6 +870,23 @@ function tokenizeMagnitude(text: string): MagnitudeToken[] {
  * `2^(3)!` is 2^(3!) because `!` binds tighter than `^`, not because a clause
  * says so — which is the property the five escapes before this all lacked.
  */
+/**
+ * Whether a run left of an `=` is just naming the condition — `y`, or `y(0)`.
+ *
+ * Deliberately narrow. Anything richer than a name and a literal point is a
+ * value in its own right and is charged: Giac evaluates `y(1000!^12)=1`'s point
+ * as readily as it evaluates a right-hand side, and admitting it because it sat
+ * on the left trapped the shared worker.
+ */
+function isBareSubject(run: MagnitudeToken[]): boolean {
+  if (run.length === 1) return run[0]?.kind === 'name';
+  if (run.length !== 4) return false;
+  const [name, open, point, close] = run;
+  return (
+    name?.kind === 'name' && open?.text === '(' && point?.kind === 'number' && close?.text === ')'
+  );
+}
+
 function readMagnitude(tokens: MagnitudeToken[]): number | undefined {
   let at = 0;
   let worst = Number.NEGATIVE_INFINITY;
@@ -978,10 +995,25 @@ function readMagnitude(tokens: MagnitudeToken[]): number | undefined {
       // The one call read as a VALUE. Every other name is declined rather than
       // called symbolic, because Giac evaluates most of them — but its ARGUMENTS
       // were charged either way, which is what `abs(1000!^12)` needed.
-      const first = args[0];
-      return token.text === 'factorial' && args.length === 1 && first !== undefined
-        ? factorialOf(first)
-        : UNREADABLE;
+      // The calls read as VALUES: the two that are pure magnitude written as
+      // functions. Every other name is declined rather than called symbolic,
+      // because Giac evaluates most of them — but its ARGUMENTS are charged
+      // either way, which is what `abs(1000!^12)` needed. Charging arguments is
+      // not enough on its own: `pow(10,100000)` costs 100,001 digits while its
+      // arguments cost 2 and 6, and it trapped the worker.
+      const [first, second] = args;
+      if (token.text === 'factorial' && args.length === 1 && first !== undefined) {
+        return factorialOf(first);
+      }
+      if (
+        token.text === 'pow' &&
+        args.length === 2 &&
+        first !== undefined &&
+        second !== undefined
+      ) {
+        return powerOf(first, second);
+      }
+      return UNREADABLE;
     }
     if (operatorAt('(')) {
       at += 1;
@@ -1142,11 +1174,19 @@ function denotedDigits(
     const separates =
       token.kind === 'separator' || (depth === 0 && token.kind === 'op' && token.text === ',');
     if (separates) {
-      // The run that ends at an `=` is the condition's SUBJECT, not a value —
-      // `y(0)` in `y(0)=1000!^12`. Charging it read the number 0 and added its
-      // one digit to the total, which pushed a single condition into the
-      // "together" wording and moved the real boundary from 3,000 to 2,999.
-      if (token.text === '=') subjects.add(runs.length - 1);
+      // The run that ends at an `=` can be the condition's SUBJECT — `y(0)` in
+      // `y(0)=1000!^12` — which is charged its one digit for the 0 and pushed a
+      // single condition into the "together" wording, moving the real boundary
+      // from 3,000 to 2,999.
+      //
+      // Only a bare subject, though. Skipping the whole run instead left the
+      // evaluation POINT unmeasured, and the point is evaluated for real:
+      // `y(1000!^12)=1` was admitted and fatally trapped the worker while the
+      // same number on the right was refused at 30,812 digits. Dropping one
+      // spurious digit does not require dropping the run that carries it.
+      if (token.text === '=' && isBareSubject(runs[runs.length - 1] ?? [])) {
+        subjects.add(runs.length - 1);
+      }
       runs.push([]);
     } else runs[runs.length - 1]?.push(token);
   }
@@ -1208,7 +1248,12 @@ function implausibleMagnitude(raw: string): string | undefined {
   // carries no `^` for implausibleMagnitude to find, and reaches Giac as
   // `1000!^9^9`. Length and depth stay on the caller's own text above, which is
   // what those two were measured against.
-  const text = unicodeToAscii(raw);
+  // `**` is Giac's own spelling of `^` — measured, `y(0)=10**20` answers
+  // 100000000000000000000 — and nothing here modelled it: the `^` scan found no
+  // `^`, and the reader read two multiplications, charging `10**100000` six
+  // digits for a number with 100,001. Six spellings traped the worker through it.
+  // Rewritten with the Unicode pass so every clause measures one operator set.
+  const text = unicodeToAscii(raw).replaceAll('**', '^');
   // Every `^`, not only the ones whose exponent is a readable literal. Reading a
   // digit run after `^` cannot bound a NESTED exponent: `10^(10^5)` captures "10"
   // and "5" and passed, and it is the same 10^100000 this guard exists to stop —

@@ -1392,6 +1392,53 @@ describe('a condition is bounded by what it denotes, not by one operator at a ti
     expect(after.isError, text(after)).toBe(false);
   });
 
+  // `**` is Giac's own spelling of `^` — `y(0)=10**20` answers
+  // 100000000000000000000 — and nothing modelled it: the per-operator scan found
+  // no `^`, and the reader read two multiplications and charged `10**100000` six
+  // digits for a number with 100,001. Six spellings trapped the worker through
+  // it, including on the equation's right-hand side.
+  it.each([
+    ['y(0)=10**100000', /an exponent of 100000/],
+    ['y(0)=10 ** 100000', /an exponent of 100000/],
+    ['y(0)=1000!**12', /a value denoting 30812 digits/],
+    ['y(0)=pow\\(10,100000\\)', /a value denoting 100001 digits/],
+    ['y(0)=pow\\(1000!,12\\)', /a value denoting 30812 digits/],
+  ])('refuses %s, whose power is not written `^`', async (condition, reason) => {
+    const r = await computeHandler({
+      problem: `desolve(y'=y, ${condition.replaceAll('\\', '')}, x, y)`,
+    });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(reason);
+    expect(text(r)).not.toMatch(/memory access|worker exited|RuntimeError|table index/);
+  });
+
+  // A condition's POINT is evaluated as readily as its value. Skipping the whole
+  // run left of the `=` — to spare the one spurious digit a bare `y(0)` costs —
+  // left the point unmeasured, and `y(1000!^12)=1` was admitted and trapped the
+  // worker while the same number on the right was refused at 30,812 digits.
+  it.each(['y(1000!^12)=1', 'y(1000!**12)=1'])(
+    'refuses %s, whose point is the value',
+    async (condition) => {
+      const r = await computeHandler({ problem: `desolve(y'=y, ${condition}, x, y)` });
+      expect(r.isError, text(r)).toBe(true);
+      expect(text(r)).toMatch(/a value denoting 30812 digits/);
+      expect(text(r)).not.toMatch(/memory access|worker exited|RuntimeError|table index/);
+    }
+  );
+
+  // The ordinary spellings the two rules above must not take with them: a power
+  // written `**`, a power written as a call, and conditions at a point that is
+  // not zero.
+  it.each([
+    ['y(0)=10**20', /^Result: 100000000000000000000\*exp\(x\)$/m],
+    ['y(0)=pow(2,10)', /^Result: 1024\*exp\(x\)$/m],
+    ['y(2)=5', /^Result: 5\/exp\(2\)\*exp\(x\)$/m],
+  ])('still answers %s', async (condition, expected) => {
+    const r = await computeHandler({ problem: `desolve(y'=y, ${condition}, x, y)` });
+    expect(r.isError, text(r)).toBe(false);
+    expect(text(r)).toMatch(expected);
+  });
+
   // A superscript carries no `^` for any clause to find. unicodeToAscii runs
   // downstream of this whole bound — at giac-eval.ts, long after it has
   // returned — so the guard has to normalise its own input or it is reading a
