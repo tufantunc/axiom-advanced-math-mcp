@@ -1328,3 +1328,74 @@ describe("an initial condition's cost is bounded, not only its size", () => {
     expect(alone.isError, text(alone)).toBe(false);
   });
 });
+
+/**
+ * The composition net.
+ *
+ * Every bound on this channel before it named the shapes it refused, and a
+ * composition of two ADMITTED shapes escaped it every round. `1000!^12` is the
+ * fifth: a factorial well inside the factorial cap, raised to an exponent well
+ * inside the exponent cap. Thirteen characters, 30,811 digits, and measured on
+ * this branch before the reader landed it killed the shared worker through every
+ * route while both caps reported it fine.
+ *
+ * The rows below are the axis the earlier suites missed — not more spellings of
+ * `!`, and not more bracketings of `^`, but the two operators COMPOSED.
+ */
+describe('a condition is bounded by what it denotes, not by one operator at a time', () => {
+  it.each([
+    ["desolve(y'=y, y(0)=1000!^12, x, y)", '1000!^12'],
+    ["desolve(y'=y, y(0)=(2^1000)^1000, x, y)", '(2^1000)^1000'],
+    ["desolve(y'=y, y(0)=100!^200, x, y)", '100!^200'],
+    ["desolve(y'=y, y(0)=1142!^10, x, y)", '1142!^10'],
+    ["desolve(y'=y, y(0)=10^1000*10^1000*10^1000, x, y)", 'a product of three powers'],
+  ])('refuses %s, which no single cap can see', async (problem) => {
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(true);
+    // The digit count itself, not merely "some refusal": this is the one thing
+    // the reader claims, and asserting only isError would pass on any of the
+    // caps above firing for an unrelated reason.
+    const reported = /a value denoting (\d+) digits/.exec(text(r));
+    expect(reported, text(r)).not.toBeNull();
+    expect(Number(reported?.[1])).toBeGreaterThan(3000);
+    // The whole point: the text never reaches the engine.
+    expect(text(r)).not.toMatch(/memory access|worker exited|RuntimeError|table index/);
+    const after = await computeHandler({ problem: "desolve(y'=y, y(0)=2, x, y)" });
+    expect(after.isError, text(after)).toBe(false);
+  });
+
+  // A superscript carries no `^` for any clause to find. unicodeToAscii runs
+  // downstream of this whole bound — measured at giac-eval.ts, long after it has
+  // returned — so the guard has to normalise its own input or it is reading a
+  // different string from the one Giac gets. Note what the normaliser does with
+  // a two-digit superscript: `⁹⁹` becomes `^9^9`, not `^99`, so this row also
+  // proves the reader composes two exponents rather than reading one.
+  it('refuses 1000!⁹⁹, whose `^` only exists after normalisation', async () => {
+    const r = await computeHandler({ problem: "desolve(y'=y, y(0)=1000!\u{2079}\u{2079}, x, y)" });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/a value denoting \d+ digits/);
+    expect(text(r)).not.toMatch(/memory access|worker exited|RuntimeError|table index/);
+  });
+
+  // The safe direction, which is what keeps the row above from being satisfied
+  // by a bound that simply refuses `!` next to `^`. These compose the same two
+  // operators and denote ordinary numbers, and every one of them answers.
+  it.each([
+    ["desolve(y'=y, y(0)=3!^2, x, y)", /^Result: 36\*exp\(x\)$/m],
+    ["desolve(y'=y, y(0)=5!^3, x, y)", /^Result: 1728000\*exp\(x\)$/m],
+    ["desolve(y'=y, y(0)=10!^2, x, y)", /^Result: 13168189440000\*exp\(x\)$/m],
+    ["desolve(y'=y, y(0)=1000000*1000000, x, y)", /^Result: 1000000000000\*exp\(x\)$/m],
+  ])('still answers %s', async (problem, expected) => {
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(false);
+    expect(text(r)).toMatch(expected);
+  });
+
+  // 1000! is 2,568 digits and inside the budget; raising it to the first power
+  // does not change that. A bound that charged for the OPERATOR rather than the
+  // size would refuse this, and refusing it would be wrong.
+  it('still answers a factorial raised to the first power', async () => {
+    const r = await computeHandler({ problem: "desolve(y'=y, y(0)=1000!^1, x, y)" });
+    expect(r.isError, text(r)).toBe(false);
+  });
+});

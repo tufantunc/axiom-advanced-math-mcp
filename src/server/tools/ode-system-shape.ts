@@ -60,7 +60,7 @@ const MAX_SYSTEM_EQUATIONS = 9;
  *
  * This bound is the only thing guarding the CHAINED-factorial shape below —
  * `y(0)=1!!!…`, whose every operand after the first is another `!` and so is not
- * a literal MAX_FACTORIAL_DIGITS can count. That shape does not throw either:
+ * a literal MAX_DENOTED_DIGITS can count. That shape does not throw either:
  * `exact([y(0)=1!!!…])` RETURNS a normal-looking answer and leaves the worker
  * dead, so nothing downstream notices — `isFatalWasmTrap` is never consulted,
  * and the try/catch around the call never runs.
@@ -137,13 +137,21 @@ const MAX_CONDITION_DEPTH = 100;
  * condition TEXT is allowed to be; `y(0)=5!`, `y(0)=20!` and `y(0)=100!` are
  * far below it. The largest single factorial admitted is 1142!, at 2,998 digits.
  *
- * NOT the same axis as the exponent bound below, and it does not subsume it: the
- * same composition on powers does not trap. Measured, `10^1000*…` forty times
- * denotes 40,040 digits and answers with the worker alive — well past where
- * factorials die — so a power's cost is not its digit count and that channel
- * keeps its own separately measured bound.
+ * The SAME axis as powers, which is what this constant now measures. An earlier
+ * version of this comment claimed the opposite — that `10^1000*…` forty times
+ * "denotes 40,040 digits and answers with the worker alive", so a power's cost
+ * was not its digit count. Both halves were wrong. The count is 40,001; and
+ * re-measured, ×40 TRAPS. What misled it is that the window is not monotonic:
+ * ×26 answers, ×28 and ×30 trap, ×34, ×36 and ×38 answer, ×40 and ×44 trap, ×50
+ * answers. A survivor picked out of that window says nothing about its
+ * neighbours, and the one it picked is surrounded by traps.
+ *
+ * So powers die in the region factorials die in, and the digit count is a sound
+ * conservative proxy for both — which is why denotedDigits charges them to this
+ * one budget instead of giving each operator a cap of its own. Composing two
+ * per-operator caps is what `1000!^12` walked through.
  */
-const MAX_FACTORIAL_DIGITS = 3_000;
+const MAX_DENOTED_DIGITS = 3_000;
 
 /**
  * How many decimal digits n! has.
@@ -157,10 +165,14 @@ const MAX_FACTORIAL_DIGITS = 3_000;
  * of nine of headroom; the error is far below one digit for n ≥ 2, and this is
  * never used to report a value back to a caller as exact.
  */
-function factorialDigits(n: number): number {
-  if (n < 2) return 1;
+function factorialLog10(n: number): number {
+  if (n < 2) return 0;
   const ln = n * Math.log(n) - n + 0.5 * Math.log(2 * Math.PI * n) + 1 / (12 * n);
-  return Math.floor(ln / Math.LN10) + 1;
+  return ln / Math.LN10;
+}
+
+function factorialDigits(n: number): number {
+  return n < 2 ? 1 : Math.floor(factorialLog10(n)) + 1;
 }
 
 /**
@@ -636,11 +648,16 @@ export function validateSystemShape(
  *     depth 100 kills the worker outright, where `exact([…])` refuses it
  *     gracefully — but that condition is 806 characters, so MAX_CONDITION_CHARS
  *     already refuses it. Nothing reachable INSIDE 280 characters got near a
- *     cliff: at the bound itself, 137 nested grouping parentheses (280
- *     characters) and 45 nested `sqrt(` (276) both answer, as does `sqrt(1+…)` at
- *     depth 34 (278). So on this path the depth check is a parity bound — kept so
- *     the two paths cannot drift into different rules, not because it is
- *     load-bearing.
+ *     cliff in the ENGINE: handed those inputs directly, 137 nested grouping
+ *     parentheses (280 characters) and 45 nested `sqrt(` (276) both answer, as
+ *     does `sqrt(1+…)` at depth 34 (278). Read what that says about this bound
+ *     rather than about Giac: MAX_CONDITION_DEPTH is 100, so the tool REFUSES
+ *     the 137-paren condition — measured, "nested 137 deep" — where the engine
+ *     would have answered it. An earlier version of this paragraph cited that
+ *     input as evidence the check costs nothing, which is backwards on both
+ *     counts: it is not load-bearing against a trap, AND it turns away inputs
+ *     the engine handles. Kept as a parity bound so the two paths cannot drift
+ *     into different rules, with that cost stated rather than implied away.
  */
 export function conditionBoundError(condition: string): string | undefined {
   // Two shapes, because they trap differently and neither bound catches the
@@ -682,7 +699,7 @@ export function conditionBoundError(condition: string): string | undefined {
  * evaluates it twice, and the single-equation path folds every condition into
  * one `desolve`. So nine conditions at the ceiling denote 9 × 3,000 = 27,000
  * digits in one call, against a lowest measured kill of 27,753 — a factor of
- * 1.03 where MAX_FACTORIAL_DIGITS claims nine.
+ * 1.03 where MAX_DENOTED_DIGITS claims nine.
  *
  * Measured, neither worst case traps today. `exact([v0(0)=1142!, …, v8(0)=1142!])`
  * at 26,982 digits answers in 129ms with the worker alive, and the
@@ -736,7 +753,308 @@ export function conditionsTogetherError(conditions: string[]): string | undefine
  * and `sum(k!,k,1,20000)` trap outright. That is the COST channel the conditions
  * scan already records as open, not a gap this function is close to closing.
  */
-function implausibleMagnitude(text: string): string | undefined {
+/**
+ * The largest value in a double this can still add, multiply and compare
+ * exactly. `!` and `^` need their OPERAND, not its size, and an operand past
+ * this point is one the reader hands back rather than guesses at.
+ */
+const MAX_READABLE_VALUE = 1e15;
+
+/**
+ * What a piece of condition text denotes, as a base-10 magnitude.
+ *
+ *   - `known` carries log10 of the absolute value, and `value` as well where it
+ *     is exact in a double. Both are needed: `^` and `!` consume the operand's
+ *     VALUE (8! is 40320, and (8!)! is a 166,713-digit number), while the budget
+ *     compares sizes.
+ *   - `symbolic` is a free identifier. Measured: `n!` and `(n+1)!` come back
+ *     unevaluated in a few characters and the worker survives, so a symbol costs
+ *     nothing real and must not be charged for.
+ *   - `unreadable` is NOT a verdict. It means this reader declines and the
+ *     per-operator scans decide — which is why an unknown function call lands
+ *     here rather than being waved through as symbolic: `factorial(9)!` is one
+ *     Giac evaluates, and those scans are what refuse it.
+ */
+type Magnitude =
+  { kind: 'known'; log10: number; value?: number } | { kind: 'symbolic' } | { kind: 'unreadable' };
+
+const UNREADABLE: Magnitude = { kind: 'unreadable' };
+const SYMBOLIC: Magnitude = { kind: 'symbolic' };
+
+function log10Of(value: number): number {
+  const magnitude = Math.abs(value);
+  return magnitude === 0 ? 0 : Math.log10(magnitude);
+}
+
+function known(log10: number, value?: number): Magnitude {
+  const carried =
+    value !== undefined && Number.isFinite(value) && Math.abs(value) < MAX_READABLE_VALUE
+      ? value
+      : undefined;
+  return carried === undefined
+    ? { kind: 'known', log10 }
+    : { kind: 'known', log10, value: carried };
+}
+
+/** A magnitude read from an exact value, which is the precise case. */
+function fromValue(value: number): Magnitude {
+  return known(log10Of(value), value);
+}
+
+type MagnitudeToken = { kind: 'number' | 'name' | 'op'; text: string };
+
+/**
+ * The condition's own characters, or nothing.
+ *
+ * Refusing to tokenize is this reader's only way to decline a character it does
+ * not model, and declining is safe because the per-operator scans still run.
+ * Numbers admit exponent notation deliberately: `1e5!` was one of the escapes,
+ * and reading `1e5` as 100000 is what charges it its real size.
+ */
+function tokenizeMagnitude(text: string): MagnitudeToken[] | undefined {
+  const tokens: MagnitudeToken[] = [];
+  let at = 0;
+  while (at < text.length) {
+    const rest = text.slice(at);
+    if (/^\s/.test(rest)) {
+      at += 1;
+      continue;
+    }
+    const number = /^\d*\.?\d+(?:[eE][+-]?\d+)?/.exec(rest)?.[0];
+    if (number !== undefined && Number.isFinite(Number(number))) {
+      tokens.push({ kind: 'number', text: number });
+      at += number.length;
+      continue;
+    }
+    const name = /^[A-Za-z_]\w*/.exec(rest)?.[0];
+    if (name !== undefined) {
+      tokens.push({ kind: 'name', text: name });
+      at += name.length;
+      continue;
+    }
+    const operator = rest[0] ?? '';
+    if ('+-*/^!()'.includes(operator)) {
+      tokens.push({ kind: 'op', text: operator });
+      at += 1;
+      continue;
+    }
+    return undefined;
+  }
+  return tokens;
+}
+
+/**
+ * The magnitude a token run denotes, by the grammar rather than by a list of
+ * spellings.
+ *
+ * This is the point of the reader. Every previous bound on this channel named
+ * the shapes it refused, and a composition of two admitted shapes escaped it
+ * every round — `10^9!`, `10^(9)!`, `10^+50000`, `1e5!`, and finally
+ * `1000!^12`, a factorial under its own cap raised to an exponent under its own
+ * cap. Composition is not enumerated here; it falls out of precedence. `2^(3)!`
+ * is 2^(3!) because `!` binds tighter than `^`, not because a clause says so.
+ */
+function readMagnitude(tokens: MagnitudeToken[]): Magnitude | undefined {
+  let at = 0;
+
+  const operatorAt = (text: string): boolean =>
+    tokens[at]?.kind === 'op' && tokens[at]?.text === text;
+
+  const factorialOf = (operand: Magnitude): Magnitude => {
+    if (operand.kind !== 'known') return operand;
+    // An operand this cannot pin down is handed back rather than guessed at:
+    // the scans below refuse an unbounded factorial, and that is the safe side.
+    if (operand.value === undefined || operand.value < 0) return UNREADABLE;
+    const n = Math.ceil(operand.value);
+    // Carried forward only while it stays exact, which is what lets `(8!)!` be
+    // read as 40320! rather than declined.
+    let exact: number | undefined;
+    if (n <= 17) {
+      exact = 1;
+      for (let k = 2; k <= n; k += 1) exact *= k;
+    }
+    return known(factorialLog10(n), exact);
+  };
+
+  const powerOf = (base: Magnitude, exponent: Magnitude): Magnitude => {
+    if (base.kind === 'unreadable' || exponent.kind === 'unreadable') return UNREADABLE;
+    // `2^n` is left symbolic by Giac, and an exponent nobody can evaluate cannot
+    // be charged a size.
+    if (base.kind === 'symbolic' || exponent.kind === 'symbolic') return SYMBOLIC;
+    // An exponent too large to hold exactly is too large to be meant, whatever
+    // its sign: `10^-50000` is an exact rational with a 50,001-digit
+    // denominator, which is the same work as the positive one.
+    if (exponent.value === undefined) return known(Number.POSITIVE_INFINITY);
+    if (base.value !== undefined && Math.abs(exponent.value) <= 64) {
+      const exact = base.value ** exponent.value;
+      if (Number.isFinite(exact) && Math.abs(exact) < MAX_READABLE_VALUE) return fromValue(exact);
+    }
+    return known(exponent.value * base.log10);
+  };
+
+  const pairOf = (
+    left: Magnitude,
+    right: Magnitude,
+    exact: (a: number, b: number) => number,
+    bound: (a: number, b: number) => number
+  ): Magnitude => {
+    if (left.kind === 'unreadable' || right.kind === 'unreadable') return UNREADABLE;
+    if (left.kind === 'symbolic' || right.kind === 'symbolic') return SYMBOLIC;
+    if (left.value !== undefined && right.value !== undefined) {
+      const value = exact(left.value, right.value);
+      if (Number.isFinite(value)) return fromValue(value);
+    }
+    return known(bound(left.log10, right.log10));
+  };
+
+  // primary -> number | name | name(...) | ( expression )
+  const primary = (): Magnitude => {
+    const token = tokens[at];
+    if (token === undefined) return UNREADABLE;
+    if (token.kind === 'number') {
+      at += 1;
+      return fromValue(Number(token.text));
+    }
+    if (token.kind === 'name') {
+      at += 1;
+      if (!operatorAt('(')) return SYMBOLIC;
+      at += 1;
+      const inner = expression();
+      if (!operatorAt(')')) return UNREADABLE;
+      at += 1;
+      // The one call this reads. Every other name is declined rather than
+      // treated as a symbol, because Giac evaluates most of them and a symbol
+      // costs nothing — waving `factorial(9)!` through as symbolic would be an
+      // escape, not a simplification.
+      return token.text === 'factorial' ? factorialOf(inner) : UNREADABLE;
+    }
+    if (operatorAt('(')) {
+      at += 1;
+      const inner = expression();
+      if (!operatorAt(')')) return UNREADABLE;
+      at += 1;
+      return inner;
+    }
+    return UNREADABLE;
+  };
+
+  // postfix -> primary '!'*
+  const postfix = (): Magnitude => {
+    let value = primary();
+    while (operatorAt('!')) {
+      at += 1;
+      value = factorialOf(value);
+    }
+    return value;
+  };
+
+  // power -> postfix ( '^' unary )?   — right-associative through unary
+  const power = (): Magnitude => {
+    const base = postfix();
+    if (!operatorAt('^')) return base;
+    at += 1;
+    return powerOf(base, unary());
+  };
+
+  // unary -> ('+'|'-') unary | power
+  function unary(): Magnitude {
+    if (operatorAt('+')) {
+      at += 1;
+      return unary();
+    }
+    if (operatorAt('-')) {
+      at += 1;
+      const operand = unary();
+      if (operand.kind !== 'known') return operand;
+      return operand.value === undefined ? operand : fromValue(-operand.value);
+    }
+    return power();
+  }
+
+  // term -> unary ( ('*'|'/') unary )*
+  const term = (): Magnitude => {
+    let left = unary();
+    for (;;) {
+      const multiply = operatorAt('*');
+      if (!multiply && !operatorAt('/')) return left;
+      at += 1;
+      const right = unary();
+      left = multiply
+        ? pairOf(
+            left,
+            right,
+            (a, b) => a * b,
+            (a, b) => a + b
+          )
+        : pairOf(
+            left,
+            right,
+            (a, b) => (b === 0 ? Number.NaN : a / b),
+            (a, b) => a - b
+          );
+    }
+  };
+
+  // expression -> term ( ('+'|'-') term )*
+  function expression(): Magnitude {
+    let left = term();
+    for (;;) {
+      const add = operatorAt('+');
+      if (!add && !operatorAt('-')) return left;
+      at += 1;
+      const right = term();
+      // Without exact values a sum is bounded, not computed: one more digit than
+      // the larger side is an upper bound on a+b for any two of them.
+      left = pairOf(
+        left,
+        right,
+        (a, b) => (add ? a + b : a - b),
+        (a, b) => Math.max(a, b) + Math.log10(2)
+      );
+    }
+  }
+
+  const value = expression();
+  // Trailing tokens mean the grammar ran out before the text did, and a partial
+  // read is not a read: `2^3 @ 50000!` must reach the scans, not report 1 digit.
+  return at === tokens.length ? value : undefined;
+}
+
+/**
+ * The most digits any part of `text` denotes, or undefined where nothing in it
+ * could be read.
+ *
+ * Split on the separators a condition is built from — `y(0)=1000!^12` is a call,
+ * an `=` and a value, and `[a,b]` is a joined pair — so that a piece this cannot
+ * read does not cost the reader the piece it can.
+ */
+function denotedDigits(text: string): { digits: number; source: string } | undefined {
+  let worst: { digits: number; source: string } | undefined;
+  for (const segment of text.split(/[=,;[\]]/)) {
+    const trimmed = segment.trim();
+    if (trimmed === '') continue;
+    const tokens = tokenizeMagnitude(trimmed);
+    if (tokens === undefined || tokens.length === 0) continue;
+    const magnitude = readMagnitude(tokens);
+    if (magnitude === undefined || magnitude.kind !== 'known') continue;
+    // The denominator counts as much as the numerator: `1/1000!` is an exact
+    // rational with 2,568 digits under the line, which is the same work.
+    const digits = Number.isFinite(magnitude.log10)
+      ? Math.floor(Math.abs(magnitude.log10)) + 1
+      : Number.POSITIVE_INFINITY;
+    if (worst === undefined || digits > worst.digits) worst = { digits, source: trimmed };
+  }
+  return worst;
+}
+
+function implausibleMagnitude(raw: string): string | undefined {
+  // Normalised FIRST, because every guard here reads operators out of the text
+  // and `unicodeToAscii` runs downstream of all of them — measured at
+  // giac-eval.ts, after this bound has already returned. `1000!\u{2079}\u{2079}`
+  // carries no `^` for any clause below to find, and reaches Giac as
+  // `1000!^9^9`. Length and depth stay on the caller's own text above, which is
+  // what those two were measured against.
+  const text = unicodeToAscii(raw);
   // Every `^`, not only the ones whose exponent is a readable literal. Reading a
   // digit run after `^` cannot bound a NESTED exponent: `10^(10^5)` captures "10"
   // and "5" and passed, and it is the same 10^100000 this guard exists to stop —
@@ -864,7 +1182,7 @@ function implausibleMagnitude(text: string): string | undefined {
     if (/^[A-Za-z_]\w*$/.test(literal)) continue;
     return `a factorial this cannot bound (${literal.slice(0, 20)})`;
   }
-  if (digits > MAX_FACTORIAL_DIGITS) {
+  if (digits > MAX_DENOTED_DIGITS) {
     // Named by its argument when there is only one, because that is what the
     // caller can act on; by the total when the size was composed, because then
     // no single factorial is the thing that is too big. factorialDigits is at
@@ -880,6 +1198,19 @@ function implausibleMagnitude(text: string): string | undefined {
     return single
       ? `a factorial of ${biggest.slice(0, 20)}, which denotes a ${digits}-digit number`
       : `factorials denoting ${digits} digits together`;
+  }
+  // Last, not first. The clauses above name the shape they refuse and their
+  // wording is what callers read and what 49 test rows pin; this one sees what
+  // no single clause can, because it reads the expression rather than scanning
+  // for operators. `1000!^12` is a factorial inside the factorial cap raised to
+  // an exponent inside the exponent cap, and denotes 30,816 digits — measured,
+  // it killed the worker through every route while both caps reported it fine.
+  const denoted = denotedDigits(text);
+  if (denoted !== undefined && denoted.digits > MAX_DENOTED_DIGITS) {
+    const source = denoted.source.slice(0, 20);
+    return Number.isFinite(denoted.digits)
+      ? `a value denoting ${denoted.digits} digits (${source})`
+      : `a value too large to count the digits of (${source})`;
   }
   return undefined;
 }
@@ -923,7 +1254,7 @@ function implausibleMagnitude(text: string): string | undefined {
  * group and was already refused.
  *
  * A `!` whose operand is another `!` is skipped, deliberately: at the largest
- * inner value MAX_FACTORIAL_DIGITS admits, Giac leaves the outer one
+ * inner value MAX_DENOTED_DIGITS admits, Giac leaves the outer one
  * unapplied — measured, `1000!!` answers `(402387…)!` in 2,571 characters with
  * the worker alive. MAX_CONDITION_CHARS is what bounds a long chain of them.
  */
