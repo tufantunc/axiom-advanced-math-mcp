@@ -1374,14 +1374,33 @@ describe('a condition is bounded by what it denotes, not by one operator at a ti
     // by before
     ['y(0)=factorial(1000)^12', 30812],
     ['y(0)=factorial(200)^50', 18745],
-    // exponent notation, the reason the tokenizer reads `1e5` as 100000
+    // exponent notation, the reason the tokenizer reads `1e5` as 100000. This one
+    // sits exactly on an integer boundary — 1000 * log10(1e5) is 5000.0 — so it
+    // rests on log10(1e5) === 5, which the spec leaves implementation-approximated.
+    // The row below it is the same rule off the boundary; keep both.
     ['y(0)=1e5^1000', 5001],
+    ['y(0)=2e5^1000', 5302],
     // one character the reader does not model used to end the whole measurement
     ['y(0)=1000!^12%7', 30812],
     // the trailing-decimal spelling the local number pattern dropped
     ['y(0)=100.!^200', 31595],
     // a token the grammar cannot place no longer discards what was read first
     ['y(0)=1000!^12 2', 30812],
+    // `[` groups as well as lists in Giac, and `10^[9]` is a measured spelling —
+    // so a bracket must not be a way to hide a base
+    ['y(0)=[1000!]^12', 30812],
+    // a unary `+` on the exponent. The `^` scan skips `+12` because it reads as a
+    // plain signed integer, so the reader is the only clause that sees this one.
+    ['y(0)=1000!^+12', 30812],
+    // the quotient rule itself, not a large subterm: these two are over the bound
+    // ONLY because a negative exponent under the line adds digits, and both
+    // exponents are inside the 1,000 ceiling so no other clause catches them
+    ['y(0)=1000!/10^-500', 3068],
+    ['y(0)=10^1000/10^-1000/10^-1000', 3001],
+    // a named argument is ordinary Giac (`subst`, `sum`, `limit` all take one) and
+    // its `=` used to split the run and mark the half holding the value a subject
+    ['y(0)=max(1000!^12,q=1)', 30812],
+    ['y(0)=1000!^12=1', 30812],
   ])('refuses %s as denoting %i digits', async (condition, digits) => {
     const r = await computeHandler({ problem: `desolve(y'=y, ${condition}, x, y)` });
     expect(r.isError, text(r)).toBe(true);
@@ -1439,6 +1458,18 @@ describe('a condition is bounded by what it denotes, not by one operator at a ti
     expect(text(r)).toMatch(expected);
   });
 
+  // The refusal names the caller's OWN characters, not the tokens joined back up.
+  // Rebuilding them reports `1000!^12 2` as `1000!^122` — a number nobody wrote —
+  // and nothing else in this suite would notice.
+  it.each([
+    ['y(0)=1000!^12 2', 'a value denoting 30812 digits (1000!^12 2)'],
+    ['y(0)=100.!^200', 'a value denoting 31595 digits (100.!^200)'],
+  ])('names %s in the refusal exactly as written', async (condition, expected) => {
+    const r = await computeHandler({ problem: `desolve(y'=y, ${condition}, x, y)` });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toContain(expected);
+  });
+
   // A superscript carries no `^` for any clause to find. unicodeToAscii runs
   // downstream of this whole bound — at giac-eval.ts, long after it has
   // returned — so the guard has to normalise its own input or it is reading a
@@ -1492,14 +1523,20 @@ describe('a condition is bounded by what it denotes, not by one operator at a ti
     expect(alone.isError, text(alone)).toBe(false);
   });
 
-  // Named for what it pins, which is NOT the reader's own depth bound: measured,
-  // the coefficient-length check refuses this first and removing the reader's
-  // bound leaves this row green. What it does pin is the property that matters
-  // to a caller — deeply nested text comes back as a refusal naming a bound,
-  // never as a raw `RangeError` from a function contracted to return a string.
-  it('answers deeply nested text with a refusal, not a stack overflow', async () => {
-    const deep = '('.repeat(1500) + '1' + ')'.repeat(1500);
-    const r = await computeHandler({ problem: `desolve([y'=${deep}, z'=0], x, y, z)` });
+  // The equation's RIGHT-HAND SIDE, which is the route with no length and no
+  // depth bound ahead of the reader — validateSystemShape hands it straight to
+  // implausibleMagnitude, and the coefficient-length refusal runs downstream of
+  // that, not before it. So this is where the reader's own recursion bound is
+  // load-bearing: measured, replacing it with `() => true` turns both rows below
+  // into "Maximum call stack size exceeded" out of a function contracted to
+  // return a refusal. A guard that can throw is not a guard.
+  //
+  // An earlier version of this row used a bare nested CONDITION, which
+  // conditionBoundError refuses on length long before the reader sees it — it
+  // passed without exercising anything it named.
+  it.each([1500, 4000])('refuses a %i-deep right-hand side without overflowing', async (depth) => {
+    const deep = '('.repeat(depth) + '1' + ')'.repeat(depth);
+    const r = await computeHandler({ problem: `desolve([y'=z+${deep}, z'=-y], x)` });
     expect(r.isError, text(r)).toBe(true);
     expect(text(r)).not.toMatch(/call stack|RangeError/);
     expect(text(r)).toMatch(/^Error: solve_ode cannot solve this system — /m);
@@ -1514,6 +1551,12 @@ describe('a condition is bounded by what it denotes, not by one operator at a ti
     ['y(0)=10!^2', /^Result: 13168189440000\*exp\(x\)$/m],
     ['y(0)=factorial(5)^3', /^Result: 1728000\*exp\(x\)$/m],
     ['y(0)=1000000*1000000', /^Result: 1000000000000\*exp\(x\)$/m],
+    // the same three branches as the escapes above, in the direction that must
+    // keep answering: a bracketed exponent, a unary `+`, and a quotient whose
+    // denominator cancels rather than accumulates
+    ['y(0)=10^[3]', /^Result: 1000\*exp\(x\)$/m],
+    ['y(0)=+5!^3', /^Result: 1728000\*exp\(x\)$/m],
+    ['y(0)=10^500/10^-500', /^Result: 1[0]+\*exp\(x\)$/m],
   ])('still answers %s', async (condition, expected) => {
     const r = await computeHandler({ problem: `desolve(y'=y, ${condition}, x, y)` });
     expect(r.isError, text(r)).toBe(false);

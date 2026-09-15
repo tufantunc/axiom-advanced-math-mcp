@@ -676,9 +676,10 @@ export function conditionBoundError(raw: string): string | undefined {
   // downstream at giac-eval.ts, so the guard would otherwise be reading a
   // different string from the one Giac gets), while length and depth read the
   // caller's own. Normalisation expands — `√` becomes `sqrt`, `²` becomes `^2` —
-  // so `√` 270 times is 275 characters to the length check and 1,085 characters
-  // to the engine, and MAX_CONDITION_CHARS' claim to sit below every measured
-  // cliff was about a string that is not the one evaluated.
+  // so `√` 270 times WAS 275 characters to the length check and 1,085 to the
+  // engine, and MAX_CONDITION_CHARS' claim to sit below every measured cliff was
+  // about a string that is not the one evaluated. Measured after this change,
+  // the length check sees 1,085 and refuses it.
   const condition = unicodeToAscii(raw);
   // Two shapes, because they trap differently and neither bound catches the
   // other. Measured on `exact([y(0)=1*2*2*…,z(0)=0])`, a FLAT condition answers
@@ -768,21 +769,22 @@ const MAX_READABLE_VALUE = 1e15;
  *     the budget compares sizes. `3!^2` is the cheapest input that needs the
  *     value — 3! must be 6 before `^2` can be 36 — and it is an answered row in
  *     the suite.
- *   - `symbolic` is a free identifier ALONE. Measured: `n!` and `(n+1)!` come
- *     back unevaluated in a few characters and the worker survives. That is the
- *     whole of what was measured, and the reader must not extend it: a symbol
- *     standing NEXT TO a large number does not shrink it, and `n*1000!^12` used
- *     to be admitted on exactly that false extension.
- *   - `unreadable` is not a verdict. It means this reader declines the node —
- *     an unknown function call, an operand it cannot pin down — and the
- *     per-operator scans decide. Declining a node never discards what was
- *     already measured beneath it.
+ *   - `unreadable` is not a verdict. It means the reader declines this node — a
+ *     free identifier, an unknown call, an operand it cannot pin down — and the
+ *     per-operator scans decide. Declining never discards what was already
+ *     measured beneath it, which is the property `n*1000!^12` needed.
+ *
+ * Two states, not three. A `symbolic` variant sat here, meant to record that a
+ * free identifier ALONE is free — measured, `n!` and `(n+1)!` come back
+ * unevaluated and the worker survives. Nothing could tell it from `unreadable`:
+ * `record` fires only on `known`, no production turns a non-known back into a
+ * known, and readMagnitude returns a number rather than a kind, so merging the
+ * two left the whole suite green. A distinction with no effect is one the next
+ * reader has to disprove, so it is gone rather than pinned.
  */
-type Magnitude =
-  { kind: 'known'; log10: number; value?: number } | { kind: 'symbolic' } | { kind: 'unreadable' };
+type Magnitude = { kind: 'known'; log10: number; value?: number } | { kind: 'unreadable' };
 
 const UNREADABLE: Magnitude = { kind: 'unreadable' };
-const SYMBOLIC: Magnitude = { kind: 'symbolic' };
 
 function known(log10: number, value?: number): Magnitude {
   const exact =
@@ -811,7 +813,7 @@ const MAGNITUDE_NUMBER = new RegExp(`^${GIAC_NUMBER}`);
  * A character this does not model becomes a SEPARATOR rather than aborting the
  * read, and that is load-bearing: aborting made one unmodelled character a
  * master key. `1000!^12%7` was admitted and evaluated — 152ms, having built the
- * 30,811-digit intermediate — because `%` ended the tokenizer and the whole
+ * 30,812-digit intermediate — because `%` ended the tokenizer and the whole
  * segment went unmeasured. As a separator it ends one run and starts another,
  * and the run before it is still charged.
  *
@@ -922,7 +924,7 @@ function readMagnitude(tokens: MagnitudeToken[]): number | undefined {
     // An exponent nobody can evaluate cannot be charged a size, and `2^n` is
     // left symbolic by Giac. The BASE is a different question: it has already
     // been recorded, so declining here loses nothing.
-    if (exponent.kind !== 'known') return exponent.kind === 'symbolic' ? SYMBOLIC : UNREADABLE;
+    if (exponent.kind !== 'known') return UNREADABLE;
     if (base.kind !== 'known') return base;
     // 1 and 0 stay themselves however they are raised, and reaching the branch
     // below with them reported "too large to count" for the digit 1.
@@ -953,7 +955,7 @@ function readMagnitude(tokens: MagnitudeToken[]): number | undefined {
     // What erased the measurement was denotedDigits reading the ROOT of the
     // parse instead of the worst node in it.
     if (left.kind !== 'known' || right.kind !== 'known') {
-      return left.kind === 'unreadable' || right.kind === 'unreadable' ? UNREADABLE : SYMBOLIC;
+      return UNREADABLE;
     }
     if (left.value !== undefined && right.value !== undefined) {
       const value = exact(left.value, right.value);
@@ -963,17 +965,19 @@ function readMagnitude(tokens: MagnitudeToken[]): number | undefined {
   };
 
   /**
-   * Defensive, and honestly unreachable today — stated that way so nobody
-   * credits it with work it is not doing.
+   * Load-bearing, on a route callers can reach today.
    *
-   * Called directly, this reader overflowed the JS stack at 1,500 nested
-   * parentheses and threw `RangeError` out of a function whose whole contract is
-   * `string | undefined`; a guard that can throw is not a guard, so the recursion
-   * is bounded at the source. But measured afterwards, no ROUTE gets deep input
-   * this far: conditionBoundError refuses at 280 characters and at depth 100
-   * before it measures magnitude, and the system path refuses on expanded
-   * coefficient length. So no test pins this line, and one that appeared to
-   * would be passing on the length check instead.
+   * An earlier version of this comment called it unreachable, on the strength of
+   * the mutation surviving the suite. That was the wrong inference — the suite
+   * had no row for the route, which is not the same as the route not existing.
+   * validateSystemShape hands each equation's RIGHT-HAND SIDE to
+   * implausibleMagnitude with no length and no depth bound in front of it; only
+   * MAX_EXPRESSION_LENGTH gates it, and the coefficient-length refusal runs
+   * downstream of this, not ahead of it. Measured, `[y'=z+(((…1…))), z'=-y]` at
+   * 1,500 and at 4,000 parens: with this bound, a clean refusal naming the
+   * coefficient length; with it replaced by `() => true`, "Maximum call stack
+   * size exceeded" out of a function contracted to return `string | undefined`.
+   * A guard that can throw is not a guard.
    */
   const readDepth = (depth: number): boolean => depth <= MAX_CONDITION_DEPTH;
 
@@ -988,7 +992,7 @@ function readMagnitude(tokens: MagnitudeToken[]): number | undefined {
     }
     if (token.kind === 'name') {
       at += 1;
-      if (!operatorAt('(')) return SYMBOLIC;
+      if (!operatorAt('(')) return UNREADABLE;
       at += 1;
       const args = argumentList(')', depth);
       if (args === undefined) return UNREADABLE;
@@ -1127,10 +1131,13 @@ function readMagnitude(tokens: MagnitudeToken[]): number | undefined {
 
   // Everything, not just a prefix. A run that stops early still gets charged for
   // what was read — `1000!^12 2` leaves a token over, and the 30,812 digits in
-  // front of it are real either way. The `at += 1` is a loop guard, not a second
-  // bound: a token no production consumes (a stray closing bracket) would
-  // otherwise spin here forever, and nothing in the suite distinguishes it from
-  // `break` because reaching it needs input that is already malformed.
+  // front of it are real either way. The `at += 1` is the loop guard, and what
+  // reaches it is ordinary balanced input, not only malformed input: past
+  // MAX_CONDITION_DEPTH the reader declines WITHOUT consuming, so a well-formed
+  // 101-deep expression leaves 101 closers no production will take — measured,
+  // it lands here 101 times. Stepping over them is what lets the parse resume at
+  // a shallower point and keep the measurement the depth cut truncated. Nothing
+  // in the suite tells it from `break`, which stays true.
   while (at < tokens.length) {
     const before = at;
     expression(0);
@@ -1148,8 +1155,9 @@ function readMagnitude(tokens: MagnitudeToken[]): number | undefined {
  * "nine conditions at the ceiling denote 27,000 digits together". A per-segment
  * maximum makes the together bound identical to the per-condition one, so one
  * constant meant "total" on one axis and "largest" on the other; measured, nine
- * conditions denoting 26,127 digits were admitted while nine factorials
- * denoting 23,112 were refused.
+ * conditions denoting 26,109 digits were admitted — nine copies of
+ * `10^1000*10^1000*10^900`, the input the pinning row uses — while nine
+ * factorials denoting 23,112 were refused.
  */
 function denotedDigits(
   text: string
@@ -1169,10 +1177,13 @@ function denotedDigits(
     // `=` and `;` join conditions; a comma does too, but only outside brackets,
     // where it is not separating a call's arguments or a list's members.
     // `=` and `;` are not in the operator set above, so they arrive as
-    // separators already. A comma separates only outside brackets, where it is
-    // not carrying a call's arguments or a list's members.
-    const separates =
-      token.kind === 'separator' || (depth === 0 && token.kind === 'op' && token.text === ',');
+    // separators already. Every separator is depth-gated for the same reason the
+    // comma is: inside a call's argument list it is not joining conditions.
+    // `max(1000!^12, q=1)` splits at that inner `=` otherwise, and a named
+    // argument is ordinary Giac — `subst`, `sum`, `limit` and `integrate` all
+    // take one — so two characters would decide whether the value beside it is
+    // measured.
+    const separates = depth === 0 && (token.kind === 'separator' || token.text === ',');
     if (separates) {
       // The run that ends at an `=` can be the condition's SUBJECT — `y(0)` in
       // `y(0)=1000!^12` — which is charged its one digit for the 0 and pushed a
@@ -1203,10 +1214,10 @@ function denotedDigits(
     // The denominator counts as much as the numerator: `1/1000!` is an exact
     // rational with 2,568 digits under the line, which is the same work.
     const digits = Number.isFinite(log10) ? Math.floor(log10) + 1 : Number.POSITIVE_INFINITY;
-    // Over-charges by at most one digit per run, because a subject like the
-    // `y(0)` left of the `=` reads as the number 0 and is charged its one digit.
-    // Stated rather than hidden: it is bounded by the number of conditions, and
-    // it is on the conservative side of a 3,000-digit budget.
+    // A bare `y(0)` is not charged at all — isBareSubject takes it out above, and
+    // measured, the boundary is exactly 3,000 because of that. What is still
+    // charged is a subject too rich to be one, `y(x)` or `y(1000!^12)`, which is
+    // the point: those are values.
     total += digits;
     // The caller's own characters, not the tokens joined back up: rebuilding
     // `1000!^12 2` as `1000!^122` names a number nobody wrote.
@@ -1246,8 +1257,8 @@ function implausibleMagnitude(raw: string): string | undefined {
   // and `unicodeToAscii` runs downstream of all of them — measured at
   // giac-eval.ts, after this bound has already returned. `1000!\u{2079}\u{2079}`
   // carries no `^` for implausibleMagnitude to find, and reaches Giac as
-  // `1000!^9^9`. Length and depth stay on the caller's own text above, which is
-  // what those two were measured against.
+  // `1000!^9^9`. Length and depth are normalised too, once, in
+  // conditionBoundError — all three bounds read one string.
   // `**` is Giac's own spelling of `^` — measured, `y(0)=10**20` answers
   // 100000000000000000000 — and nothing here modelled it: the `^` scan found no
   // `^`, and the reader read two multiplications, charging `10**100000` six
@@ -1400,8 +1411,9 @@ function implausibleMagnitude(raw: string): string | undefined {
   }
   // Runs after the per-operator scans in this function, not before them. Those
   // scans name the shape they refuse and their wording is what callers read and
-  // what 59 test rows pin — measured by rewriting all seven refusal strings and
-  // counting the failures, not estimated. denotedDigits sees what no single
+  // what about sixty test rows pin — measured by rewriting all seven refusal
+  // strings and counting the failures, and left approximate on purpose because an
+  // exact count drifts the moment a row is added. denotedDigits sees what no single
   // clause can, because it reads the expression rather than scanning for
   // operators. `1000!^12` is a factorial inside the factorial cap raised to
   // an exponent inside the exponent cap, and denotes 30,812 digits — the count
