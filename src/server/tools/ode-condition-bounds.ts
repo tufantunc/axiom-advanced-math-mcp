@@ -494,7 +494,7 @@ function readMagnitude(tokens: MagnitudeToken[]): number | undefined {
 
   const factorialOf = (operand: Magnitude): Magnitude => {
     // An operand Giac WILL evaluate but this cannot read is charged the whole
-    // budget rather than waved through — the rule factorialArguments already
+    // budget rather than waved through — the rule factorialOperands already
     // applies to `abs(100000)!`. A free identifier is the exception, because
     // Giac leaves `n!` alone.
     if (operand.kind === 'unreadable') return known(Number.POSITIVE_INFINITY);
@@ -504,7 +504,7 @@ function readMagnitude(tokens: MagnitudeToken[]): number | undefined {
     const n = Math.ceil(operand.value);
     // Carried on while it stays exact, so a factorial can be another's operand.
     // `factorial(factorial(8))` is the input that reaches this through the
-    // reader; the `(8!)!` spelling never does, because factorialArguments
+    // reader; the `(8!)!` spelling never does, because factorialOperands
     // refuses it first.
     let exact: number | undefined;
     if (n <= 17) {
@@ -519,13 +519,13 @@ function readMagnitude(tokens: MagnitudeToken[]): number | undefined {
     // alone. Anything else this cannot read is charged the whole budget instead
     // of declined, because Giac evaluates it: `10^abs(100000)`,
     // `1000!^max(12,1)`, `2^floor(400000)` and `pow(abs(10),100000)` all trapped
-    // the shared worker while this clause and the `^` scan declined the same node
-    // and so failed together.
+    // the shared worker while this clause and the `^` clause declined the same
+    // node and so failed together.
     //
     // The cost is stated rather than hidden: an exponent that is a call is now
     // refused even where it is small and harmless, so `2^sqrt(2)` is turned away.
     // That is the trade this file makes throughout — a refusal is visible to the
-    // caller and a dead worker is not — and it is the rule the `^` scan has
+    // caller and a dead worker is not — and it is the rule the `^` clause has
     // always used for an exponent it cannot read.
     if (exponent.kind === 'unreadable' || base.kind === 'unreadable') {
       return known(Number.POSITIVE_INFINITY);
@@ -785,7 +785,7 @@ function readMagnitude(tokens: MagnitudeToken[]): number | undefined {
  * What the whole text denotes: a total across its parts, and the largest single
  * part to name in the refusal.
  *
- * The TOTAL, because factorialArguments has always summed and
+ * The TOTAL, because the factorial clause has always summed and
  * conditionsTogetherError bounds the joined command on the strength of that —
  * "nine conditions at the ceiling denote 27,000 digits together". A per-segment
  * maximum makes the together bound identical to the per-condition one, so one
@@ -793,16 +793,15 @@ function readMagnitude(tokens: MagnitudeToken[]): number | undefined {
  * conditions denoting 26,109 digits were admitted — nine copies of
  * `10^1000*10^1000*10^900`, the input the pinning row uses — while nine
  * factorials denoting 23,112 were refused.
+ *
+ * Takes the stripped text and the tokens implausibleMagnitude already made:
+ * one reading is the point of the merge, and re-deriving either here would
+ * put the second reader back that the merge removed.
  */
 function denotedDigits(
-  text: string
+  inner: string,
+  tokens: MagnitudeToken[]
 ): { total: number; worst: { digits: number; source: string } } | undefined {
-  // The joined form conditionsTogetherError builds is `[c1,c2,…]`, and its outer
-  // bracket puts every separating comma at depth 1 where nothing splits on it.
-  // The runs then straddled `=` boundaries, so the subject rule read each
-  // condition's VALUE as the next one's subject and skipped all nine of them.
-  const inner = stripEnclosingBrackets(text.trim());
-  const tokens = tokenizeMagnitude(inner);
   const runs: MagnitudeToken[][] = [[]];
   const subjects = new Set<number>();
   let depth = 0;
@@ -887,6 +886,38 @@ function denotedDigits(
  * not, and this is a bound on observed shapes rather than a proof about
  * magnitude in general.
  *
+ * ONE mechanism for both since the merge: the operator clauses and the reader
+ * at the end share one normalisation, one enclosing-bracket strip and one
+ * token list, so no operator can be one character to a clause and a different
+ * one to the grammar. Away from the junctions below, differential corpora —
+ * hand rows, clause-boundary grids, seeded fuzz, and adversarial review
+ * sweeps an order of magnitude larger — ran identical across the merge. The
+ * junctions, each found by one of those sweeps and each deliberate:
+ *
+ *   - An exponent bracket that never closes is read to the END of the text.
+ *     The scan chopped the last character, which on the untrimmed string it
+ *     read was usually trailing whitespace — but against the stripped,
+ *     trimmed inner string it was a real digit: `^(1001 ` was admitted and
+ *     `10^(50000 ` answered "an exponent of 5000". Truncation making an
+ *     unreadable exponent look readable is the one direction a bound must
+ *     never fail in. And a tail that does not read as a plain signed integer
+ *     is refused outright when it carries a digit run over the ceiling: the
+ *     chop used to do that to `^(1001 x` by accident, and the accident was
+ *     right about the direction even though its arithmetic was luck.
+ *   - `factorial(` directly after a token character now triggers, so
+ *     `2factorial(1000)` is judged like the spaced `2*factorial(1000)` Giac
+ *     reads it as, instead of slipping between the two spellings. The
+ *     left-bound guard this replaces existed for suffix names like
+ *     `myfactorial`, which a name token cannot be. Verdicts here move toward
+ *     refusal only.
+ *   - A `!` stranded at the head of fully-bracketed text (`[!]`) is refused
+ *     by the reader's message rather than "a factorial this cannot bound
+ *     ([)" — the bracket that message named is the one the strip removes.
+ *   - The strip itself shows in two factorial wordings: an unbalanced
+ *     `factorial(` group tail no longer includes the closing bracket the
+ *     strip took, and a postfix `!` reading leftward finds one bracket layer
+ *     fewer. Both sides refuse; only the quoted operand shifts.
+ *
  * A NAMED function that computes a huge value is emphatically not covered, and
  * cannot be by anything shaped like this: measured, `comb(100000,50000)` returns
  * a 30,101-character answer and leaves the worker dead, and `perm(50000,25000)`
@@ -906,6 +937,26 @@ export function implausibleMagnitude(raw: string): string | undefined {
   // scan found no `^`, and the reader read two multiplications, charging
   // `10**100000` six digits for a number with 100,001.
   const text = unicodeToAscii(raw);
+  // ONE reading from here down. The operator clauses and the reader at the end
+  // share this strip and this token list, so a `^` cannot be one character to
+  // a clause and a different one to the grammar, and a `!` cannot end a token
+  // for one of them and sit inside it for the other. They were two mechanisms
+  // that each walked the text on their own — a regex scan for the `^` clauses,
+  // a character scan for the factorial operands, a grammar for the magnitude —
+  // and every escape this file records is a shape where two of those readings
+  // disagreed about a boundary. The clause decisions are carried over —
+  // wording, order, thresholds — except at the three junctions the docblock
+  // names; what moved is their discovery, from each scan's own traversal to
+  // the shared tokens.
+  //
+  // The enclosing-bracket strip is the reader's requirement, applied to the
+  // clauses too: the joined form conditionsTogetherError builds is `[c1,c2,…]`,
+  // and its outer bracket puts every separating comma at depth 1 where nothing
+  // splits on it. What it strips encloses everything by construction, so no
+  // `^`, `!` or `factorial(` can live in it — the clauses see exactly the
+  // triggers the unstripped text carried.
+  const inner = stripEnclosingBrackets(text.trim());
+  const tokens = tokenizeMagnitude(inner);
   // Every `^`, not only the ones whose exponent is a readable literal. Reading a
   // digit run after `^` cannot bound a NESTED exponent: `10^(10^5)` captures "10"
   // and "5" and passed, and it is the same 10^100000 this guard exists to stop —
@@ -927,25 +978,49 @@ export function implausibleMagnitude(raw: string): string | undefined {
   // bracketed group the exponent text stops inside the brackets, so measuring
   // from it lands before the closing one and cannot see what follows the group.
   // That is exactly the bug the `!` clause in this loop had.
-  for (const power of text.matchAll(/\^\s*([([])?/g)) {
-    const at = (power.index ?? 0) + power[0].length;
+  //
+  // The loop runs over the shared tokens rather than a regex over the string,
+  // in token order, which is text order — the first `^` whose clause trips is
+  // the same one the regex found first.
+  for (const token of tokens) {
+    if (token.kind !== 'op' || token.text !== '^') continue;
+    let at = token.at + 1;
+    while (at < inner.length && /\s/.test(inner[at])) at += 1;
+    const opener = inner[at] === '(' || inner[at] === '[' ? inner[at] : undefined;
     let exponent: string;
     let after: number;
-    if (power[1] === undefined) {
-      const sign = /^[+-]?/.exec(text.slice(at))?.[0] ?? '';
-      const run = /^\d*/.exec(text.slice(at + sign.length))?.[0] ?? '';
+    let unclosed = false;
+    if (opener === undefined) {
+      const sign = /^[+-]?/.exec(inner.slice(at))?.[0] ?? '';
+      const run = /^\d*/.exec(inner.slice(at + sign.length))?.[0] ?? '';
       exponent = sign + run;
       after = at + exponent.length;
     } else {
-      const opener = power[1];
       const closer = opener === '(' ? ')' : ']';
+      at += 1;
       let depth = 1;
       let i = at;
-      for (; i < text.length && depth > 0; i += 1) {
-        if (text[i] === opener) depth += 1;
-        else if (text[i] === closer) depth -= 1;
+      for (; i < inner.length && depth > 0; i += 1) {
+        if (inner[i] === opener) depth += 1;
+        else if (inner[i] === closer) depth -= 1;
       }
-      exponent = text.slice(at, i - 1);
+      // When the group closes, the loop leaves `i` one past the closing
+      // bracket, so `i - 1` IS that bracket and the slice stops just before
+      // it. Unbalanced, the loop runs off the end with depth still positive
+      // and the WHOLE TAIL is the exponent — the rule factorialOperands'
+      // group walk states: truncation making an out-of-bounds operand look
+      // in-bounds is the one direction a bound must never fail in. The scan
+      // this replaces chopped the text's last character instead, which the
+      // untrimmed string it read usually turned into trailing whitespace;
+      // against the stripped, trimmed inner string it dropped a real digit —
+      // `10^(50000 ` answered "an exponent of 5000", and `^(1001 ` was
+      // admitted outright.
+      if (depth === 0) {
+        exponent = inner.slice(at, i - 1);
+      } else {
+        unclosed = true;
+        exponent = inner.slice(at);
+      }
       after = i;
     }
     // Signed or not, and by MAGNITUDE, because reading the sign is what made
@@ -988,7 +1063,7 @@ export function implausibleMagnitude(raw: string): string | undefined {
     // The measured cost is `2^3!` — 2^6 — and `10^(20!)`, which answered before
     // this clause. An exponent written as a factorial is not ordinary-number
     // input, and these are the only shapes it takes away.
-    if (/^\s*!/.test(text.slice(after))) {
+    if (/^\s*!/.test(inner.slice(after))) {
       return `an exponent this cannot bound (${excerpt(`${exponent}!`)})`;
     }
     // A NESTED exponent, which reading a digit run cannot bound: `10^(10^5)` was
@@ -1007,13 +1082,30 @@ export function implausibleMagnitude(raw: string): string | undefined {
         return `an exponent this cannot bound (${excerpt(exponent)})`;
       }
     }
+    // The bracket never closed, so the tail is the exponent by default rather
+    // than by syntax, and a tail that does not read as a plain signed integer
+    // is not boundable at all once it carries a digit run over the ceiling:
+    // `^(1001 x` and `^(1001]`. The scan this replaces chopped the tail's last
+    // character, which turned exactly these tails into the readable `1001 `
+    // and refused them by accident — the accident pointed the right way, an
+    // exponent bracket that never closes is not a shape a caller means, and
+    // the digits are not made smaller by the junk behind them. Tails whose
+    // runs are all at or under the ceiling (`^(2`, `^(abc`) still pass here
+    // as they always did.
+    if (
+      unclosed &&
+      !/^\s*[+-]?\d+\s*$/.test(exponent) &&
+      (exponent.match(/\d+/g) ?? []).some((d) => Number(d) > 1_000)
+    ) {
+      return `an exponent this cannot bound (${excerpt(exponent)})`;
+    }
   }
   // Summed, not judged one at a time: what traps is the size of the number the
   // whole condition denotes, and eleven copies of a per-argument maximum reach
   // it just as well as one argument over that maximum.
   let digits = 0;
   let biggest = '';
-  for (const argument of factorialArguments(text)) {
+  for (const argument of factorialOperands(inner, tokens)) {
     const literal = argument.trim();
     // A literal DECIMAL counts too, and is not refused for having a point in
     // it: `y(0)=1.5!` is gamma(2.5) and answers as 1.32934038818, so refusing it
@@ -1050,17 +1142,17 @@ export function implausibleMagnitude(raw: string): string | undefined {
       ? `a factorial of ${excerpt(biggest)}, which denotes a ${digits}-digit number`
       : `factorials denoting ${digits} digits together`;
   }
-  // Runs after the per-operator scans in this function, not before them. Those
-  // scans name the shape they refuse and their wording is what callers read and
-  // what about sixty test rows pin — measured by rewriting all seven refusal
-  // strings and counting the failures, and left approximate on purpose because an
-  // exact count drifts the moment a row is added. denotedDigits sees what no single
-  // clause can, because it reads the expression rather than scanning for
-  // operators. `1000!^12` is a factorial inside the factorial cap raised to
-  // an exponent inside the exponent cap, and denotes 30,812 digits — the count
-  // the tool itself reports, which is the one a reader can reproduce — measured,
-  // it killed the worker through every route while both caps reported it fine.
-  const denoted = denotedDigits(text);
+  // Runs after the operator clauses above, not before them. Those clauses name
+  // the shape they refuse and their wording is what callers read and what about
+  // sixty test rows pin — measured by rewriting all seven refusal strings and
+  // counting the failures, and left approximate on purpose because an exact
+  // count drifts the moment a row is added. denotedDigits sees what no single
+  // clause can, because it reads the expression rather than the operators.
+  // `1000!^12` is a factorial inside the factorial cap raised to an exponent
+  // inside the exponent cap, and denotes 30,812 digits — the count the tool
+  // itself reports, which is the one a reader can reproduce — measured, it
+  // killed the worker through every route while both caps reported it fine.
+  const denoted = denotedDigits(inner, tokens);
   if (denoted !== undefined && denoted.total > MAX_DENOTED_DIGITS) {
     const { digits, source } = denoted.worst;
     if (digits <= MAX_DENOTED_DIGITS) return `values denoting ${denoted.total} digits together`;
@@ -1072,13 +1164,21 @@ export function implausibleMagnitude(raw: string): string | undefined {
 }
 
 /**
- * The operand of every factorial in `text`, as written.
+ * The operand of every factorial in `inner`, as written.
  *
  * Both spellings, in one list, because they are the same operator and giving
  * them different verdicts is this file's most-repeated defect — DERIVATIVE_CALL
  * in ode-system-shape.ts exists because `diff` was listed and `derive` was not.
  * Giac's `fact` is NOT a third spelling: measured, `fact(50000)` comes back
  * unevaluated in eleven characters and the worker survives.
+ *
+ * TRIGGERS come from the shared token list and the operands are still sliced
+ * out of the text, so what is read is what the reader's grammar also sees —
+ * one notion of where each factorial sits, which is the point of the merge.
+ * The named spelling is a `factorial` NAME TOKEN followed by `(`, which makes
+ * the old left-bound guard structural: `myfactorial(50000)` is one name token
+ * and cannot match, where the character scan it replaces had to refuse, at
+ * every index, a match that was only a suffix of a longer name.
  *
  * The postfix operand is read LEFTWARD, and reading only a digit run there is
  * not enough in either direction. `(8!)!` is 40320! and traps, with no digit run
@@ -1114,53 +1214,55 @@ export function implausibleMagnitude(raw: string): string | undefined {
  * unapplied — measured, `1000!!` answers `(402387…)!` in 2,571 characters with
  * the worker alive. MAX_CONDITION_CHARS is what bounds a long chain of them.
  */
-function factorialArguments(text: string): string[] {
+function factorialOperands(inner: string, tokens: MagnitudeToken[]): string[] {
   const operands: string[] = [];
   const isTokenChar = (c: string): boolean => /[A-Za-z0-9_.]/.test(c);
   const OPENER: Record<string, string> = { ')': '(', ']': '[', '}': '{' };
-  for (let i = 0; i < text.length; i += 1) {
-    // Bounded on the left, or the name is only a suffix: the scan tries every
-    // index, so without this `myfactorial(50000)` matched at offset 2 and a
-    // caller's own free symbol was refused as a factorial of 50,000.
-    const named = i > 0 && isTokenChar(text[i - 1]) ? null : /^factorial\s*\(/.exec(text.slice(i));
-    if (named) {
-      const from = i + named[0].length;
-      let depth = 1;
-      let j = from;
-      for (; j < text.length && depth > 0; j += 1) {
-        if (text[j] === '(') depth += 1;
-        else if (text[j] === ')') depth -= 1;
+  for (let t = 0; t < tokens.length; t += 1) {
+    const token = tokens[t];
+    if (token === undefined) continue;
+    if (token.kind === 'name' && token.text === 'factorial') {
+      const open = tokens[t + 1];
+      if (open !== undefined && open.kind === 'op' && open.text === '(') {
+        const from = open.at + 1;
+        let depth = 1;
+        let j = from;
+        for (; j < inner.length && depth > 0; j += 1) {
+          if (inner[j] === '(') depth += 1;
+          else if (inner[j] === ')') depth -= 1;
+        }
+        // When the group closes, the loop leaves `j` one past the closing bracket,
+        // so `j - 1` IS that bracket and the slice stops just before it. Unbalanced,
+        // the loop instead runs off the end with depth still positive and `j - 1`
+        // drops the operand's last character — `factorial(10000` was read as 1000
+        // and passed, and truncation making an out-of-bounds argument look
+        // in-bounds is the one direction a bound must never fail in.
+        //
+        // So the unbalanced case takes the whole tail. The point is only that the
+        // operand is never SHORTENED; the tail is then classified like any other,
+        // which means `factorial(10000` is bounded as the literal 10000 while
+        // `factorial(1000]` is refused as unreadable. Either is fine — neither
+        // understates the operand.
+        operands.push(
+          depth === 0 ? stripEnclosingBrackets(inner.slice(from, j - 1)) : inner.slice(from)
+        );
+        // Falls through INSIDE the group, as the character scan's `i = from - 1`
+        // did: a `!` written within the argument is still a trigger.
+        continue;
       }
-      // When the group closes, the loop leaves `j` one past the closing bracket,
-      // so `j - 1` IS that bracket and the slice stops just before it. Unbalanced,
-      // the loop instead runs off the end with depth still positive and `j - 1`
-      // drops the operand's last character — `factorial(10000` was read as 1000
-      // and passed, and truncation making an out-of-bounds argument look
-      // in-bounds is the one direction a bound must never fail in.
-      //
-      // So the unbalanced case takes the whole tail. The point is only that the
-      // operand is never SHORTENED; the tail is then classified like any other,
-      // which means `factorial(10000` is bounded as the literal 10000 while
-      // `factorial(1000]` is refused as unreadable. Either is fine — neither
-      // understates the operand.
-      operands.push(
-        depth === 0 ? stripEnclosingBrackets(text.slice(from, j - 1)) : text.slice(from)
-      );
-      i = from - 1;
-      continue;
     }
-    if (text[i] !== '!') continue;
-    let end = i - 1;
-    while (end >= 0 && /\s/.test(text[end])) end -= 1;
+    if (token.kind !== 'op' || token.text !== '!') continue;
+    let end = token.at - 1;
+    while (end >= 0 && /\s/.test(inner[end])) end -= 1;
     if (end < 0) continue;
-    const closer = text[end];
+    const closer = inner[end];
     if (OPENER[closer] !== undefined) {
       const opener = OPENER[closer];
       let depth = 0;
       let start = end;
       for (; start >= 0; start -= 1) {
-        if (text[start] === closer) depth += 1;
-        else if (text[start] === opener) {
+        if (inner[start] === closer) depth += 1;
+        else if (inner[start] === opener) {
           depth -= 1;
           if (depth === 0) break;
         }
@@ -1168,16 +1270,16 @@ function factorialArguments(text: string): string[] {
       // An unbalanced closer leaves start at -1; take the whole prefix, which is
       // unreadable as a literal and so refused rather than silently ignored.
       let from = start;
-      while (from > 0 && isTokenChar(text[from - 1])) from -= 1;
-      operands.push(stripEnclosingBrackets(text.slice(Math.max(from, 0), end + 1)));
+      while (from > 0 && isTokenChar(inner[from - 1])) from -= 1;
+      operands.push(stripEnclosingBrackets(inner.slice(Math.max(from, 0), end + 1)));
       continue;
     }
     // One token — a literal, a symbol, or something that is neither and will be
     // refused as unreadable. Which of the three it is is the caller's rule.
-    if (isTokenChar(text[end])) {
+    if (isTokenChar(inner[end])) {
       let start = end;
-      while (start >= 0 && isTokenChar(text[start])) start -= 1;
-      operands.push(text.slice(start + 1, end + 1));
+      while (start >= 0 && isTokenChar(inner[start])) start -= 1;
+      operands.push(inner.slice(start + 1, end + 1));
       continue;
     }
     // A chained `!` is the one operand deliberately skipped, measured harmless

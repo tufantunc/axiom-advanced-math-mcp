@@ -5,6 +5,7 @@ import { hypothesisTestingHandler } from '../src/server/tools/hypothesis-testing
 import { linearRegressionHandler } from '../src/server/tools/linear-regression.js';
 import { numericalMethodsHandler } from '../src/server/tools/numerical-methods.js';
 import { parseOdeSystem, validateSystemShape } from '../src/server/tools/ode-system-shape.js';
+import { conditionBoundError } from '../src/server/tools/ode-condition-bounds.js';
 import { createJsComputeHost } from '../src/server/js-compute/index.js';
 import { probabilityCalcHandler } from '../src/server/tools/probability-calc.js';
 import { plotToSvg } from '../src/server/tools/plot/render.js';
@@ -1602,6 +1603,70 @@ describe('a condition is bounded by what it denotes, not by one operator at a ti
     const r = await computeHandler({ problem: "desolve(y'^2=x, x, y)" });
     expect(r.isError, text(r)).toBe(false);
     expect(text(r)).toMatch(/2\/3\*√x\*x\+c_0/);
+  });
+
+  // The three junction classes the mechanism merge changed on purpose — the
+  // operator clauses and the reader now share one token list — pinned here so
+  // the deliberate part stays deliberate. Each was found by re-running the
+  // merge's differential with adversarial corpora; none is a shape the old
+  // scans refused, and the refuse→admit count across every corpus was zero.
+  //
+  // `factorial(` directly after a token character triggers, so the
+  // juxtaposed spelling is judged like the spaced one Giac reads it as.
+  // The spaced row was always refused at this count; the juxtaposed one
+  // used to slip between the two spellings.
+  it.each([
+    [
+      "desolve(y'=y, y(0)=2factorial(1000)*2factorial(1000), x, y)",
+      /factorials denoting 5136 digits together/,
+    ],
+    [
+      "desolve(y'=y, y(0)=2*factorial(1000)*2*factorial(1000), x, y)",
+      /factorials denoting 5136 digits together/,
+    ],
+  ])('refuses %s at a junction the merge deliberately widened', async (problem, reason) => {
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(reason);
+    expect(text(r)).toMatch(/initial conditions are ordinary numbers/);
+    expect(text(r)).not.toMatch(/memory access|worker exited|RuntimeError|table index/);
+  });
+
+  // The merge's other two junction classes cross the extractor seam too, but
+  // only in specific shapes: an unclosed bracket swallows every argument
+  // AFTER it (the splitter then refuses the shape), while the fallback for a
+  // never-rebalanced paren hands the tail through verbatim when the malformed
+  // condition is the LAST argument — the typo a caller actually makes. A
+  // subject-free `[!]` member reaches the bound the same way, because a
+  // member without `=` is a condition in its own raw text. The rows below
+  // cross that seam end to end, and the unit rows behind them pin the clause
+  // and the count tightly. (The junk-tail spelling `y(0)=^(1001 x` is refused
+  // by the extractor's own argument check before any bound runs, so it is
+  // pinned at the unit level only.)
+  it.each([
+    ["desolve(y'=y, y(0)=^(1001 ", /an exponent of 1001/],
+    ["desolve(y'=y, y(0)=10^(50000 ", /an exponent of 50000/],
+    ["desolve(y'=y, y(0)=10^(50000", /an exponent of 50000/],
+    ["desolve([y'=y, [!]], x, y)", /a value too large to count the digits of \(!\)/],
+  ])('refuses %s across the extractor seam', async (problem, reason) => {
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(reason);
+    expect(text(r)).not.toMatch(/memory access|worker exited|RuntimeError|table index/);
+  });
+
+  it.each([
+    ['y(0)=^(1001 ', /an exponent of 1001/],
+    ['y(0)=10^(50000 ', /an exponent of 50000/],
+    ['y(0)=10^(50000', /an exponent of 50000/],
+    ['y(0)=^(1001 x', /an exponent this cannot bound \(1001 x\)/],
+    ['y(0)=^(1001]', /an exponent this cannot bound \(1001\]\)/],
+    // A `!` stranded at the head of fully-bracketed text is refused by the
+    // reader's message; the bracket the old wording named is the one the
+    // enclosing-strip removes.
+    ['[!]', /a value too large to count the digits of \(!\)/],
+  ])('refuses %s at a junction of the merged reading', (condition, reason) => {
+    expect(conditionBoundError(condition)).toMatch(reason);
   });
 
   // A deliberate false refusal, pinned so that widening the rule is a decision
