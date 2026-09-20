@@ -501,8 +501,8 @@ export function validateSystemShape(
  * Reads and cross-checks the per-function initial conditions.
  *
  * Every function must have a value and every value the same point; the vector
- * text Giac takes is assembled separately, once the vector symbol is known. Every function must be given a value at the same point —
- * a partially specified system has no unique solution to name, and Giac would
+ * text Giac takes is assembled separately, once the vector symbol is known. A
+ * partially specified system has no unique solution to name, and Giac would
  * silently ignore the extra conditions rather than reject them.
  */
 function readConditions(
