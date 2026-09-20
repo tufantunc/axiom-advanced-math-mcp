@@ -14,7 +14,7 @@ import { dirname, resolve } from 'node:path';
  *
  * The import half of the invariant IS here: the closure walk below is the only
  * mechanism that can express "no path to the engine". The oxlint
- * no-restricted-imports rule over the same four files is an editor-time backstop
+ * no-restricted-imports rule over the same five files is an editor-time backstop
  * that fires faster and proves less — see the comment on that test.
  */
 /**
@@ -37,14 +37,19 @@ function orphanedDocblocks(source: string): number[] {
   );
 }
 
-describe('the shape half evaluates nothing', () => {
-  const source = readFileSync('src/server/tools/ode-system-shape.ts', 'utf8');
+describe('the text-only halves evaluate nothing', () => {
+  // BOTH files the split produced: the assertions below are per-module-graph,
+  // not per-file, and a half registered in one list but not this one would be
+  // read here and nowhere else.
+  const source = ['src/server/tools/ode-system-shape.ts', 'src/server/tools/ode-condition-bounds.ts']
+    .map((path) => readFileSync(path, 'utf8'))
+    .join('\n');
   const code = source.replaceAll(/\/\*[\s\S]*?\*\//g, '').replaceAll(/\/\/.*/g, '');
 
   // The compiler is the stronger guard for these two: making validateSystemShape
   // `async` does not build, because its caller reads the result synchronously.
-  // These rows catch the case where a NEW function in this file is async and is
-  // invoked as `void helper()`, which would compile fine.
+  // These rows catch the case where a NEW function in either file is async and
+  // is invoked as `void helper()`, which would compile fine.
   it.each([['async'], ['await']])('contains no %s outside comments', (keyword) => {
     expect(code).not.toMatch(new RegExp(String.raw`\b${keyword}\b`));
   });
@@ -83,6 +88,7 @@ describe('the shape half evaluates nothing', () => {
   // `createRequire(...)`.
   it.each([
     ['src/server/tools/ode-system-shape.ts'],
+    ['src/server/tools/ode-condition-bounds.ts'],
     ['src/server/tools/output-cleanup.ts'],
     ['src/server/tools/unicode-normalize.ts'],
     ['src/server/tools/compute/arg-parsing.ts'],
@@ -145,6 +151,7 @@ describe('the shape half evaluates nothing', () => {
   // slip, so it is checked rather than watched for.
   it.each([
     ['src/server/tools/ode-system-shape.ts'],
+    ['src/server/tools/ode-condition-bounds.ts'],
     ['src/server/tools/ode-system.ts'],
     ['src/server/tools/calculus.ts'],
   ])('orphans no docblock onto another docblock in %s', (path) => {
@@ -173,6 +180,7 @@ describe('the shape half evaluates nothing', () => {
 
   it.each([
     ['src/server/tools/ode-system-shape.ts'],
+    ['src/server/tools/ode-condition-bounds.ts'],
     ['src/server/tools/ode-system.ts'],
     ['src/server/tools/calculus.ts'],
   ])('locates nothing in %s by distance', (path) => {

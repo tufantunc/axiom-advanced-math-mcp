@@ -3,10 +3,9 @@ import {
   parseOdeSystem,
   differentiatedFunction,
   isDerivativeEquation,
-  conditionBoundError,
-  conditionsTogetherError,
   odeMemberConditions,
 } from '../ode-system-shape.js';
+import { conditionBoundError, conditionsTogetherError } from '../ode-condition-bounds.js';
 import { coerceTestData } from '../hypothesis-testing.js';
 import {
   extractFnArgs,

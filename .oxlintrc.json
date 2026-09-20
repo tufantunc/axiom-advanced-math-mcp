@@ -22,6 +22,7 @@
     {
       "files": [
         "src/server/tools/ode-system-shape.ts",
+        "src/server/tools/ode-condition-bounds.ts",
         "src/server/tools/output-cleanup.ts",
         "src/server/tools/unicode-normalize.ts",
         "src/server/tools/compute/arg-parsing.ts"
