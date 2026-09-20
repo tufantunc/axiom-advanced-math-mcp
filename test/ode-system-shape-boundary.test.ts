@@ -37,15 +37,28 @@ function orphanedDocblocks(source: string): number[] {
   );
 }
 
+// The text-only halves the split produced, read whole for the text assertions.
+const TEXT_ONLY = [
+  'src/server/tools/ode-system-shape.ts',
+  'src/server/tools/ode-condition-bounds.ts',
+];
+
+// The closure-walk entries: the text-only halves, their leaf imports, and
+// nothing else. Pinned against .oxlintrc.json and against the expected list
+// spelled out in the sync test below, so no side of the pairing can drift.
+const WALKED = [
+  ...TEXT_ONLY,
+  'src/server/tools/output-cleanup.ts',
+  'src/server/tools/unicode-normalize.ts',
+  'src/server/tools/compute/arg-parsing.ts',
+];
+
 describe('the text-only halves evaluate nothing', () => {
-  // BOTH files the split produced: the assertions below are per-module-graph,
-  // not per-file, and a half registered in one list but not this one would be
-  // read here and nowhere else. Stripped PER FILE and then joined: stripping
-  // the concatenation would let a stray `/*` in one file — inside a string or
-  // regex, which this stripper cannot tell from a comment opener — swallow the
-  // next file's head past the join.
-  const code = ['src/server/tools/ode-system-shape.ts', 'src/server/tools/ode-condition-bounds.ts']
-    .map((path) => readFileSync(path, 'utf8'))
+  // Stripped PER FILE and then joined: stripping the concatenation would let a
+  // stray `/*` in one file — inside a string or regex, which this stripper
+  // cannot tell from a comment opener — swallow the next file's head past the
+  // join.
+  const code = TEXT_ONLY.map((path) => readFileSync(path, 'utf8'))
     .map((text) => text.replaceAll(/\/\*[\s\S]*?\*\//g, '').replaceAll(/\/\/.*/g, ''))
     .join('\n');
 
@@ -89,13 +102,7 @@ describe('the text-only halves evaluate nothing', () => {
   // this comment must not do is claim more than the three regexes below implement:
   // a specifier built by concatenation is NOT covered, and neither is
   // `createRequire(...)`.
-  it.each([
-    ['src/server/tools/ode-system-shape.ts'],
-    ['src/server/tools/ode-condition-bounds.ts'],
-    ['src/server/tools/output-cleanup.ts'],
-    ['src/server/tools/unicode-normalize.ts'],
-    ['src/server/tools/compute/arg-parsing.ts'],
-  ])('reaches the engine from no path out of %s', (entry) => {
+  it.each(WALKED.map((entry) => [entry]))('reaches the engine from no path out of %s', (entry) => {
     const seen = new Set<string>();
     const walk = (file: string) => {
       if (seen.has(file)) return;
@@ -130,6 +137,35 @@ describe('the text-only halves evaluate nothing', () => {
     walk(entry);
     const engine = [...seen].filter((f) => f.includes('/src/server/giac/'));
     expect(engine).toEqual([]);
+  });
+
+  // The walk list and the oxlint override are the same five files maintained
+  // by hand in two different files, which grew in lockstep so far only because
+  // each author happened to edit both. This pin turns the lockstep into a
+  // checked property: the expected set is spelled out HERE, independent of
+  // either side, so adding a guarded file to one list and not the other fails,
+  // and so does removing one from both — widening the guard means widening
+  // this row, consciously. The oxlint override is located by its rule rather
+  // than by index, and there must be exactly one such override, so a future
+  // override that also sets the rule fails loudly instead of shadowing the
+  // compared one. The comparison is ORDERED on purpose: both lists stay
+  // visually diffable in one shared order, and even a semantically benign
+  // reorder remains a visible edit.
+  it('walks exactly the files the oxlint override guards', () => {
+    const matches = JSON.parse(readFileSync('.oxlintrc.json', 'utf8')).overrides.filter(
+      (entry: { rules?: Record<string, unknown> }) =>
+        Object.prototype.hasOwnProperty.call(entry.rules ?? {}, 'no-restricted-imports')
+    );
+    const expected = [
+      'src/server/tools/ode-system-shape.ts',
+      'src/server/tools/ode-condition-bounds.ts',
+      'src/server/tools/output-cleanup.ts',
+      'src/server/tools/unicode-normalize.ts',
+      'src/server/tools/compute/arg-parsing.ts',
+    ];
+    expect(matches, 'overrides setting no-restricted-imports').toHaveLength(1);
+    expect(matches[0]?.files, 'the no-restricted-imports override').toEqual(expected);
+    expect(WALKED, 'the closure-walk entries').toEqual(expected);
   });
 
   // The split invalidated all five comments in the original file that located
