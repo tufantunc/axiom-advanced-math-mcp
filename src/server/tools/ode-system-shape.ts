@@ -36,8 +36,9 @@ import {
  *   - An oxlint no-restricted-imports rule in .oxlintrc.json, which is a DENYLIST
  *     of specifier texts and is therefore not the guarantee. It exists to fail fast,
  *     in the editor, on the imports someone is most likely to reach for. Of the 61
- *     modules under src/server/tools, 30 reach the CAS transitively and the rule
- *     names 5 of them, so 26 are unblocked. The closure walk is what catches those.
+ *     modules under src/server/tools, 30 reach the CAS transitively and the rule's
+ *     patterns name 4 of those 30, so 26 reachers are unblocked. The closure walk
+ *     is what catches those.
  */
 
 /**

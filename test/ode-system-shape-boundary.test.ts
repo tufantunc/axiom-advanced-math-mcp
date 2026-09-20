@@ -40,11 +40,14 @@ function orphanedDocblocks(source: string): number[] {
 describe('the text-only halves evaluate nothing', () => {
   // BOTH files the split produced: the assertions below are per-module-graph,
   // not per-file, and a half registered in one list but not this one would be
-  // read here and nowhere else.
-  const source = ['src/server/tools/ode-system-shape.ts', 'src/server/tools/ode-condition-bounds.ts']
+  // read here and nowhere else. Stripped PER FILE and then joined: stripping
+  // the concatenation would let a stray `/*` in one file — inside a string or
+  // regex, which this stripper cannot tell from a comment opener — swallow the
+  // next file's head past the join.
+  const code = ['src/server/tools/ode-system-shape.ts', 'src/server/tools/ode-condition-bounds.ts']
     .map((path) => readFileSync(path, 'utf8'))
+    .map((text) => text.replaceAll(/\/\*[\s\S]*?\*\//g, '').replaceAll(/\/\/.*/g, ''))
     .join('\n');
-  const code = source.replaceAll(/\/\*[\s\S]*?\*\//g, '').replaceAll(/\/\/.*/g, '');
 
   // The compiler is the stronger guard for these two: making validateSystemShape
   // `async` does not build, because its caller reads the result synchronously.
