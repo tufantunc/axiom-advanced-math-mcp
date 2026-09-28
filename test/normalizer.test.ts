@@ -25,6 +25,19 @@ describe('normalizer — LaTeX/Unicode basics', () => {
     expect(normalize('x³').canonical).toBe('x^3');
   });
 
+  // The grader reads unicodeToAscii's output, so a superscript run is a
+  // grading change: `2¹⁰` scored as 2^(1^0) = 2, and `10⁻³` had no value.
+  it('reads a superscript run as one exponent', () => {
+    expect(normalize('2¹⁰')).toMatchObject({ canonical: '2^10', decimal: 1024 });
+    expect(normalize('10⁻³')).toMatchObject({ canonical: '10^-3', decimal: 0.001 });
+  });
+
+  it('gives a superscript exponent the same canonical form as its LaTeX spelling', () => {
+    expect(normalize('x⁻¹').canonical).toBe(normalize('x^{-1}').canonical);
+    expect(normalize('xⁿ').canonical).toBe(normalize('x^{n}').canonical);
+    expect(normalize('xⁿ⁺¹').canonical).toBe(normalize('x^{n+1}').canonical);
+  });
+
   it('rewrites \\cdot, \\times, ÷', () => {
     expect(normalize('2 \\cdot 3').canonical).toBe('2*3');
     expect(normalize('2 \\times 3').canonical).toBe('2*3');

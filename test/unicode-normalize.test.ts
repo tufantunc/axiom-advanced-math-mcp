@@ -62,19 +62,55 @@ describe('unicodeToAscii', () => {
   // The rest of the Superscripts block was not mapped at all, so each glyph
   // reached Giac as part of an identifier and came back as a confident answer:
   // `simplify(x⁻¹)` answered the free symbol `x⁻`, `simplify(2ⁱ)` answered
-  // `2*i`. A run that is not all digits is parenthesised, because `^` binds
-  // tighter than `+`: `xⁿ⁺¹` as `x^n+1` is a different expression.
+  // `2*i`. A signed integer or a single letter stays bare — the benchmark
+  // grader's own form for `x^{-1}` and `x^{n}` — and anything longer is
+  // bracketed, because `^` binds tighter than `+`: `xⁿ⁺¹` as `x^n+1` is a
+  // different expression.
   it.each([
-    ['x⁻¹', 'x^(-1)'],
-    ['x⁻¹²', 'x^(-12)'],
-    ['xⁿ', 'x^(n)'],
+    ['x⁻¹', 'x^-1'],
+    ['x⁻¹²', 'x^-12'],
+    ['xⁿ', 'x^n'],
+    ['2ⁱ', '2^i'],
     ['xⁿ⁺¹', 'x^(n+1)'],
-    ['2ⁱ', '2^(i)'],
     ['x⁽²⁾', 'x^((2))'],
-    // Meaningless as an exponent — mapped so the engine rejects it, rather
-    // than left for Giac to read as the identifier `x⁼`.
+    // Meaningless as an exponent — mapped so compute rejects it, rather than
+    // Giac reading it as the identifier `x⁼`.
     ['x⁼', 'x^(=)'],
-  ])('reads a mixed superscript run as one parenthesised exponent: %s', (input, expected) => {
+  ])('reads a mixed superscript run as one exponent: %s', (input, expected) => {
+    expect(unicodeToAscii(input)).toBe(expected);
+  });
+
+  // Joined with nothing between them, two letters were one identifier:
+  // `simplify(xⁿⁱ)` answered `x^ni`, a free symbol, as a success. The product
+  // is written out, and so is a digit beside a letter, since `n2` is a name too.
+  it.each([
+    ['xⁿⁱ', 'x^(n*i)'],
+    ['x²ⁿ', 'x^(2*n)'],
+    ['xⁿ²', 'x^(n*2)'],
+  ])('writes the product inside a superscript run: %s', (input, expected) => {
+    expect(unicodeToAscii(input)).toBe(expected);
+  });
+
+  // A bare `^-1` followed by an operand reads the operand into the exponent:
+  // measured, `x^-1y` answers `1/x^y`. Bracketed, the same text is an error.
+  it.each([
+    ['x⁻¹y', 'x^(-1)y'],
+    ['xⁿy', 'x^(n)y'],
+    ['x⁻¹π', 'x^(-1)pi'],
+    ['x⁻¹√2', 'x^(-1)sqrt(2)'],
+    ['x⁻¹+1', 'x^-1+1'],
+  ])('brackets a signed or letter exponent when an operand follows: %s', (input, expected) => {
+    expect(unicodeToAscii(input)).toBe(expected);
+  });
+
+  // After a caret the superscript IS the exponent. Adding a second one made
+  // `x^^2`, which Giac reads as XOR: `simplify(x^²)` answered `bitxor(x,2)`.
+  it.each([
+    ['x^²', 'x^2'],
+    ['x**²', 'x^2'],
+    ['x^⁻¹', 'x^-1'],
+    ['x^²³', 'x^23'],
+  ])('adds no second caret after ^ or **: %s', (input, expected) => {
     expect(unicodeToAscii(input)).toBe(expected);
   });
 

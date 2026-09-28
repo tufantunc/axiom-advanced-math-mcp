@@ -44,12 +44,29 @@ describe('compute end-to-end — superscript runs', () => {
     ['simplify(2²³)', '8388608'],
     ['simplify(x⁻¹)', '1/x'],
     ['simplify(xⁿ⁺¹/xⁿ)', 'x'],
+    // Not `2*i`, which is what the unmapped glyph answered.
+    ['simplify(2ⁱ)', '2^(i)'],
+    // Not the free symbol `x^ni`.
+    ['simplify(xⁿⁱ)', 'x^(i*n)'],
+    // Not `bitxor(x,2)`, which the doubled caret answered.
+    ['simplify(x^²)', 'x^2'],
   ])('%s evaluates the exponent as written', async (problem, expected) => {
     const r = await computeHandler({ problem });
     const text = allText(r);
     expect(r.isError, text).toBe(false);
     expect(text).toMatch(new RegExp(`^Result: ${expected.replace(/[*/^()]/g, '\\$&')}$`, 'm'));
   });
+
+  // Where no reading is right, the answer has to be an error — each of these
+  // came back as a success before, either as a free symbol or, for `x⁻¹y`,
+  // written bare, as `1/x^y`.
+  it.each([['simplify(x⁼)'], ['simplify(x⁻)'], ['simplify(x⁻¹y)']])(
+    '%s is refused rather than answered',
+    async (problem) => {
+      const r = await computeHandler({ problem });
+      expect(r.isError, allText(r)).toBe(true);
+    }
+  );
 });
 
 describe('verify tool — input unicode normalization', () => {
