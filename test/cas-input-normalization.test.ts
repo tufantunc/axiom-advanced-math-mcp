@@ -61,6 +61,9 @@ describe('compute end-to-end — superscript runs', () => {
     ['simplify(3⁻¹ mod 7)', '-2 % 7'],
     ['simplify(2⁻¹ in [1/2,1])', '1'],
     ['simplify(x⁻¹ union y)', '(1/x) union y'],
+    // A range, not `0 .. 1/1000`.
+    ['simplify(10⁻³..1)', '(1/1000) .. 1'],
+    ['integrate(x, x=10⁻³..1)', '999999/2000000'],
   ])('%s evaluates the exponent as written', async (problem, expected) => {
     const r = await computeHandler({ problem });
     const text = allText(r);
@@ -80,6 +83,7 @@ describe('compute end-to-end — superscript runs', () => {
     ['simplify(x⁻¹ y)'],
     ['simplify(x⁻¹θ)'],
     ['simplify(xⁿ⁺¹y)'],
+    ['simplify(x⁻¹𝑦)'],
   ])('%s is refused rather than answered', async (problem) => {
     const r = await computeHandler({ problem });
     expect(r.isError, allText(r)).toBe(true);

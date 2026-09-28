@@ -111,6 +111,8 @@ describe('unicodeToAscii', () => {
     ['x⁻¹ 2', 'x^(-1)* 2'],
     ['2ⁿ3', '2^(n)*3'],
     ['x⁻¹.5', 'x^(-1)*.5'],
+    // Any digit, not ASCII only: bare, `x^-1₂` answered `1/x^₂`.
+    ['x⁻¹₂', 'x^(-1)*₂'],
   ])('writes the product before a non-letter operand: %s', (input, expected) => {
     expect(unicodeToAscii(input)).toBe(expected);
   });
@@ -127,6 +129,9 @@ describe('unicodeToAscii', () => {
     ['xⁿy', 'x^(n)y'],
     ['x⁻¹ y', 'x^(-1) y'],
     ['x⁻¹θ', 'x^(-1)θ'],
+    // Outside the BMP, as pasted math italics are: read one code unit at a
+    // time, `𝑦` is not a letter and `x^-1𝑦` answered `1/x^𝑦`.
+    ['x⁻¹𝑦', 'x^(-1)𝑦'],
     ['xⁿ⁺¹y', 'x^(n+1)y'],
     ['x⁻¹π', 'x^(-1)pi'],
     ['x⁻¹_a', 'x^(-1)_a'],
@@ -145,6 +150,12 @@ describe('unicodeToAscii', () => {
     ['x⁻¹ + 1', 'x^-1 + 1'],
     ['x⁻¹)', 'x^-1)'],
     ['x⁻¹,y', 'x^-1,y'],
+    // `.` is a decimal point only before a digit. Before another `.` it is
+    // Giac's range operator, and a `*` in front of it made `10⁻³..1` answer
+    // `0 .. 1/1000`.
+    ['10⁻³..1', '10^-3..1'],
+    ['xⁿ..1', 'x^n..1'],
+    ['2ⁿ⁺¹..3', '2^(n+1)..3'],
   ])('leaves an atomic exponent bare before an operator: %s', (input, expected) => {
     expect(unicodeToAscii(input)).toBe(expected);
   });
