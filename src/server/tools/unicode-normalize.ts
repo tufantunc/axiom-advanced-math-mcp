@@ -1,30 +1,29 @@
 /**
- * Unicode's Superscripts block (U+2070–U+207F) less its brackets, plus the three
+ * Unicode's Superscripts block (U+2070–U+207F) less `⁼ ⁽ ⁾`, plus the three
  * Latin-1 digits `¹²³`, as the ASCII each stands for.
  *
  * Nearly the whole block, because the measured alternative was worse at each
- * glyph left out: an unmapped superscript reaches Giac as part of an identifier and
- * comes back as a confident answer — `simplify(x⁻¹)` answered the free symbol
- * `x⁻`, `simplify(xⁿ⁺¹)` answered `xⁿ⁺`, and `simplify(2ⁱ)` answered `2*i`. `⁼`
- * has no meaning in an exponent and is mapped anyway, so `x⁼` becomes `x^(=)`,
- * which compute REJECTS rather than reading it as the symbol `x⁼`. Verify does
- * not: it gives `x^(=) = 1` a verdict, exactly as it does the same claim typed
- * in ASCII — a defect of verify's identity path that this spelling reaches but
- * did not create.
+ * glyph left out: an unmapped superscript reaches Giac as part of an
+ * identifier and comes back as a confident answer — `simplify(x⁻¹)` answered
+ * the free symbol `x⁻`, `simplify(xⁿ⁺¹)` answered `xⁿ⁺`, and `simplify(2ⁱ)`
+ * answered `2*i`.
  *
- * Out of scope, deliberately: `⁽ ⁾`, which are three notations rather than one
- * — grouping (`2⁽³⁾`), derivative order (`y⁽³⁾` is y'''), iterate (`f⁽²⁾`) —
- * and every reading measured here answered some input wrongly as a verified
- * success: as grouping, `desolve(y⁽³⁾=0, y)` answered `[0]`; as a derivative,
- * `simplify((a+b)⁽²⁾)` answered 0 and `desolve(y⁽¹⁾³=x, y)` `[x^(1/3)]`; left
- * as typed, `integrate(x⁽ⁿ⁾, x)` answered `x⁽ⁿ⁾*x`. Unmapped, they end a run
- * and reach Giac as they did on main, and measured, each of those inputs then
- * answers as main does: an error, or an answer that shows the glyph
- * (`[(y⁽^⁾)^4]`) rather than a clean-looking wrong one. Also modifier letters
- * outside this block (`ˣ` U+02E3, `ᵃ` U+1D43 and the rest), an open-ended
- * alphabet with no block boundary to stop at — `eˣ` still reaches Giac as an identifier and still answers `eˣ`; and
- * subscripts, since `x₁` reads as a variable named `x₁`, which is a meaning
- * rather than an accident.
+ * Out of scope, deliberately: `⁼`, which in an exponent can only spell one of
+ * Giac's operators — `⁼⁼` is `==`, a leading `⁼` is `=nop` — and did: mapped,
+ * `x⁼² = x²` and `2⁼¹¹ = 2048` verified. And `⁽ ⁾`, which are three notations
+ * rather than one — grouping (`2⁽³⁾`), derivative order (`y⁽³⁾` is y'''),
+ * iterate (`f⁽²⁾`) — and every reading measured here answered some input
+ * wrongly as a verified success: as grouping, `desolve(y⁽³⁾=0, y)` answered
+ * `[0]`; as a derivative, `simplify((a+b)⁽²⁾)` answered 0 and
+ * `desolve(y⁽¹⁾³=x, y)` `[x^(1/3)]`; left as typed, `integrate(x⁽ⁿ⁾, x)`
+ * answered `x⁽ⁿ⁾*x`.
+ * Unmapped, they end a run and reach Giac as they did on main, and measured,
+ * each of those inputs then answers as main does: an error, or an answer that
+ * shows the glyph (`[(y⁽^⁾)^4]`) rather than a clean-looking wrong one. Also
+ * modifier letters outside this block (`ˣ` U+02E3, `ᵃ` U+1D43 and the rest), an
+ * open-ended alphabet with no block boundary to stop at — `eˣ` still reaches
+ * Giac as an identifier and still answers `eˣ`; and subscripts, since `x₁`
+ * reads as a variable named `x₁`, which is a meaning rather than an accident.
  */
 const SUPERSCRIPT: Readonly<Record<string, string>> = {
   '⁰': '0',
@@ -39,7 +38,6 @@ const SUPERSCRIPT: Readonly<Record<string, string>> = {
   '⁹': '9',
   '⁺': '+',
   '⁻': '-',
-  '⁼': '=',
   ⁱ: 'i',
   ⁿ: 'n',
 };
@@ -88,7 +86,7 @@ function asOnMain(run: string): string {
  *     `2^(-1)*(y+1)` answers `(y+1)/2`. None of them can begin a word. The
  *     exception is a bracket after a NAME, where the run gets main's
  *     reading (asOnMain).
- *   - An exponent ending in a sign gets main's reading too — which leaves
+ *   - A run that is not one term gets main's reading too — which leaves
  *     one-sided limit notation (`0⁺`) as main read it, `0*⁺`.
  *   - A letter gets brackets and NO product, since a word may be an operand or
  *     one of Giac's word operators, and a `*` before an operator answered as a
@@ -128,9 +126,12 @@ function superscriptExponent(run: string, at: number, text: string): string {
     .replaceAll(/(?<=[a-z])(?=[a-z\d])|(?<=\d)(?=[a-z])/g, '*');
   const caret = text[at - 1] === '^' || text.slice(at - 2, at) === '**' ? '' : '^';
   if (/^\d+$/.test(exponent)) return caret + exponent;
-  // Ending in a sign, it has no operand to end on. Mapped, `^(+)` is `undef`
-  // to Giac and `(f^(+))(x)` is `undef(x)`, so `(f⁺)(x) = (f⁻)(x)` verified.
-  if (/[-+]$/.test(exponent)) return asOnMain(run);
+  // Only a TERM becomes one exponent: a sign, then operands joined by single
+  // signs. Any other join spells something else to Giac — ending in a sign,
+  // `^(+)` is `undef`, and as `(f^(+))(x)` a function head that let
+  // `(f⁺)(x) = (f⁻)(x)` verify; doubled, `⁺⁺ⁿ` is the increment `++n`. An
+  // allow-list, because the deny-lists this replaced were each one shape short.
+  if (!/^[-+]?[a-z\d*]+(?:[-+][a-z\d*]+)*$/.test(exponent)) return asOnMain(run);
   const rest = text.slice(at + run.length);
   // `.` only as a decimal point: before another `.` it is Giac's range
   // operator, and a `*` there made `10⁻³..1` answer `0 .. 1/1000`. `√` too,

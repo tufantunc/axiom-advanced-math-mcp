@@ -72,9 +72,7 @@ describe('unicodeToAscii', () => {
     ['xⁿ', 'x^n'],
     ['2ⁱ', '2^i'],
     ['xⁿ⁺¹', 'x^(n+1)'],
-    // Meaningless as an exponent — mapped so compute rejects it, rather than
-    // Giac reading it as the identifier `x⁼`.
-    ['x⁼', 'x^(=)'],
+    ['x²ⁿ⁻¹', 'x^(2*n-1)'],
   ])('reads a mixed superscript run as one exponent: %s', (input, expected) => {
     expect(unicodeToAscii(input)).toBe(expected);
   });
@@ -151,6 +149,22 @@ describe('unicodeToAscii', () => {
     ['𝑓⁻¹(x)', '𝑓⁻^1(x)'],
     ['xⁿ⁺¹²(y)', 'xⁿ⁺^1^2(y)'],
   ])('reads a run between a name and a bracket as main did: %s', (input, expected) => {
+    expect(unicodeToAscii(input)).toBe(expected);
+  });
+
+  // Only a well-formed term becomes one exponent: a sign, then operands joined
+  // by single signs. Joined any other way, the glyphs spell Giac OPERATORS —
+  // `⁼⁼` is `==`, a leading `⁼` is `=nop`, `⁺⁺ⁿ` is `++n` — and `x⁼² = x²`,
+  // `(f¹⁼⁼)(x) = (g¹⁼⁼)(x)` and `(f⁺⁺ⁿ)(x) = (g⁺⁺ⁿ)(x)` verified. `⁼` itself
+  // is not mapped at all: in an exponent it can only be one of those.
+  it.each([
+    ['x⁼', 'x⁼'],
+    ['x⁼²', 'x⁼^2'],
+    ['x¹⁼⁼', 'x^1⁼⁼'],
+    ['x⁺⁺ⁿ', 'x⁺⁺ⁿ'],
+    ['x⁻⁻¹', 'x⁻⁻^1'],
+    ['xⁿ⁺⁻¹', 'xⁿ⁺⁻^1'],
+  ])('reads a run that is no single term as main did: %s', (input, expected) => {
     expect(unicodeToAscii(input)).toBe(expected);
   });
 

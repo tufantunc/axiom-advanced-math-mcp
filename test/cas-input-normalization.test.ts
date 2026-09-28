@@ -73,10 +73,9 @@ describe('compute end-to-end — superscript runs', () => {
   });
 
   // Where this cannot tell a reading from a wrong one, the answer has to be an
-  // error. `x⁼` came back as a free symbol; a letter after the run is either a
-  // factor or an operator, and Giac refuses the factor.
+  // error: a letter after the run is either a factor or an operator, and Giac
+  // refuses the factor.
   it.each([
-    ['simplify(x⁼)'],
     ['simplify(x⁻¹y)'],
     ['simplify(x⁻¹ y)'],
     ['simplify(x⁻¹θ)'],
@@ -105,10 +104,12 @@ describe('compute end-to-end — inverse-function notation', () => {
     ['simplify(f⁻¹(x) + sin(x)^2 + cos(x)^2 - 1 + tan(x)*cos(x) - sin(x))', 'x/f'],
     ['simplify(f10⁻¹(x))', 'x/f10'],
     ['simplify((f⁺)(x) - (f⁻)(x))', '0'],
+    ['simplify(x⁼⁼)', 'x'],
+    ['simplify(2⁼¹¹)', '2048'],
   ])('%s is not answered as %s', async (problem, wrong) => {
     const text = allText(await computeHandler({ problem }));
     expect(text).not.toMatch(new RegExp(`^Result: ${wrong.replace('/', '\\/')}$`, 'm'));
-    expect(text).toMatch(/^(Result: .*(⁻|undef)|Error: )/m);
+    expect(text).toMatch(/^(Result: .*([⁰¹²³⁴-⁹⁺⁻⁼ⁱⁿ]|undef)|Error: )/mu);
   });
 });
 
@@ -125,6 +126,13 @@ describe('verify tool — input unicode normalization', () => {
     ['(f⁺)(x) = (f⁻)(x)'],
     ['(x⁻)(y) = (z⁻)(y)'],
     ['(fⁿ⁻)(x) = (gⁿ⁺)(x)'],
+    // Joined, these glyphs spell Giac operators: `==`, `=nop`, `++`, `--`.
+    ['x⁼⁼ = x'],
+    ['x⁼² = x²'],
+    ['2⁼¹¹ = 2048'],
+    ['(f¹⁼⁼)(x) = (g¹⁼⁼)(x)'],
+    ['(f⁺⁺ⁿ)(x) = (g⁺⁺ⁿ)(x)'],
+    ['(f⁻⁻ⁿ)(x) = (g⁻⁻ⁿ)(x)'],
   ])('does not verify %s', async (claim) => {
     const text = allText(await verifyHandler({ claim }));
     expect(text).not.toContain('Verified: TRUE');
