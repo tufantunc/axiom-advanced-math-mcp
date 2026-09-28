@@ -111,6 +111,10 @@ describe('compute end-to-end — ambiguous superscripts are refused', () => {
     ['simplify((f⁺)(x) - (f⁻)(x))', '⁺'],
     ['simplify(x⁻)', '⁻'],
     ['limit(1/x, x, 0⁻)', '⁻'],
+    // Two runs split only by spaces, and digits printed into a run's exponent.
+    ['simplify(x⁻¹ ⁿ)', '⁻¹'],
+    ['simplify(x² ⁻¹(z))', '²'],
+    ['simplify(x²12 ⁻¹(z))', '⁻¹'],
     // A name of any length: bounded to 64, a longer one read as no name.
     [`simplify(x⁻¹ ${'a'.repeat(70)}(x))`, '⁻¹'],
   ])('%s is refused, naming %s', async (problem, run) => {
@@ -181,6 +185,9 @@ describe('verify tool — input unicode normalization', () => {
     // Two runs split by a space: each of these verified.
     ['x⁻¹ ⁿ = 1/x', '⁻¹'],
     ['x² ⁻¹(z) = sqrt(x)*z', '²'],
+    ['x²  ⁻¹(z) = sqrt(x)*z', '²'],
+    ['x⁻¹\tⁿ = 1/x', '⁻¹'],
+    ['x²12  ⁻¹(z) = z*x^(1/212)', '⁻¹'],
     // Names longer than any window: each verified while one bounded the look.
     [`x⁻¹ ${'a'.repeat(70)}(x) = x⁻¹ ${'b'.repeat(70)}(x)`, '⁻¹'],
     [`f${'1'.repeat(70)}⁻¹(x) = x/f${'1'.repeat(70)}`, '⁻¹'],

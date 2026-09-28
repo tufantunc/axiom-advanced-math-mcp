@@ -400,6 +400,11 @@ describe('ambiguousSuperscript', () => {
     ['xⁿ ⁱ(y)', 'ⁿ'],
     ['x² ⁻¹(z)', '²'],
     ['x² ³', '²'],
+    // Any whitespace, and any amount of it.
+    ['x⁻¹  ⁿ', '⁻¹'],
+    ['x⁻¹\tⁿ', '⁻¹'],
+    ['f  ⁻¹(x)', '⁻¹'],
+    ['x²12  ⁻¹(z)', '⁻¹'],
   ])('names the run in %s', (input, run) => {
     expect(ambiguousSuperscript(input)).toBe(run);
   });

@@ -162,7 +162,8 @@ function perGlyphPowers(run: string, afterCaret: boolean): string {
  *      `x² ⁻¹(z)` z·√x, and both verified. Per glyph, an all-digit pair
  *      still reads as it always did (`x² ³` is `x^2 ^3`); only the tools
  *      refuse it.
- *   1. All digits: bare, whatever follows, so `x²` stays `x^2` byte for byte.
+ *   1. All digits: bare, whatever operand follows, so `x²` stays `x^2` byte
+ *      for byte.
  *      That keeps a known hazard: `x²y` answers `(x^y)^2`.
  *   2. No reading, when the run is not one term — a sign, then operands joined
  *      by single signs — or has a letter then a digit. Any other join spells
@@ -181,7 +182,8 @@ function perGlyphPowers(run: string, afterCaret: boolean): string {
  *          `x^(-1) sin(x)` is `undef(x)` inside a claim, and
  *          `x⁻¹ sin(x) = x⁻¹ cos(x)` verified; glyph by glyph,
  *          `limit(x⁻¹ sin(2*x), x, 0)` answered 1. A word operator before a
- *          bracket (`3⁻¹ mod (7)`) counts as a name.
+ *          bracket (`3⁻¹ mod (7)`) counts as a name, and so do digits printed
+ *          into an earlier run's exponent (`x²12 ⁻¹(z)`; see digitsAfterRun).
  *        - A digit, a bracket, a decimal point or `√`: the product, since none
  *          can begin a word. `2^(-1)*(y+1)` answers `(y+1)/2`. `.` counts only
  *          before a digit: `..` is Giac's range, and a `*` before it made
