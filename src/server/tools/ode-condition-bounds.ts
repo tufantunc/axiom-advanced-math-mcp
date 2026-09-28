@@ -860,7 +860,7 @@ function denotedDigits(
     // The text as measured, sliced rather than rebuilt from the tokens:
     // rebuilding `1000!^12 2` as `1000!^122` names a number nobody wrote. Note
     // "as measured", not "as typed" — this string has been through
-    // unicodeToAscii and the `**` rewrite, so `1000!²²²` is named `1000!^2^2^2`.
+    // unicodeToAscii and the `**` rewrite, so `1000!²²²` is named `1000!^222`.
     const source = inner.slice(first.at, last.at + last.text.length);
     if (worst === undefined || digits > worst.digits) worst = { digits, source };
   }
@@ -929,7 +929,7 @@ export function implausibleMagnitude(raw: string): string | undefined {
   // and `unicodeToAscii` runs downstream of all of them — measured at
   // giac-eval.ts, after this bound has already returned. `1000!\u{2079}\u{2079}`
   // carries no `^` for implausibleMagnitude to find, and reaches Giac as
-  // `1000!^9^9`. Length and depth are normalised too, once, in
+  // `1000!^99`. Length and depth are normalised too, once, in
   // conditionBoundError, and `**` is rewritten inside unicodeToAscii rather than
   // here — so all three bounds really do read one string.
   // `**` is Giac's own spelling of `^`, and unicodeToAscii rewrites it — see
