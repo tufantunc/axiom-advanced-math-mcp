@@ -34,7 +34,30 @@ describe('compute end-to-end — input unicode normalization', () => {
   });
 });
 
+// Through the real engine, because the defect was in what Giac SAW: a unit
+// test of the string cannot show that `^` is right-associative there, which is
+// what turned `10⁸⁰` into 10 rather than into an error.
+describe('compute end-to-end — superscript runs', () => {
+  it.each([
+    ['simplify(10⁸⁰)', `1${'0'.repeat(80)}`],
+    // 2^23, not 2^(2^3) = 256 (what it answered) nor (2^2)^3 = 64.
+    ['simplify(2²³)', '8388608'],
+    ['simplify(x⁻¹)', '1/x'],
+    ['simplify(xⁿ⁺¹/xⁿ)', 'x'],
+  ])('%s evaluates the exponent as written', async (problem, expected) => {
+    const r = await computeHandler({ problem });
+    const text = allText(r);
+    expect(r.isError, text).toBe(false);
+    expect(text).toMatch(new RegExp(`^Result: ${expected.replace(/[*/^()]/g, '\\$&')}$`, 'm'));
+  });
+});
+
 describe('verify tool — input unicode normalization', () => {
+  it('reads a multi-digit superscript as one exponent', async () => {
+    const r = await verifyHandler({ claim: '2²³ = 8388608' });
+    expect(allText(r)).toContain('Verified: TRUE ✓');
+  });
+
   it('verifies an identity written with unicode glyphs', async () => {
     const r = await verifyHandler({ claim: 'x² = x·x' });
     expect(allText(r)).toContain('Verified: TRUE ✓');
