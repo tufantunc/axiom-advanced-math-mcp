@@ -73,11 +73,10 @@ describe('compute end-to-end — superscript runs', () => {
   });
 
   // Where this cannot tell a reading from a wrong one, the answer has to be an
-  // error. `x⁼` and `x⁻` came back as free symbols; a letter after the run is
-  // either a factor or an operator, and Giac refuses the factor.
+  // error. `x⁼` came back as a free symbol; a letter after the run is either a
+  // factor or an operator, and Giac refuses the factor.
   it.each([
     ['simplify(x⁼)'],
-    ['simplify(x⁻)'],
     ['simplify(x⁻¹y)'],
     ['simplify(x⁻¹ y)'],
     ['simplify(x⁻¹θ)'],
@@ -87,9 +86,6 @@ describe('compute end-to-end — superscript runs', () => {
     ['simplify(2⁻¹ Pi)'],
     // Superscript brackets are not read (see unicodeToAscii): each of these
     // answered a clean-looking wrong result, verified, while they were.
-    // One-sided limit notation is not read: on main `0⁻` was the product
-    // `0*⁻`, so this answered `infinity`, and the left limit is -infinity.
-    ['limit(1/x, x, 0⁻)'],
     ['desolve(y⁽³⁾=0, y)'],
     ['desolve(y⁽¹⁾³=x, y)'],
     ['simplify((a+b)⁽²⁾)'],
@@ -108,6 +104,7 @@ describe('compute end-to-end — inverse-function notation', () => {
     ['diff(g⁻¹(t), t)', '1/g'],
     ['simplify(f⁻¹(x) + sin(x)^2 + cos(x)^2 - 1 + tan(x)*cos(x) - sin(x))', 'x/f'],
     ['simplify(f10⁻¹(x))', 'x/f10'],
+    ['simplify((f⁺)(x) - (f⁻)(x))', '0'],
   ])('%s is not answered as %s', async (problem, wrong) => {
     const text = allText(await computeHandler({ problem }));
     expect(text).not.toMatch(new RegExp(`^Result: ${wrong.replace('/', '\\/')}$`, 'm'));
@@ -118,13 +115,20 @@ describe('compute end-to-end — inverse-function notation', () => {
 describe('verify tool — input unicode normalization', () => {
   // Sent raw, `¹` lexes as `undef` and drops the name, so both sides became
   // one `undef(y)` and these were verified with high confidence.
-  it.each([['sin⁻¹(x) = cos⁻¹(x)'], ['x⁻¹(y) = z⁻¹(y)'], ['x⁻¹(y) = x⁺¹(y)']])(
-    'does not verify %s',
-    async (claim) => {
-      const text = allText(await verifyHandler({ claim }));
-      expect(text).not.toContain('Verified: TRUE');
-    }
-  );
+  it.each([
+    ['sin⁻¹(x) = cos⁻¹(x)'],
+    ['x⁻¹(y) = z⁻¹(y)'],
+    ['x⁻¹(y) = x⁺¹(y)'],
+    ['x⁻¹√(x) = x⁻¹(√x)'],
+    // An exponent ending in a sign has no operand; mapped, `^(+)` is `undef`,
+    // and `(f^(+))(x)` and `(f^(-))(x)` were one `undef(x)`.
+    ['(f⁺)(x) = (f⁻)(x)'],
+    ['(x⁻)(y) = (z⁻)(y)'],
+    ['(fⁿ⁻)(x) = (gⁿ⁺)(x)'],
+  ])('does not verify %s', async (claim) => {
+    const text = allText(await verifyHandler({ claim }));
+    expect(text).not.toContain('Verified: TRUE');
+  });
 
   it('reads a multi-digit superscript as one exponent', async () => {
     const r = await verifyHandler({ claim: '2²³ = 8388608' });

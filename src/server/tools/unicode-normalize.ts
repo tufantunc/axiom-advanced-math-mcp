@@ -60,6 +60,18 @@ export function isAtomicExponent(token: string): boolean {
 }
 
 /**
+ * Main's reading of a run, for the shapes where no reading of this function's
+ * can be stood behind: each digit glyph as its own `^d`, every other glyph as
+ * typed. Not the raw run — Giac lexes a raw `¹` as `undef`, which drops the
+ * name it follows — and not a guess.
+ */
+function asOnMain(run: string): string {
+  return Array.from(run, (glyph) =>
+    /\d/.test(SUPERSCRIPT[glyph]) ? `^${SUPERSCRIPT[glyph]}` : glyph
+  ).join('');
+}
+
+/**
  * The ASCII for one superscript run found at `at` in `text`: ONE exponent, since
  * replaced a glyph at a time `10⁸⁰` became `10^8^0`, which Giac reads
  * right-associatively as 10^(8^0) — so `simplify(10⁸⁰)` answered 10, as a
@@ -74,10 +86,10 @@ export function isAtomicExponent(token: string): boolean {
  * juxtaposition. How it is written depends on what follows:
  *   - A digit, a bracket, a decimal point or `√` gets the product:
  *     `2^(-1)*(y+1)` answers `(y+1)/2`. None of them can begin a word. The
- *     exception is a bracket after a NAME, where the run is left as typed.
- *     One-sided limit notation (`0⁺`, `0⁻`) is not read either: `0^(+)` is
- *     refused, where main read `0⁻` as the product `0*⁻` and answered
- *     `limit(1/x, x, 0⁻)` as infinity.
+ *     exception is a bracket after a NAME, where the run gets main's
+ *     reading (asOnMain).
+ *   - An exponent ending in a sign gets main's reading too — which leaves
+ *     one-sided limit notation (`0⁺`) as main read it, `0*⁺`.
  *   - A letter gets brackets and NO product, since a word may be an operand or
  *     one of Giac's word operators, and a `*` before an operator answered as a
  *     success — `3⁻¹ mod 7` gave `undef % 7`, `2⁻¹ in [1/2,1]` gave 0, and a
@@ -116,6 +128,9 @@ function superscriptExponent(run: string, at: number, text: string): string {
     .replaceAll(/(?<=[a-z])(?=[a-z\d])|(?<=\d)(?=[a-z])/g, '*');
   const caret = text[at - 1] === '^' || text.slice(at - 2, at) === '**' ? '' : '^';
   if (/^\d+$/.test(exponent)) return caret + exponent;
+  // Ending in a sign, it has no operand to end on. Mapped, `^(+)` is `undef`
+  // to Giac and `(f^(+))(x)` is `undef(x)`, so `(f⁺)(x) = (f⁻)(x)` verified.
+  if (/[-+]$/.test(exponent)) return asOnMain(run);
   const rest = text.slice(at + run.length);
   // `.` only as a decimal point: before another `.` it is Giac's range
   // operator, and a `*` there made `10⁻³..1` answer `0 .. 1/1000`. `√` too,
@@ -131,9 +146,7 @@ function superscriptExponent(run: string, at: number, text: string): string {
     // code units back is further than any name.
     const before = text.slice(Math.max(0, at - 64), at);
     if (/^\s*\(/u.test(rest) && /[\p{L}_][\p{L}\p{N}_]*$/u.test(before)) {
-      return Array.from(run, (glyph) =>
-        /\d/.test(SUPERSCRIPT[glyph]) ? `^${SUPERSCRIPT[glyph]}` : glyph
-      ).join('');
+      return asOnMain(run);
     }
     return `${caret}(${exponent})*`;
   }

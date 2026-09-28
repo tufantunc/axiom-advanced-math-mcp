@@ -116,6 +116,9 @@ describe('unicodeToAscii', () => {
     ['(x+1)⁻¹(x-1)', '(x+1)^(-1)*(x-1)'],
     ['2⁻¹ (y+1)', '2^(-1)* (y+1)'],
     ['x⁻¹√2', 'x^(-1)*sqrt(2)'],
+    // A bracket LATER is not a bracket next: these keep the product.
+    ['x⁻¹√(x+1)', 'x^(-1)*sqrt(x+1)'],
+    ['x⁻¹2(y)', 'x^(-1)*2(y)'],
     // A digit, bare, would extend the exponent: `x^-12` is not x⁻¹·2.
     ['x⁻¹2', 'x^(-1)*2'],
     ['x⁻¹ 2', 'x^(-1)* 2'],
@@ -148,6 +151,21 @@ describe('unicodeToAscii', () => {
     ['𝑓⁻¹(x)', '𝑓⁻^1(x)'],
     ['xⁿ⁺¹²(y)', 'xⁿ⁺^1^2(y)'],
   ])('reads a run between a name and a bracket as main did: %s', (input, expected) => {
+    expect(unicodeToAscii(input)).toBe(expected);
+  });
+
+  // An exponent that ENDS in a sign has no operand to end on. Mapped, `^(+)`
+  // is `undef` to Giac, and as a function head `undef(x)` — so
+  // `(f⁺)(x) = (f⁻)(x)` verified. Such a run gets main's reading instead.
+  it.each([
+    ['f⁺', 'f⁺'],
+    ['x⁻', 'x⁻'],
+    ['0⁺', '0⁺'],
+    ['fⁿ⁻', 'fⁿ⁻'],
+    ['e⁻ᵗ', 'e⁻ᵗ'],
+    ['x²⁻', 'x^2⁻'],
+    ['(f⁺)(x)', '(f⁺)(x)'],
+  ])('reads a run ending in a sign as main did: %s', (input, expected) => {
     expect(unicodeToAscii(input)).toBe(expected);
   });
 
