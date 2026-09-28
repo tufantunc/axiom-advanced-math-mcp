@@ -203,8 +203,9 @@ claim and it is **false**.
 
 `2` is a mathematical verdict, so a claim that never got checked does not use
 it: one that fails to parse, that the CAS cannot evaluate, or that has a
-superscript with more than one reading, exits `1` with nothing on stdout. `axiom-math verify '...' && ...` therefore never reads a
-syntax error as a disproof.
+superscript with more than one reading, exits `1` with nothing on stdout.
+`axiom-math verify '...' && ...` therefore never reads a syntax error as a
+disproof.
 
 A ready-to-use agent skill is in [skills/axiom-math/SKILL.md](skills/axiom-math/SKILL.md).
 

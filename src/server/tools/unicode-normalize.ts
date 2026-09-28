@@ -59,29 +59,42 @@ const SUPERSCRIPT_RUN = new RegExp(`[${SUPERSCRIPT_GLYPHS}]+`, 'gu');
  * normalising 8 KB take a third of a second, and a window bounding that scan
  * read a longer name as no name — and verified what it should have refused.
  */
-const NAME_CHAR = String.raw`(?![${SUPERSCRIPT_GLYPHS}])[\p{L}\p{N}_]`;
+const NAME_CHAR = String.raw`(?:(?![${SUPERSCRIPT_GLYPHS}])[\p{L}\p{N}_])`;
+/**
+ * What a name starts with, and needs somewhere: a letter or `_`. Digits alone
+ * are a number.
+ */
+const NAME_START = String.raw`(?:(?![${SUPERSCRIPT_GLYPHS}])[\p{L}_])`;
 const NAME_CHAR_ONE = new RegExp(`^${NAME_CHAR}$`, 'u');
-const NAME_CALL_AFTER = new RegExp(`^\\s*[\\p{L}_]${NAME_CHAR}*\\s*\\(`, 'u');
+const NAME_START_ONE = new RegExp(`^${NAME_START}$`, 'u');
+// Grouped, so the superscript exclusion holds for every character the `*`
+// repeats: ungrouped it held for the first alone, `pi²(` read as a name
+// where the raw `π²(` did not, and the refusal and the normaliser parted.
+const NAME_CALL_AFTER = new RegExp(`^\\s*${NAME_START}${NAME_CHAR}*\\s*\\(`, 'u');
+const NAME_AFTER = new RegExp(`^\\s*${NAME_START}`, 'u');
 
 /**
  * Whether the text before `at` ends in a name, past any spaces: a run of name
  * characters with a letter or `_` among them — `12a` included, which Giac
- * reads as 12*a. Scanned backwards, since a `$`-anchored pattern would retry
- * from every earlier position; the scan stops at the previous run.
+ * reads as 12*a. Or a run of digits straight after another run: those print
+ * into its exponent (`x²12` is `x^212`), so they are no base of their own.
+ * Scanned backwards, since a `$`-anchored pattern would retry from every
+ * earlier position; the scan stops at the previous run.
  */
-function endsInName(text: string, at: number): boolean {
+function endsInName(at: number, text: string): boolean {
   let i = at;
   while (i > 0 && /\s/.test(text[i - 1])) i--;
+  const end = i;
   let letter = false;
   while (i > 0) {
     const low = text.charCodeAt(i - 1);
     const width = low >= 0xdc00 && low <= 0xdfff && i >= 2 ? 2 : 1;
     const glyph = text.slice(i - width, i);
     if (!NAME_CHAR_ONE.test(glyph)) break;
-    letter ||= /[\p{L}_]/u.test(glyph);
+    letter ||= NAME_START_ONE.test(glyph);
     i -= width;
   }
-  return letter;
+  return letter || (i < end && i > 0 && text[i - 1] in SUPERSCRIPT);
 }
 
 /**
@@ -177,11 +190,11 @@ function readRun(run: string, at: number, text: string, afterCaret: boolean): st
   }
   const exponent = glyphs.replaceAll(/(?<=[a-z\d])(?=[a-z])/g, '*');
   const rest = text.slice(at + run.length);
-  if (/^\s*\(/u.test(rest) ? endsInName(text, at) : NAME_CALL_AFTER.test(rest)) {
+  if (/^\s*\(/u.test(rest) ? endsInName(at, text) : NAME_CALL_AFTER.test(rest)) {
     return undefined;
   }
   if (/^\s*(?:[\p{N}(√]|\.\p{N})/u.test(rest)) return `${caret}(${exponent})*`;
-  if (/^\s*[\p{L}_]/u.test(rest)) return `${caret}(${exponent})`;
+  if (NAME_AFTER.test(rest)) return `${caret}(${exponent})`;
   return caret + (isAtomicExponent(exponent) ? exponent : `(${exponent})`);
 }
 

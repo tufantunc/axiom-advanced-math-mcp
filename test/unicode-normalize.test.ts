@@ -378,6 +378,9 @@ describe('ambiguousSuperscript', () => {
     [`${'b'.repeat(200)}⁻¹(x)`, '⁻¹'],
     // `_` starts a name as a letter does.
     ['_1⁻¹(x)', '⁻¹'],
+    // Digits between two runs print into the first run's exponent — `x²12`
+    // is `x^212` — so they are not a number the next run can take as a base.
+    ['x²12⁻¹(z)', '⁻¹'],
   ])('names the run in %s', (input, run) => {
     expect(ambiguousSuperscript(input)).toBe(run);
   });
@@ -392,6 +395,11 @@ describe('ambiguousSuperscript', () => {
     ['x²ⁿ'],
     ['xⁿⁱ'],
     ['2⁻¹(y+1)'],
+    ['12⁻¹(z)'],
+    // `π` is a name that ends at the run after it, raw or read as `pi`, so the
+    // run before it takes it as a factor and `²` stays a bare power.
+    ['xⁿπ²(y)'],
+    ['x⁻¹π²(2)'],
     ['x⁻¹2'],
     ['x⁻¹y'],
     ['3⁻¹ mod 7'],
@@ -431,12 +439,46 @@ describe('superscriptRefusal', () => {
   // across every later run made 8 KB of `aⁿ` take a third of a second. Timed
   // with a margin wide enough for a loaded machine, not tight enough to race.
   it('stays linear on the longest input a caller can send', () => {
-    const inputs = ['aⁿ'.repeat(4096), 'θⁿ'.repeat(4096), 'x⁻¹('.repeat(2048), 'a²ⁿ'.repeat(2730)];
+    const inputs = [
+      'aⁿ'.repeat(4096),
+      'θⁿ'.repeat(4096),
+      'abⁿ'.repeat(2730),
+      'x⁻¹('.repeat(2048),
+      'ⁿ('.repeat(4096),
+      'a²ⁿ'.repeat(2730),
+    ];
     const started = performance.now();
     for (const input of inputs) {
       unicodeToAscii(input);
       ambiguousSuperscript(input);
     }
     expect(performance.now() - started).toBeLessThan(250);
+  });
+});
+
+// The refusal and the normaliser read one grammar: whatever the refusal lets
+// through, unicodeToAscii reads without falling back on a glyph. They parted
+// once — a name pattern whose exclusion guarded only its first character let
+// `π²(` through raw and read `pi²(` glyph by glyph — and `x⁻¹π²(2) = …` got a
+// verdict it should not have. Seeded, so a failure reproduces.
+describe('superscriptRefusal and unicodeToAscii agree', () => {
+  it('leaves no superscript in any text it does not refuse', () => {
+    // Few symbols and short texts, so the junctions — a name, a run, a bracket,
+    // `π` — meet often enough to be drawn. Park–Miller, whose products stay
+    // exact in a double.
+    const alphabet = ['x', 'a', 'b', '2', 'π', '×', ' ', '(', '+', '⁻', '¹', '²', 'ⁿ', 'ⁱ', '⁺'];
+    let seed = 20260929;
+    const next = () => (seed = (seed * 48271) % 2147483647) / 2147483647;
+    const glyph = /[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻ⁱⁿ]/u;
+    const leaks: string[] = [];
+    for (let n = 0; n < 50000 && leaks.length < 5; n++) {
+      let text = '';
+      const length = 2 + Math.floor(next() * 6);
+      for (let i = 0; i < length; i++) text += alphabet[Math.floor(next() * alphabet.length)];
+      if (superscriptRefusal(text) === undefined && glyph.test(unicodeToAscii(text))) {
+        leaks.push(text);
+      }
+    }
+    expect(leaks).toEqual([]);
   });
 });

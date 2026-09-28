@@ -131,6 +131,15 @@ describe('compute end-to-end — ambiguous superscripts are refused', () => {
     expect(allText(r)).toMatch(resultLine('+infinity'));
   });
 
+  // Not refused, and not answered either: `π` ends at the run after it, so
+  // Giac gets `x^(n)pi^2(y)` and rejects the juxtaposition. While the name
+  // read on through `²`, this answered `(xⁿpi^y)^2` as a success.
+  it('lets Giac refuse xⁿπ²(y) rather than answering it', async () => {
+    const r = await computeHandler({ problem: 'simplify(xⁿπ²(y))' });
+    expect(r.isError, allText(r)).toBe(true);
+    expect(allText(r)).not.toMatch(/superscript/);
+  });
+
   // In json, the refusal is the envelope every other failure is.
   it('refuses in the json envelope when json is asked for', async () => {
     const r = await computeHandler({ problem: 'simplify(2ⁱ²)', format: 'json' });
@@ -187,6 +196,14 @@ describe('verify tool — input unicode normalization', () => {
     expect(body.checks_performed).toEqual(['superscript_reading']);
     expect(body.explanation).toMatch(/superscript .* has more than one reading/);
     expect(body.explanation).toContain(`\`${run}\``);
+  });
+
+  // Not refused, but not verified either: both sides are unreadable to Giac.
+  // While the refusal and the normaliser disagreed, this got a verdict.
+  it('leaves x⁻¹π²(2) = x⁻¹π²(3) unevaluated', async () => {
+    const r = await verifyHandler({ claim: 'x⁻¹π²(2) = x⁻¹π²(3)', format: 'json' });
+    const body = JSON.parse(allText(r)) as { verified: boolean; evaluated: boolean };
+    expect(body).toMatchObject({ verified: false, evaluated: false });
   });
 
   it('says why in the text format too', async () => {
