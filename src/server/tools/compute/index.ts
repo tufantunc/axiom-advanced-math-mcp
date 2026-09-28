@@ -5,6 +5,7 @@ import type { ComputeEnvelope } from './types.js';
 import { COMPONENT_ORDER_PREFIX } from '../response-formatter.js';
 import { applyHygiene } from './hygiene.js';
 import { giacEngine } from '../../giac/index.js';
+import { ambiguousSuperscript, ambiguousSuperscriptMessage } from '../unicode-normalize.js';
 
 export { computeSchema } from './schema.js';
 export type { ComputeEnvelope, ResultType } from './types.js';
@@ -26,6 +27,13 @@ export async function computeHandler(
   const format = (args.format as string) || 'text';
 
   try {
+    // 0. Refuse a superscript with no reading before any route sees it. Here,
+    // once, because every route normalises on its own path — some through
+    // evalWithLatex, some straight to the engine — and the per-glyph reading
+    // they would fall back on answered `2ⁱ²` as -2.
+    const ambiguous = typeof problem === 'string' ? ambiguousSuperscript(problem) : undefined;
+    if (ambiguous !== undefined) throw new Error(ambiguousSuperscriptMessage(ambiguous));
+
     // 1. Route
     const { handler, args: handlerArgs } = route(problem, domain);
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { unicodeToAscii } from '../src/server/tools/unicode-normalize.js';
+import { ambiguousSuperscript, unicodeToAscii } from '../src/server/tools/unicode-normalize.js';
 
 describe('unicodeToAscii', () => {
   it.each([
@@ -59,7 +59,7 @@ describe('unicodeToAscii', () => {
     expect(unicodeToAscii(input)).toBe(expected);
   });
 
-  // The rest of the Superscripts block was not mapped at all, so each glyph
+  // The rest of the block's superscript half was not mapped at all, so each glyph
   // reached Giac as part of an identifier and came back as a confident answer:
   // `simplify(x⁻¹)` answered the free symbol `x⁻`, `simplify(2ⁱ)` answered
   // `2*i`. A signed integer or a single letter stays bare — the benchmark
@@ -147,7 +147,7 @@ describe('unicodeToAscii', () => {
     ['x⁻¹ (y+1)', 'x⁻^1 (y+1)'],
     ['𝑓⁻¹(x)', '𝑓⁻^1(x)'],
     ['xⁿ⁺¹²(y)', 'xⁿ⁺^1^2(y)'],
-  ])('reads a run between a name and a bracket as main did: %s', (input, expected) => {
+  ])('reads a run between a name and a bracket glyph by glyph: %s', (input, expected) => {
     expect(unicodeToAscii(input)).toBe(expected);
   });
 
@@ -168,13 +168,13 @@ describe('unicodeToAscii', () => {
     ['xⁿ⁺⁻¹2', 'xⁿ⁺⁻^12'],
     ['(x+1)⁻⁻¹(x+1)', '(x+1)⁻⁻^1(x+1)'],
     ['x⁻⁻¹y', 'x⁻⁻^1y'],
-  ])('reads a run that is no single term as main did: %s', (input, expected) => {
+  ])('reads a run that is no single term glyph by glyph: %s', (input, expected) => {
     expect(unicodeToAscii(input)).toBe(expected);
   });
 
   // An exponent that ENDS in a sign has no operand to end on. Mapped, `^(+)`
   // is `undef` to Giac, and as a function head `undef(x)` — so
-  // `(f⁺)(x) = (f⁻)(x)` verified. Such a run gets main's reading instead.
+  // `(f⁺)(x) = (f⁻)(x)` verified. Such a run is read glyph by glyph instead.
   it.each([
     ['f⁺', 'f⁺'],
     ['x⁻', 'x⁻'],
@@ -183,13 +183,13 @@ describe('unicodeToAscii', () => {
     ['e⁻ᵗ', 'e⁻ᵗ'],
     ['x²⁻', 'x^2⁻'],
     ['(f⁺)(x)', '(f⁺)(x)'],
-  ])('reads a run ending in a sign as main did: %s', (input, expected) => {
+  ])('reads a run ending in a sign glyph by glyph: %s', (input, expected) => {
     expect(unicodeToAscii(input)).toBe(expected);
   });
 
   // The name is read from a window behind the run; near the start of a long
   // text that window must still be the text's start, not its end.
-  it('reads an early run between a name and a bracket as main did, in a long text', () => {
+  it('reads an early run between a name and a bracket glyph by glyph, in a long text', () => {
     const tail = ` + ${'a+'.repeat(40)}a`;
     expect(unicodeToAscii(`f⁻¹(x)${tail}`)).toBe(`f⁻^1(x)${tail}`);
   });
@@ -201,6 +201,9 @@ describe('unicodeToAscii', () => {
     ['2ⁿ²', '2ⁿ^2'],
     ['xⁱ²', 'xⁱ^2'],
     ['xⁿ²⁺¹', 'xⁿ^2⁺^1'],
+    // Wherever the pair sits in the run, not only at its start.
+    ['x⁻ⁿ²', 'x⁻ⁿ^2'],
+    ['x¹⁺ⁿ²', 'x^1⁺ⁿ^2'],
   ])('reads a letter-then-digit run glyph by glyph: %s', (input, expected) => {
     expect(unicodeToAscii(input)).toBe(expected);
   });
@@ -214,6 +217,8 @@ describe('unicodeToAscii', () => {
     ['xⁿ⁺¹ f(x)', 'xⁿ⁺^1 f(x)'],
     ['x⁻¹ f (x)', 'x⁻^1 f (x)'],
     ['x⁻¹ θ(x)', 'x⁻^1 θ(x)'],
+    // A name with a digit is a name.
+    ['x⁻¹ f2(x)', 'x⁻^1 f2(x)'],
   ])('reads a run before a name call glyph by glyph: %s', (input, expected) => {
     expect(unicodeToAscii(input)).toBe(expected);
   });
@@ -222,6 +227,7 @@ describe('unicodeToAscii', () => {
   // it, `f ⁻¹(x)` got the product and answered `x/f`.
   it.each([
     ['f ⁻¹(x)', 'f ⁻^1(x)'],
+    ['f_⁻¹(x)', 'f_⁻^1(x)'],
     ['x ⁻¹(y+1)', 'x ⁻^1(y+1)'],
     ['f\t⁻¹(x)', 'f\t⁻^1(x)'],
   ])('reads a run after a name and a space as before: %s', (input, expected) => {
@@ -265,6 +271,8 @@ describe('unicodeToAscii', () => {
   it.each([
     ['x⁻¹+1', 'x^-1+1'],
     ['x⁻¹ + 1', 'x^-1 + 1'],
+    // A call LATER, past an operator, is not a call after the run.
+    ['x⁻¹ + sin(x)', 'x^-1 + sin(x)'],
     ['x⁻¹)', 'x^-1)'],
     ['x⁻¹,y', 'x^-1,y'],
     // `.` is a decimal point only before a digit. Before another `.` it is
@@ -305,7 +313,7 @@ describe('unicodeToAscii', () => {
 
   // Deliberately out of scope, pinned so the boundary is a decision rather
   // than an accident: modifier letters (`ˣ`, U+02E3) are an open-ended
-  // alphabet outside the Superscripts block, and a subscript names a variable.
+  // alphabet outside the Superscripts and Subscripts block, and a subscript names a variable.
   it.each([['eˣ'], ['x₁']])('leaves %s alone', (input) => {
     expect(unicodeToAscii(input)).toBe(input);
   });
@@ -330,5 +338,64 @@ describe('unicodeToAscii', () => {
   });
   it('leaves ASCII input unchanged', () => {
     expect(unicodeToAscii('factor(x^2-4)')).toBe('factor(x^2-4)');
+  });
+});
+
+// Where unicodeToAscii can only read a run glyph by glyph, that reading was
+// measured wrong somewhere — as a guess, bracketed, and glyph by glyph alike:
+// `2ⁱ²` answered -2 (Giac reads a raw `ⁱ` after a number as i), and
+// `limit(x⁻¹ sin(2*x), x, 0)` answered 1 with the call inside the exponent.
+// So caller text with such a run is refused, and this names the run.
+describe('ambiguousSuperscript', () => {
+  it.each([
+    ['x⁻¹ sin(x)', '⁻¹'],
+    ['x⁻¹sin(x)', '⁻¹'],
+    ['x⁻¹ f2(x)', '⁻¹'],
+    ['3⁻¹ mod (7)', '⁻¹'],
+    ['f⁻¹(x)', '⁻¹'],
+    ['f ⁻¹(x)', '⁻¹'],
+    ['f_⁻¹(x)', '⁻¹'],
+    ['x⁻¹(y+1)', '⁻¹'],
+    ['2ⁱ²', 'ⁱ²'],
+    ['2ⁿ²', 'ⁿ²'],
+    ['x⁻ⁿ²', '⁻ⁿ²'],
+    ['x¹⁺ⁿ²', '¹⁺ⁿ²'],
+    ['x⁻', '⁻'],
+    ['0⁺', '⁺'],
+    ['(f⁺)(x)', '⁺'],
+    ['x⁺⁺ⁿ', '⁺⁺ⁿ'],
+    ['x⁻⁻¹', '⁻⁻¹'],
+    // The first such run, past any that read cleanly.
+    ['10⁸⁰ + x⁻¹ sin(x)', '⁻¹'],
+  ])('names the run in %s', (input, run) => {
+    expect(ambiguousSuperscript(input)).toBe(run);
+  });
+
+  it.each([
+    ['10⁸⁰'],
+    ['x²'],
+    ['x²y'],
+    ['x^²'],
+    ['x⁻¹'],
+    ['xⁿ⁺¹'],
+    ['x²ⁿ'],
+    ['xⁿⁱ'],
+    ['2⁻¹(y+1)'],
+    ['x⁻¹2'],
+    ['x⁻¹y'],
+    ['3⁻¹ mod 7'],
+    ['x⁻¹ + sin(x)'],
+    ['10⁻³..1'],
+    ['x⁻¹π'],
+    ['sqrt(2)*x^2 + 3'],
+  ])('finds nothing to refuse in %s', (input) => {
+    expect(ambiguousSuperscript(input)).toBeUndefined();
+  });
+
+  // The glyphs replaced before runs are read cannot move a verdict: `π` is a
+  // letter either way, and `×` is never a name.
+  it('reads π as a name and × as an operator', () => {
+    expect(ambiguousSuperscript('x⁻¹ π(x)')).toBe('⁻¹');
+    expect(ambiguousSuperscript('x⁻¹×sin(x)')).toBeUndefined();
   });
 });

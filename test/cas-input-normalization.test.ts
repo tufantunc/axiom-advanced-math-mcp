@@ -93,30 +93,72 @@ describe('compute end-to-end — superscript runs', () => {
   });
 });
 
-// Shapes this cannot read with confidence reach Giac glyph by glyph, so
-// whatever Giac answers shows that it failed — an error, the glyph, or `undef`
-// — and is not one of the clean results a guessed reading gave.
-describe('compute end-to-end — shapes read glyph by glyph', () => {
+// A run with no confident reading is refused with a message that names it:
+// each of these was a clean wrong answer under some reading — `2ⁱ²` answered
+// -2, the limit answered 1, `f⁻¹(x)` answered `x/f`.
+describe('compute end-to-end — ambiguous superscripts are refused', () => {
   it.each([
-    ['simplify(f⁻¹(x))', 'x/f'],
-    // A space before the run is still a name before it.
-    ['simplify(f ⁻¹(x))', 'x/f'],
-    // `ⁿ²` is n² or n·2; the product was a guess.
-    ['simplify(2ⁿ²)', '(2^n)^2'],
-    ['diff(g⁻¹(t), t)', '1/g'],
-    ['simplify(f⁻¹(x) + sin(x)^2 + cos(x)^2 - 1 + tan(x)*cos(x) - sin(x))', 'x/f'],
-    ['simplify(f10⁻¹(x))', 'x/f10'],
-    ['simplify((f⁺)(x) - (f⁻)(x))', '0'],
+    ['simplify(2ⁱ²)'],
+    ['simplify(2ⁿ²)'],
+    ['simplify(x⁻ⁿ²)'],
+    ['limit(x⁻¹ sin(2*x), x, 0)'],
+    ['limit(x⁻² sin(x), x, 0)'],
+    ['simplify(x⁻¹ sin(x))'],
+    ['simplify(f⁻¹(x))'],
+    ['simplify(f ⁻¹(x))'],
+    ['diff(g⁻¹(t), t)'],
+    ['simplify(x⁻¹(y+1))'],
+    ['simplify((f⁺)(x) - (f⁻)(x))'],
+    ['simplify(x⁻)'],
+    ['limit(1/x, x, 0⁻)'],
+  ])('%s', async (problem) => {
+    const r = await computeHandler({ problem });
+    const text = allText(r);
+    expect(r.isError, text).toBe(true);
+    expect(text).toMatch(/^Error: .*superscript .* has more than one reading/m);
+  });
+
+  // The glyphs that are NOT runs keep reaching Giac as glyphs, where each of
+  // these answered a clean wrong result while they were mapped.
+  it.each([
     ['simplify(x⁼⁼)', 'x'],
     ['simplify(2⁼¹¹)', '2048'],
   ])('%s is not answered as %s', async (problem, wrong) => {
     const text = allText(await computeHandler({ problem }));
     expect(text).not.toMatch(resultLine(wrong));
-    expect(text).toMatch(/^(Result: .*([⁰¹²³⁴-⁹⁺⁻⁼ⁱⁿ]|undef)|Error: )/mu);
+    expect(text).toMatch(/^(Result: .*[⁰¹²³⁴-⁹⁺⁻⁼ⁱⁿ]|Error: )/mu);
+  });
+
+  // A call after an OPERATOR is not a call after the run.
+  it('still answers x⁻¹ + sin(x)', async () => {
+    const r = await computeHandler({ problem: 'simplify(x⁻¹ + sin(x))' });
+    expect(r.isError, allText(r)).toBe(false);
+    expect(allText(r)).toMatch(resultLine('(x*sin(x)+1)/x'));
   });
 });
 
 describe('verify tool — input unicode normalization', () => {
+  // Not verified either way: unevaluated, with the run named.
+  it.each([
+    ['x⁻¹ sin(x) = x⁻¹ cos(x)'],
+    ['2ⁱ² = -2'],
+    ['limit(x⁻¹ sin(2*x), x, 0) = 1'],
+    ['f ⁻¹(x) = x/f'],
+    ['x⁻¹ f2(x) = x⁻¹ g2(x)'],
+    ['f_⁻¹(x) = x/f_'],
+    ['(f⁺)(x) = (f⁻)(x)'],
+  ])('leaves %s unevaluated, naming the superscript', async (claim) => {
+    const r = await verifyHandler({ claim, format: 'json' });
+    const body = JSON.parse(allText(r)) as {
+      verified: boolean;
+      evaluated: boolean;
+      explanation: string;
+    };
+    expect(body.verified).toBe(false);
+    expect(body.evaluated).toBe(false);
+    expect(body.explanation).toMatch(/superscript .* has more than one reading/);
+  });
+
   // Sent raw, `¹` lexes as `undef` and drops the name, so both sides became
   // one `undef(y)` and these were verified with high confidence.
   it.each([

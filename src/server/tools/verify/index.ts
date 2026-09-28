@@ -1,7 +1,11 @@
 import { z } from 'zod';
 import { MAX_EXPRESSION_LENGTH } from '../limits.js';
 import { giacEngine } from '../../giac/index.js';
-import { unicodeToAscii } from '../unicode-normalize.js';
+import {
+  ambiguousSuperscript,
+  ambiguousSuperscriptMessage,
+  unicodeToAscii,
+} from '../unicode-normalize.js';
 import { rewriteCombinatorics } from '../combinatorics-rewrite.js';
 import { stripOrderTerm } from '../output-cleanup.js';
 
@@ -420,11 +424,27 @@ function isTrailingComparisonEquals(expr: string, i: number): boolean {
 export async function verifyHandler(
   args: Record<string, unknown>
 ): Promise<{ content: { type: 'text'; text: string }[]; isError: boolean }> {
-  const claim = rewriteCombinatorics(
-    unicodeToAscii(typeof args.claim === 'string' ? args.claim : '')
-  );
+  const raw = typeof args.claim === 'string' ? args.claim : '';
+  const claim = rewriteCombinatorics(unicodeToAscii(raw));
   const method = (args.method as string) || 'both';
   const format = args.format === 'json' ? 'json' : 'text';
+
+  // On the RAW claim: normalised, `x⁻¹ sin(x) = x⁻¹ cos(x)` is two sides Giac
+  // reads as one `undef(x)`, and it verified. Unevaluated rather than an
+  // error, the verdict a claim that cannot be read gets.
+  const ambiguous = ambiguousSuperscript(raw);
+  if (ambiguous !== undefined) {
+    return formatVerifyResponse(
+      {
+        verified: false,
+        evaluated: false,
+        confidence: 'low',
+        explanation: `Could not check the claim: ${ambiguousSuperscriptMessage(ambiguous)}.`,
+        checks_performed: ['superscript_reading'],
+      },
+      format
+    );
+  }
 
   try {
     const parsed = parseClaim(claim);
