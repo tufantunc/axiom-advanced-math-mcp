@@ -164,6 +164,11 @@ describe('unicodeToAscii', () => {
     ['x⁺⁺ⁿ', 'x⁺⁺ⁿ'],
     ['x⁻⁻¹', 'x⁻⁻^1'],
     ['xⁿ⁺⁻¹', 'xⁿ⁺⁻^1'],
+    // Whatever follows: the product and letter rules are for terms only.
+    ['2ⁿ⁺⁻¹(y)', '2ⁿ⁺⁻^1(y)'],
+    ['xⁿ⁺⁻¹2', 'xⁿ⁺⁻^12'],
+    ['(x+1)⁻⁻¹(x+1)', '(x+1)⁻⁻^1(x+1)'],
+    ['x⁻⁻¹y', 'x⁻⁻^1y'],
   ])('reads a run that is no single term as main did: %s', (input, expected) => {
     expect(unicodeToAscii(input)).toBe(expected);
   });

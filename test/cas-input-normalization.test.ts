@@ -133,6 +133,8 @@ describe('verify tool — input unicode normalization', () => {
     ['(f¹⁼⁼)(x) = (g¹⁼⁼)(x)'],
     ['(f⁺⁺ⁿ)(x) = (g⁺⁺ⁿ)(x)'],
     ['(f⁻⁻ⁿ)(x) = (g⁻⁻ⁿ)(x)'],
+    ['(a+b)ⁿ⁺⁻¹(a+b) = (a+b)ⁿ'],
+    ['(x+1)⁻⁻¹(x+1) = (x+1)²'],
   ])('does not verify %s', async (claim) => {
     const text = allText(await verifyHandler({ claim }));
     expect(text).not.toContain('Verified: TRUE');
