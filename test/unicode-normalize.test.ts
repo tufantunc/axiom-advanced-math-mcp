@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { ambiguousSuperscript, unicodeToAscii } from '../src/server/tools/unicode-normalize.js';
+import {
+  ambiguousSuperscript,
+  superscriptRefusal,
+  unicodeToAscii,
+} from '../src/server/tools/unicode-normalize.js';
 
 describe('unicodeToAscii', () => {
   it.each([
@@ -365,8 +369,15 @@ describe('ambiguousSuperscript', () => {
     ['(f⁺)(x)', '⁺'],
     ['x⁺⁺ⁿ', '⁺⁺ⁿ'],
     ['x⁻⁻¹', '⁻⁻¹'],
-    // The first such run, past any that read cleanly.
+    // The first such run, past any that read cleanly — and before any later one.
     ['10⁸⁰ + x⁻¹ sin(x)', '⁻¹'],
+    ['x⁻ + 2ⁱ²', '⁻'],
+    // A name of any length, before the run or after it.
+    [`x⁻¹ ${'a'.repeat(200)}(x)`, '⁻¹'],
+    [`f${'1'.repeat(200)}⁻¹(x)`, '⁻¹'],
+    [`${'b'.repeat(200)}⁻¹(x)`, '⁻¹'],
+    // `_` starts a name as a letter does.
+    ['_1⁻¹(x)', '⁻¹'],
   ])('names the run in %s', (input, run) => {
     expect(ambiguousSuperscript(input)).toBe(run);
   });
@@ -397,5 +408,35 @@ describe('ambiguousSuperscript', () => {
   it('reads π as a name and × as an operator', () => {
     expect(ambiguousSuperscript('x⁻¹ π(x)')).toBe('⁻¹');
     expect(ambiguousSuperscript('x⁻¹×sin(x)')).toBeUndefined();
+  });
+});
+
+describe('superscriptRefusal', () => {
+  it('names the run and says how to write it', () => {
+    const refusal = superscriptRefusal('x⁻¹ sin(x)');
+    expect(refusal).toContain('`⁻¹`');
+    expect(refusal).toContain('x^(-1)*sin(x)');
+  });
+
+  it('points a lone sign at the direction argument of a limit', () => {
+    expect(superscriptRefusal('limit(x*ln(x), x, 0⁺)')).toContain('limit(f, x, a, +)');
+    expect(superscriptRefusal('x⁻¹ sin(x)')).not.toContain('limit(f, x, a, +)');
+  });
+
+  it('refuses nothing that reads cleanly', () => {
+    expect(superscriptRefusal('simplify(10⁸⁰) + x⁻¹')).toBeUndefined();
+  });
+
+  // The name scan stops at the next run, so it is linear: reading a name
+  // across every later run made 8 KB of `aⁿ` take a third of a second. Timed
+  // with a margin wide enough for a loaded machine, not tight enough to race.
+  it('stays linear on the longest input a caller can send', () => {
+    const inputs = ['aⁿ'.repeat(4096), 'θⁿ'.repeat(4096), 'x⁻¹('.repeat(2048), 'a²ⁿ'.repeat(2730)];
+    const started = performance.now();
+    for (const input of inputs) {
+      unicodeToAscii(input);
+      ambiguousSuperscript(input);
+    }
+    expect(performance.now() - started).toBeLessThan(250);
   });
 });

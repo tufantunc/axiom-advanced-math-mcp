@@ -38,12 +38,18 @@ npx -y axiom-math compute --json 'solve(x^2-4=0,x)'
 Options: `--domain real|complex|numeric|exact`, `--precision 1..50`,
 `--latex` for LaTeX-focused text.
 
+Superscripts are read as exponents (`10⁸⁰`, `x⁻¹`, `xⁿ⁺¹`). One with more than
+one reading — `x⁻¹ sin(x)`, `f⁻¹(x)`, `2ⁿ²`, the limit point `0⁺` — is
+refused with a message naming it; write the exponent with `^` and brackets
+(`x^(-1)*sin(x)`), and a one-sided limit as `limit(f, x, a, +)`.
+
 ## Verify
 
 Checks a claim independently. **Exit code carries the verdict:** `0` verified,
-`2` checked and refuted, `1` could not run. A claim that does not parse, or
-that the CAS cannot evaluate, exits `1` — never `2` — so `verify ... && ...`
-never reads a syntax error as a disproof.
+`2` checked and refuted, `1` could not run. A claim that does not parse, that
+the CAS cannot evaluate, or that has a superscript with more than one reading,
+exits `1` — never `2` — so `verify ... && ...` never reads a syntax error as a
+disproof.
 
 ```bash
 npx -y axiom-math verify 'sin(x)^2+cos(x)^2 = 1' && echo "holds"

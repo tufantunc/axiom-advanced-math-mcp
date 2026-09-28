@@ -98,24 +98,46 @@ describe('compute end-to-end — superscript runs', () => {
 // -2, the limit answered 1, `f⁻¹(x)` answered `x/f`.
 describe('compute end-to-end — ambiguous superscripts are refused', () => {
   it.each([
-    ['simplify(2ⁱ²)'],
-    ['simplify(2ⁿ²)'],
-    ['simplify(x⁻ⁿ²)'],
-    ['limit(x⁻¹ sin(2*x), x, 0)'],
-    ['limit(x⁻² sin(x), x, 0)'],
-    ['simplify(x⁻¹ sin(x))'],
-    ['simplify(f⁻¹(x))'],
-    ['simplify(f ⁻¹(x))'],
-    ['diff(g⁻¹(t), t)'],
-    ['simplify(x⁻¹(y+1))'],
-    ['simplify((f⁺)(x) - (f⁻)(x))'],
-    ['simplify(x⁻)'],
-    ['limit(1/x, x, 0⁻)'],
-  ])('%s', async (problem) => {
+    ['simplify(2ⁱ²)', 'ⁱ²'],
+    ['simplify(2ⁿ²)', 'ⁿ²'],
+    ['simplify(x⁻ⁿ²)', '⁻ⁿ²'],
+    ['limit(x⁻¹ sin(2*x), x, 0)', '⁻¹'],
+    ['limit(x⁻² sin(x), x, 0)', '⁻²'],
+    ['simplify(x⁻¹ sin(x))', '⁻¹'],
+    ['simplify(f⁻¹(x))', '⁻¹'],
+    ['simplify(f ⁻¹(x))', '⁻¹'],
+    ['diff(g⁻¹(t), t)', '⁻¹'],
+    ['simplify(x⁻¹(y+1))', '⁻¹'],
+    ['simplify((f⁺)(x) - (f⁻)(x))', '⁺'],
+    ['simplify(x⁻)', '⁻'],
+    ['limit(1/x, x, 0⁻)', '⁻'],
+    // A name of any length: bounded to 64, a longer one read as no name.
+    [`simplify(x⁻¹ ${'a'.repeat(70)}(x))`, '⁻¹'],
+  ])('%s is refused, naming %s', async (problem, run) => {
     const r = await computeHandler({ problem });
     const text = allText(r);
     expect(r.isError, text).toBe(true);
     expect(text).toMatch(/^Error: .*superscript .* has more than one reading/m);
+    expect(text).toContain(`\`${run}\``);
+  });
+
+  // A lone sign is a one-sided limit point more often than anything: the
+  // refusal says how to write the direction, and that spelling works.
+  it('points a one-sided limit at the direction argument', async () => {
+    const refused = allText(await computeHandler({ problem: 'limit(x*ln(x), x, 0⁺)' }));
+    expect(refused).toContain('limit(f, x, a, +)');
+    const r = await computeHandler({ problem: 'limit(1/x, x, 0, +)' });
+    expect(r.isError, allText(r)).toBe(false);
+    expect(allText(r)).toMatch(resultLine('+infinity'));
+  });
+
+  // In json, the refusal is the envelope every other failure is.
+  it('refuses in the json envelope when json is asked for', async () => {
+    const r = await computeHandler({ problem: 'simplify(2ⁱ²)', format: 'json' });
+    expect(r.isError).toBe(true);
+    const body = JSON.parse(allText(r)) as { success: boolean; display: string };
+    expect(body.success).toBe(false);
+    expect(body.display).toContain('`ⁱ²`');
   });
 
   // The glyphs that are NOT runs keep reaching Giac as glyphs, where each of
@@ -140,23 +162,37 @@ describe('compute end-to-end — ambiguous superscripts are refused', () => {
 describe('verify tool — input unicode normalization', () => {
   // Not verified either way: unevaluated, with the run named.
   it.each([
-    ['x⁻¹ sin(x) = x⁻¹ cos(x)'],
-    ['2ⁱ² = -2'],
-    ['limit(x⁻¹ sin(2*x), x, 0) = 1'],
-    ['f ⁻¹(x) = x/f'],
-    ['x⁻¹ f2(x) = x⁻¹ g2(x)'],
-    ['f_⁻¹(x) = x/f_'],
-    ['(f⁺)(x) = (f⁻)(x)'],
-  ])('leaves %s unevaluated, naming the superscript', async (claim) => {
+    ['x⁻¹ sin(x) = x⁻¹ cos(x)', '⁻¹'],
+    ['2ⁱ² = -2', 'ⁱ²'],
+    ['limit(x⁻¹ sin(2*x), x, 0) = 1', '⁻¹'],
+    ['f ⁻¹(x) = x/f', '⁻¹'],
+    ['x⁻¹ f2(x) = x⁻¹ g2(x)', '⁻¹'],
+    ['f_⁻¹(x) = x/f_', '⁻¹'],
+    ['(f⁺)(x) = (f⁻)(x)', '⁺'],
+    // Names longer than any window: each verified while one bounded the look.
+    [`x⁻¹ ${'a'.repeat(70)}(x) = x⁻¹ ${'b'.repeat(70)}(x)`, '⁻¹'],
+    [`f${'1'.repeat(70)}⁻¹(x) = x/f${'1'.repeat(70)}`, '⁻¹'],
+  ])('leaves %s unevaluated, naming %s', async (claim, run) => {
     const r = await verifyHandler({ claim, format: 'json' });
     const body = JSON.parse(allText(r)) as {
       verified: boolean;
       evaluated: boolean;
+      confidence: string;
+      checks_performed: string[];
       explanation: string;
     };
     expect(body.verified).toBe(false);
     expect(body.evaluated).toBe(false);
+    expect(body.confidence).toBe('low');
+    expect(body.checks_performed).toEqual(['superscript_reading']);
     expect(body.explanation).toMatch(/superscript .* has more than one reading/);
+    expect(body.explanation).toContain(`\`${run}\``);
+  });
+
+  it('says why in the text format too', async () => {
+    const text = allText(await verifyHandler({ claim: '2ⁱ² = -2' }));
+    expect(text).toContain('Verified: UNKNOWN');
+    expect(text).toContain('Could not check the claim: the superscript `ⁱ²`');
   });
 
   // Sent raw, `¹` lexes as `undef` and drops the name, so both sides became
