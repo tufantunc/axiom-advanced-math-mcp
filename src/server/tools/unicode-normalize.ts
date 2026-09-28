@@ -51,40 +51,44 @@ const SUPERSCRIPT_GLYPHS = Object.keys(SUPERSCRIPT).join('');
 const SUPERSCRIPT_RUN = new RegExp(`[${SUPERSCRIPT_GLYPHS}]+`, 'gu');
 
 /**
- * One character of a name: a letter, a digit or `_`, but no superscript. Any
- * letter, not ASCII only — `θ` is an identifier to Giac, and so is `𝑦`, which
- * `u` reads as one character rather than two halves of a surrogate. Not a
- * superscript, though `ⁿ ⁱ` are letters and `¹ ²` digits to Unicode: a name
- * that read on through the next run rescanned every later run, which made
- * normalising 8 KB take a third of a second, and a window bounding that scan
- * read a longer name as no name — and verified what it should have refused.
+ * One character of a name: a letter, a digit or `_`, but no superscript, though
+ * `ⁿ ⁱ` are letters and `¹ ²` digits to Unicode — so a name ends at the next
+ * run. Any letter, not ASCII only: `θ` is an identifier to Giac. Wrapped in
+ * `(?:…)` so a quantifier repeats the exclusion with the class: unwrapped,
+ * `NAME_CHAR*` excluded superscripts from the first character alone, `pi²(`
+ * read as a name where the raw `π²(` did not, and the refusal and the
+ * normaliser parted.
  */
 const NAME_CHAR = String.raw`(?:(?![${SUPERSCRIPT_GLYPHS}])[\p{L}\p{N}_])`;
 /**
  * What a name starts with, and needs somewhere: a letter or `_`. Digits alone
- * are a number.
+ * are a number. Wrapped as NAME_CHAR is.
  */
 const NAME_START = String.raw`(?:(?![${SUPERSCRIPT_GLYPHS}])[\p{L}_])`;
 const NAME_CHAR_ONE = new RegExp(`^${NAME_CHAR}$`, 'u');
 const NAME_START_ONE = new RegExp(`^${NAME_START}$`, 'u');
-// Grouped, so the superscript exclusion holds for every character the `*`
-// repeats: ungrouped it held for the first alone, `pi²(` read as a name
-// where the raw `π²(` did not, and the refusal and the normaliser parted.
 const NAME_CALL_AFTER = new RegExp(`^\\s*${NAME_START}${NAME_CHAR}*\\s*\\(`, 'u');
 const NAME_AFTER = new RegExp(`^\\s*${NAME_START}`, 'u');
+/** Another run after nothing but spaces. */
+const RUN_AFTER_SPACES = new RegExp(`^\\s+[${SUPERSCRIPT_GLYPHS}]`, 'u');
+
+/** How far back from `at` the spaces before a run reach. */
+function spacesBefore(at: number, text: string): number {
+  let i = at;
+  while (i > 0 && /\s/.test(text[i - 1])) i--;
+  return i;
+}
 
 /**
  * Whether the text before `at` ends in a name, past any spaces: a run of name
  * characters with a letter or `_` among them — `12a` included, which Giac
- * reads as 12*a. Or a run of digits straight after another run: those print
- * into its exponent (`x²12` is `x^212`), so they are no base of their own.
- * Scanned backwards, since a `$`-anchored pattern would retry from every
- * earlier position; the scan stops at the previous run.
+ * reads as 12*a. Scanned backwards, since a `$`-anchored pattern would retry
+ * from every earlier position; the scan stops at the previous run, which is
+ * what keeps it linear. A letter outside the BMP is read whole by the
+ * surrogate check, as one character.
  */
 function endsInName(at: number, text: string): boolean {
-  let i = at;
-  while (i > 0 && /\s/.test(text[i - 1])) i--;
-  const end = i;
+  let i = spacesBefore(at, text);
   let letter = false;
   while (i > 0) {
     const low = text.charCodeAt(i - 1);
@@ -94,7 +98,21 @@ function endsInName(at: number, text: string): boolean {
     letter ||= NAME_START_ONE.test(glyph);
     i -= width;
   }
-  return letter || (i < end && i > 0 && text[i - 1] in SUPERSCRIPT);
+  return letter;
+}
+
+/**
+ * Whether the text before `at` is digits straight after another run, past any
+ * spaces. They are no base of their own: after an all-digit run they print
+ * into its exponent (`x²12` is `x^212`), and after any other run they are
+ * counted the same way, conservatively, rather than tracking how that run
+ * was read.
+ */
+function digitsAfterRun(at: number, text: string): boolean {
+  const end = spacesBefore(at, text);
+  let i = end;
+  while (i > 0 && /\d/.test(text[i - 1])) i--;
+  return i < end && i > 0 && text[i - 1] in SUPERSCRIPT;
 }
 
 /**
@@ -139,6 +157,11 @@ function perGlyphPowers(run: string, afterCaret: boolean): string {
  * caret of its own: `x^^2` is XOR, and `simplify(x^²)` answered `bitxor(x,2)`.
  * The one change to one-digit output, deliberately. Then, in this order:
  *
+ *   0. No reading when another run follows past nothing but spaces: the
+ *      second prints into the first's exponent, so `x⁻¹ ⁿ` answered 1/x and
+ *      `x² ⁻¹(z)` z·√x, and both verified. Per glyph, an all-digit pair
+ *      still reads as it always did (`x² ³` is `x^2 ^3`); only the tools
+ *      refuse it.
  *   1. All digits: bare, whatever follows, so `x²` stays `x^2` byte for byte.
  *      That keeps a known hazard: `x²y` answers `(x^y)^2`.
  *   2. No reading, when the run is not one term — a sign, then operands joined
@@ -184,13 +207,15 @@ function perGlyphPowers(run: string, afterCaret: boolean): string {
 function readRun(run: string, at: number, text: string, afterCaret: boolean): string | undefined {
   const glyphs = Array.from(run, (glyph) => SUPERSCRIPT[glyph]).join('');
   const caret = afterCaret ? '' : '^';
+  const rest = text.slice(at + run.length);
+  if (RUN_AFTER_SPACES.test(rest)) return undefined;
   if (/^\d+$/.test(glyphs)) return caret + glyphs;
   if (!/^[-+]?[a-z\d]+(?:[-+][a-z\d]+)*$/.test(glyphs) || /[a-z]\d/.test(glyphs)) {
     return undefined;
   }
   const exponent = glyphs.replaceAll(/(?<=[a-z\d])(?=[a-z])/g, '*');
-  const rest = text.slice(at + run.length);
-  if (/^\s*\(/u.test(rest) ? endsInName(at, text) : NAME_CALL_AFTER.test(rest)) {
+  const bracket = /^\s*\(/u.test(rest);
+  if (bracket ? endsInName(at, text) || digitsAfterRun(at, text) : NAME_CALL_AFTER.test(rest)) {
     return undefined;
   }
   if (/^\s*(?:[\p{N}(√]|\.\p{N})/u.test(rest)) return `${caret}(${exponent})*`;

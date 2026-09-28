@@ -191,6 +191,15 @@ describe('unicodeToAscii', () => {
     expect(unicodeToAscii(input)).toBe(expected);
   });
 
+  // Two runs split only by spaces keep their per-glyph text here — the tools
+  // refuse them — and an all-digit pair reads exactly as it always did.
+  it.each([
+    ['x² ³', 'x^2 ^3'],
+    ['x⁻¹ ⁿ', 'x⁻^1 ^n'],
+  ])('reads two runs split by spaces glyph by glyph: %s', (input, expected) => {
+    expect(unicodeToAscii(input)).toBe(expected);
+  });
+
   // The name is read from a window behind the run; near the start of a long
   // text that window must still be the text's start, not its end.
   it('reads an early run between a name and a bracket glyph by glyph, in a long text', () => {
@@ -381,6 +390,16 @@ describe('ambiguousSuperscript', () => {
     // Digits between two runs print into the first run's exponent — `x²12`
     // is `x^212` — so they are not a number the next run can take as a base.
     ['x²12⁻¹(z)', '⁻¹'],
+    // …and a space before the next run does not separate them from it:
+    // `x^212 ^(-1)*(z)` answered z·x^(1/212), and verified.
+    ['x²12 ⁻¹(z)', '⁻¹'],
+    // Two runs split only by spaces have no single reading: the second prints
+    // into the first's exponent. `x⁻¹ ⁿ` answered 1/x and `x² ⁻¹(z)` z·√x, and
+    // both verified.
+    ['x⁻¹ ⁿ', '⁻¹'],
+    ['xⁿ ⁱ(y)', 'ⁿ'],
+    ['x² ⁻¹(z)', '²'],
+    ['x² ³', '²'],
   ])('names the run in %s', (input, run) => {
     expect(ambiguousSuperscript(input)).toBe(run);
   });
@@ -396,6 +415,9 @@ describe('ambiguousSuperscript', () => {
     ['xⁿⁱ'],
     ['2⁻¹(y+1)'],
     ['12⁻¹(z)'],
+    // Runs split by anything but spaces are two readings, each its own.
+    ['x² + y³'],
+    ['x⁻¹ + yⁿ'],
     // `π` is a name that ends at the run after it, raw or read as `pi`, so the
     // run before it takes it as a factor and `²` stays a bare power.
     ['xⁿπ²(y)'],

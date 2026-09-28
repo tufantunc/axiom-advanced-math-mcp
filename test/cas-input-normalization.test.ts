@@ -178,6 +178,9 @@ describe('verify tool — input unicode normalization', () => {
     ['x⁻¹ f2(x) = x⁻¹ g2(x)', '⁻¹'],
     ['f_⁻¹(x) = x/f_', '⁻¹'],
     ['(f⁺)(x) = (f⁻)(x)', '⁺'],
+    // Two runs split by a space: each of these verified.
+    ['x⁻¹ ⁿ = 1/x', '⁻¹'],
+    ['x² ⁻¹(z) = sqrt(x)*z', '²'],
     // Names longer than any window: each verified while one bounded the look.
     [`x⁻¹ ${'a'.repeat(70)}(x) = x⁻¹ ${'b'.repeat(70)}(x)`, '⁻¹'],
     [`f${'1'.repeat(70)}⁻¹(x) = x/f${'1'.repeat(70)}`, '⁻¹'],
@@ -202,8 +205,13 @@ describe('verify tool — input unicode normalization', () => {
   // While the refusal and the normaliser disagreed, this got a verdict.
   it('leaves x⁻¹π²(2) = x⁻¹π²(3) unevaluated', async () => {
     const r = await verifyHandler({ claim: 'x⁻¹π²(2) = x⁻¹π²(3)', format: 'json' });
-    const body = JSON.parse(allText(r)) as { verified: boolean; evaluated: boolean };
+    const body = JSON.parse(allText(r)) as {
+      verified: boolean;
+      evaluated: boolean;
+      checks_performed: string[];
+    };
     expect(body).toMatchObject({ verified: false, evaluated: false });
+    expect(body.checks_performed).not.toContain('superscript_reading');
   });
 
   it('says why in the text format too', async () => {
