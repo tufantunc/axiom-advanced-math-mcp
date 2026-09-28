@@ -72,12 +72,35 @@ describe('unicodeToAscii', () => {
     ['xⁿ', 'x^n'],
     ['2ⁱ', '2^i'],
     ['xⁿ⁺¹', 'x^(n+1)'],
-    ['x⁽²⁾', 'x^((2))'],
+    // After a number a bracket group is only a bracket: `2⁽³⁾` is 2³.
+    ['2⁽³⁾', '2^((3))'],
     // Meaningless as an exponent — mapped so compute rejects it, rather than
     // Giac reading it as the identifier `x⁼`.
     ['x⁼', 'x^(=)'],
   ])('reads a mixed superscript run as one exponent: %s', (input, expected) => {
     expect(unicodeToAscii(input)).toBe(expected);
+  });
+
+  // After a letter, one bracketed digit is a derivative ORDER, not a power —
+  // `y⁽³⁾` is y'''. Read as `y^((3))`, `desolve(y⁽³⁾=0, y)` answered `[0]`
+  // with a passing substitution check, where main refused it.
+  it.each([
+    ['y⁽³⁾', "y'''"],
+    ['y⁽¹⁾', "y'"],
+    ['y⁽⁰⁾', 'y'],
+    ['f⁽²⁾(x)', "f''(x)"],
+    ['y⁽⁴⁾=y', "y''''=y"],
+    // A letter outside the BMP is two code units; the second is not a letter.
+    ['𝑦⁽³⁾', "𝑦'''"],
+  ])('reads a bracketed digit after a letter as a derivative order: %s', (input, expected) => {
+    expect(unicodeToAscii(input)).toBe(expected);
+  });
+
+  // Any other lone bracket group after a letter has no reading this can stand
+  // behind — `y⁽ⁿ⁾` is an order nothing can spell in primes, `y⁽¹⁰⁾` one too
+  // long to — so it is left as typed, and Giac sees exactly what it saw on main.
+  it.each([['y⁽ⁿ⁾'], ['y⁽¹⁰⁾'], ['y⁽⁻¹⁾']])('leaves %s as typed', (input) => {
+    expect(unicodeToAscii(input)).toBe(input);
   });
 
   // Joined with nothing between them, two letters were one identifier:
@@ -132,6 +155,12 @@ describe('unicodeToAscii', () => {
     // Outside the BMP, as pasted math italics are: read one code unit at a
     // time, `𝑦` is not a letter and `x^-1𝑦` answered `1/x^𝑦`.
     ['x⁻¹𝑦', 'x^(-1)𝑦'],
+    // Any case: bare, `x^-1Y` answered `1/x^Y` and `2^-1 Pi` answered `1/2^pi`.
+    ['x⁻¹Y', 'x^(-1)Y'],
+    ['A⁻¹B', 'A^(-1)B'],
+    ['2⁻¹ Pi', '2^(-1) Pi'],
+    // Any whitespace, not only a space: bare, `x^-1\ty` answered `1/x^y`.
+    ['x⁻¹\ty', 'x^(-1)\ty'],
     ['xⁿ⁺¹y', 'x^(n+1)y'],
     ['x⁻¹π', 'x^(-1)pi'],
     ['x⁻¹_a', 'x^(-1)_a'],

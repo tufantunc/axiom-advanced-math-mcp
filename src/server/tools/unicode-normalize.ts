@@ -12,6 +12,11 @@
  * in ASCII — a defect of verify's identity path that this spelling reaches but
  * did not create.
  *
+ * `⁽ ⁾` after a letter are derivative-order notation rather than grouping, so
+ * `y⁽³⁾` is y''' — and `x⁽²⁾` is therefore x'' (answering 0), not x²: the
+ * notation is ambiguous and the derivative is its conventional reading. See
+ * superscriptExponent.
+ *
  * Out of scope, deliberately: modifier letters outside this block (`ˣ` U+02E3,
  * `ᵃ` U+1D43 and the rest), an open-ended alphabet with no block boundary to
  * stop at — `eˣ` still reaches Giac as an identifier and still answers `eˣ`; and
@@ -100,6 +105,16 @@ export function isAtomicExponent(token: string): boolean {
  * a lambda, in every spelling including ASCII.
  */
 function superscriptExponent(run: string, at: number, text: string): string {
+  // After a letter, a lone bracket group is a derivative ORDER, not a power:
+  // `y⁽³⁾` is y'''. Read as `y^((3))`, `desolve(y⁽³⁾=0, y)` answered `[0]` —
+  // the root of y³ = 0 — with a passing substitution check, where main refused
+  // it. One digit is spelled in primes; any other order (`⁽ⁿ⁾`, `⁽¹⁰⁾`) has no
+  // spelling this can stand behind, and is left exactly as typed. The slice
+  // is two code units so a letter outside the BMP is read whole.
+  if (/^⁽[^⁽⁾]*⁾$/u.test(run) && /[\p{L}_]$/u.test(text.slice(Math.max(0, at - 2), at))) {
+    const order = /^⁽([⁰¹²³⁴⁵⁶⁷⁸⁹])⁾$/u.exec(run)?.[1];
+    return order === undefined ? run : "'".repeat(Number(SUPERSCRIPT[order]));
+  }
   const exponent = Array.from(run, (glyph) => SUPERSCRIPT[glyph])
     .join('')
     .replaceAll(/(?<=[a-z)])(?=[a-z\d(])|(?<=\d)(?=[a-z(])/g, '*');

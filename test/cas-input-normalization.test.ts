@@ -73,6 +73,19 @@ describe('compute end-to-end — superscript runs', () => {
     );
   });
 
+  // A derivative order is solved as one: not `[0]`, the root of y³ = 0.
+  it.each([
+    ['desolve(y⁽³⁾=0, y)', '(x^2*c_2+2*x*c_1+2*c_0)/2'],
+    ['desolve([y⁽²⁾+y=0, y(0)=1, y⁽¹⁾(0)=0], y)', 'cos(x)'],
+  ])('%s solves the ODE the notation denotes', async (problem, expected) => {
+    const r = await computeHandler({ problem });
+    const text = allText(r);
+    expect(r.isError, text).toBe(false);
+    expect(text).toMatch(
+      new RegExp(`^Result: ${expected.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}$`, 'm')
+    );
+  });
+
   // Where this cannot tell a reading from a wrong one, the answer has to be an
   // error. `x⁼` and `x⁻` came back as free symbols; a letter after the run is
   // either a factor or an operator, and Giac refuses the factor.
@@ -84,6 +97,10 @@ describe('compute end-to-end — superscript runs', () => {
     ['simplify(x⁻¹θ)'],
     ['simplify(xⁿ⁺¹y)'],
     ['simplify(x⁻¹𝑦)'],
+    ['simplify(x⁻¹Y)'],
+    ['simplify(2⁻¹ Pi)'],
+    // An order no primes spell: refused, as on main — not a power.
+    ['desolve(y⁽ⁿ⁾=0, y)'],
   ])('%s is refused rather than answered', async (problem) => {
     const r = await computeHandler({ problem });
     expect(r.isError, allText(r)).toBe(true);
