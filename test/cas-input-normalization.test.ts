@@ -50,17 +50,17 @@ describe('compute end-to-end — superscript runs', () => {
     ['simplify(xⁿⁱ)', 'x^(i*n)'],
     // Not `bitxor(x,2)`, which the doubled caret answered.
     ['simplify(x^²)', 'x^2'],
-    // The operand after the run is a factor, not part of the exponent: not
-    // `1/x^y`, not `x^(-y-1)`.
-    ['simplify(x⁻¹y)', 'y/x'],
-    ['simplify(x⁻¹ y)', 'y/x'],
+    // A bracket or digit after the run is a factor, not part of the exponent:
+    // not `x^(-y-1)`, not `1/x^12`.
     ['simplify(x⁻¹(y+1))', '(y+1)/x'],
-    // Not `1/x^12`.
     ['simplify(x⁻¹2)', '2/x'],
     // Not `x^(n(1+i))`, a call to a function `n`.
     ['simplify(xⁿ⁽ⁱ⁺¹⁾)', 'x^((1+i)*n)'],
-    // The inverse of 3 mod 7 is 5 ≡ -2 — not `undef % 7`.
+    // A word operator after the run is an operator: not `undef % 7`, not 0,
+    // not an `undef` set expression.
     ['simplify(3⁻¹ mod 7)', '-2 % 7'],
+    ['simplify(2⁻¹ in [1/2,1])', '1'],
+    ['simplify(x⁻¹ union y)', '(1/x) union y'],
   ])('%s evaluates the exponent as written', async (problem, expected) => {
     const r = await computeHandler({ problem });
     const text = allText(r);
@@ -70,15 +70,20 @@ describe('compute end-to-end — superscript runs', () => {
     );
   });
 
-  // Where no reading is right, the answer has to be an error — each of these
-  // came back as a success before, as a free symbol.
-  it.each([['simplify(x⁼)'], ['simplify(x⁻)']])(
-    '%s is refused rather than answered',
-    async (problem) => {
-      const r = await computeHandler({ problem });
-      expect(r.isError, allText(r)).toBe(true);
-    }
-  );
+  // Where this cannot tell a reading from a wrong one, the answer has to be an
+  // error. `x⁼` and `x⁻` came back as free symbols; a letter after the run is
+  // either a factor or an operator, and Giac refuses the factor.
+  it.each([
+    ['simplify(x⁼)'],
+    ['simplify(x⁻)'],
+    ['simplify(x⁻¹y)'],
+    ['simplify(x⁻¹ y)'],
+    ['simplify(x⁻¹θ)'],
+    ['simplify(xⁿ⁺¹y)'],
+  ])('%s is refused rather than answered', async (problem) => {
+    const r = await computeHandler({ problem });
+    expect(r.isError, allText(r)).toBe(true);
+  });
 });
 
 describe('verify tool — input unicode normalization', () => {

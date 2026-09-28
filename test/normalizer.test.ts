@@ -39,12 +39,11 @@ describe('normalizer — LaTeX/Unicode basics', () => {
   });
 
   // KNOWN DIFFERENCE, pinned so that closing it is a decision: followed by an
-  // operand, the superscript writes the product (Giac otherwise reads the
-  // operand into the exponent) and the grader's `^{…}` rule does not. Making
-  // the grader write it too changes benchmark scoring, which is not this rule's
-  // call to make.
+  // operand, the superscript brackets its exponent (Giac otherwise reads the
+  // operand into it) and the grader's `^{…}` rule does not. Making the grader
+  // do it too changes benchmark scoring, which is not this rule's call.
   it('does not yet match the LaTeX spelling when an operand follows', () => {
-    expect(normalize('x⁻¹y').canonical).toBe('x^(-1)*y');
+    expect(normalize('x⁻¹y').canonical).toBe('x^(-1)y');
     expect(normalize('x^{-1}y').canonical).toBe('x^-1y');
   });
 

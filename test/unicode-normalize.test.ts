@@ -99,35 +99,53 @@ describe('unicodeToAscii', () => {
   // A superscript's end is visible; `^`'s is not. Followed by an operand, the
   // exponent read the operand in — bare, `x^-1y` answers `1/x^y`; bracketed,
   // `x^(-1)(y+1)` answers `x^(-y-1)`, since Giac applies a bracket group to
-  // the exponent before it; and a space is juxtaposition, not a boundary. So
+  // the exponent before it; and a space is juxtaposition, not a boundary.
+  // Before a digit, a bracket, `.` or `√` — none of which can begin a word —
   // the product the typography means is written out.
   it.each([
-    ['x⁻¹y', 'x^(-1)*y'],
-    ['xⁿy', 'x^(n)*y'],
     ['x⁻¹(y+1)', 'x^(-1)*(y+1)'],
-    ['x⁻¹ y', 'x^(-1)* y'],
-    ['x⁻¹θ', 'x^(-1)*θ'],
-    ['xⁿ⁺¹y', 'x^(n+1)*y'],
-    ['x⁻¹π', 'x^(-1)*pi'],
+    ['x⁻¹ (y+1)', 'x^(-1)* (y+1)'],
     ['x⁻¹√2', 'x^(-1)*sqrt(2)'],
     // A digit, bare, would extend the exponent: `x^-12` is not x⁻¹·2.
     ['x⁻¹2', 'x^(-1)*2'],
     ['x⁻¹ 2', 'x^(-1)* 2'],
     ['2ⁿ3', '2^(n)*3'],
     ['x⁻¹.5', 'x^(-1)*.5'],
-    ['x⁻¹_a', 'x^(-1)*_a'],
-    // An operator is a boundary already.
+  ])('writes the product before a non-letter operand: %s', (input, expected) => {
+    expect(unicodeToAscii(input)).toBe(expected);
+  });
+
+  // Before a LETTER it cannot: a word may be an operand or one of Giac's word
+  // operators, and a `*` in front of an operator answered as a success —
+  // `simplify(3⁻¹ mod 7)` gave `undef % 7`, `2⁻¹ in [1/2,1]` gave 0, and a
+  // list of operators to skip was incomplete twice over. Bracketed and left
+  // alone, Giac itself decides: measured, it REFUSES `x^(-1)y`, `x^(-1) y`,
+  // `x^(-1)θ` and `x^(-1)sin(x)`, and reads `x^(-1) union y`, `2^(-1) in […]`
+  // and `3^(-1)mod 7` correctly.
+  it.each([
+    ['x⁻¹y', 'x^(-1)y'],
+    ['xⁿy', 'x^(n)y'],
+    ['x⁻¹ y', 'x^(-1) y'],
+    ['x⁻¹θ', 'x^(-1)θ'],
+    ['xⁿ⁺¹y', 'x^(n+1)y'],
+    ['x⁻¹π', 'x^(-1)pi'],
+    ['x⁻¹_a', 'x^(-1)_a'],
+    ['3⁻¹ mod 7', '3^(-1) mod 7'],
+    ['3⁻¹mod 7', '3^(-1)mod 7'],
+    ['2⁻¹ in [1/2,1]', '2^(-1) in [1/2,1]'],
+    ['x⁻¹ union y', 'x^(-1) union y'],
+    ['xⁿ and y', 'x^(n) and y'],
+  ])('brackets, and writes no product, before a letter: %s', (input, expected) => {
+    expect(unicodeToAscii(input)).toBe(expected);
+  });
+
+  // An operator is a boundary already, so an atomic exponent stays bare.
+  it.each([
     ['x⁻¹+1', 'x^-1+1'],
     ['x⁻¹ + 1', 'x^-1 + 1'],
-    // Giac's word operators are letters but not operands: a `*` in front of
-    // `mod` made `simplify(3⁻¹ mod 7)` answer `undef % 7`, as a success.
-    ['3⁻¹ mod 7', '3^-1 mod 7'],
-    ['xⁿ and y', 'x^n and y'],
-    ['xⁿ or y', 'x^n or y'],
-    ['x⁻¹ xor y', 'x^-1 xor y'],
-    // …and only as whole words: `modulus` is an operand.
-    ['x⁻¹ modulus', 'x^(-1)* modulus'],
-  ])('writes the product after a signed or letter exponent: %s', (input, expected) => {
+    ['x⁻¹)', 'x^-1)'],
+    ['x⁻¹,y', 'x^-1,y'],
+  ])('leaves an atomic exponent bare before an operator: %s', (input, expected) => {
     expect(unicodeToAscii(input)).toBe(expected);
   });
 
@@ -147,8 +165,9 @@ describe('unicodeToAscii', () => {
     ['x^⁻¹', 'x^-1'],
     ['x^²³', 'x^23'],
     // The same caret, when the exponent also needs its product written.
-    ['x^⁻¹y', 'x^(-1)*y'],
-    ['x**⁻¹y', 'x^(-1)*y'],
+    ['x^⁻¹2', 'x^(-1)*2'],
+    ['x**⁻¹2', 'x^(-1)*2'],
+    ['x^⁻¹y', 'x^(-1)y'],
   ])('adds no second caret after ^ or **: %s', (input, expected) => {
     expect(unicodeToAscii(input)).toBe(expected);
   });
