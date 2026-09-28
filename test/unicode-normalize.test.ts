@@ -91,16 +91,33 @@ describe('unicodeToAscii', () => {
     expect(unicodeToAscii(input)).toBe(expected);
   });
 
-  // A bare `^-1` followed by an operand reads the operand into the exponent:
-  // measured, `x^-1y` answers `1/x^y`. Bracketed, the same text is an error.
+  // A superscript's end is visible; `^`'s is not. Followed by an operand, the
+  // exponent read the operand in — bare, `x^-1y` answers `1/x^y`; bracketed,
+  // `x^(-1)(y+1)` answers `x^(-y-1)`, since Giac applies a bracket group to
+  // the exponent before it; and a space is juxtaposition, not a boundary. So
+  // the product the typography means is written out.
   it.each([
-    ['x⁻¹y', 'x^(-1)y'],
-    ['xⁿy', 'x^(n)y'],
-    ['x⁻¹π', 'x^(-1)pi'],
-    ['x⁻¹√2', 'x^(-1)sqrt(2)'],
+    ['x⁻¹y', 'x^(-1)*y'],
+    ['xⁿy', 'x^(n)*y'],
+    ['x⁻¹(y+1)', 'x^(-1)*(y+1)'],
+    ['x⁻¹ y', 'x^(-1)* y'],
+    ['x⁻¹θ', 'x^(-1)*θ'],
+    ['xⁿ⁺¹y', 'x^(n+1)*y'],
+    ['x⁻¹π', 'x^(-1)*pi'],
+    ['x⁻¹√2', 'x^(-1)*sqrt(2)'],
+    // An operator is a boundary already.
     ['x⁻¹+1', 'x^-1+1'],
-  ])('brackets a signed or letter exponent when an operand follows: %s', (input, expected) => {
+    ['x⁻¹ + 1', 'x^-1 + 1'],
+  ])('writes the product after a signed or letter exponent: %s', (input, expected) => {
     expect(unicodeToAscii(input)).toBe(expected);
+  });
+
+  // KNOWN WRONG, pinned so that changing it is a decision: an all-digit run is
+  // left bare whatever follows, because that is what one-digit input has always
+  // produced. Measured, `simplify(x²y)` answers `(x^y)^2`. Writing `*` here
+  // would fix it and change the output of every `x²` followed by an operand.
+  it('leaves an all-digit exponent bare before an operand (x²y — known wrong)', () => {
+    expect(unicodeToAscii('x²y')).toBe('x^2y');
   });
 
   // After a caret the superscript IS the exponent. Adding a second one made

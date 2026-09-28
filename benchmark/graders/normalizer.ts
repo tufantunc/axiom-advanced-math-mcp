@@ -3,7 +3,7 @@
  * comparable string. Pure-function module — no I/O.
  */
 
-import { unicodeToAscii } from '../../src/server/tools/unicode-normalize.js';
+import { isAtomicExponent, unicodeToAscii } from '../../src/server/tools/unicode-normalize.js';
 
 export type AnswerKind = 'scalar' | 'set' | 'interval' | 'conditional' | 'expression';
 
@@ -97,7 +97,7 @@ export function normalize(input: string): NormalizedAnswer {
   // longer needs parens to survive as one exponent (e^{-2x} → e^(-2x)).
   s = s.replace(/\^\{([^{}]+)\}/g, (_m, inner: string) => {
     const tok = inner.trim();
-    return /^(-?\d+|[A-Za-z])$/.test(tok) ? `^${tok}` : `^(${tok})`;
+    return isAtomicExponent(tok) ? `^${tok}` : `^(${tok})`;
   });
   s = s.replace(/[{}]/g, '');
 

@@ -42,19 +42,35 @@ const SUPERSCRIPT: Readonly<Record<string, string>> = {
 const SUPERSCRIPT_RUN = new RegExp(`[${Object.keys(SUPERSCRIPT).join('')}]+`, 'gu');
 
 /**
+ * An exponent that needs no brackets after `^`: a signed integer or one letter.
+ * Shared with the benchmark grader's `^{…}` rule, so `x⁻¹` and `x^{-1}` reach
+ * one canonical form — each site adds its own policy around it, this is only
+ * the part the two must agree on.
+ */
+export function isAtomicExponent(token: string): boolean {
+  return /^(-?\d+|[A-Za-z])$/.test(token);
+}
+
+/**
  * The ASCII for one superscript run found at `at` in `text`: ONE exponent, since
  * replaced a glyph at a time `10⁸⁰` became `10^8^0`, which Giac reads
  * right-associatively as 10^(8^0) — so `simplify(10⁸⁰)` answered 10, as a
  * success, and `2²³` answered 256.
  *
- * Bare or bracketed:
- *   - All digits: bare, always, so `x²` stays `x^2` byte for byte.
- *   - A signed integer or one letter: bare, matching the benchmark grader's form
- *     for `x^{-1}` and `x^{n}` — unless an operand follows, because bare, it
- *     reads the operand in: measured, `x^-1y` answers `1/x^y`, and `x^(-1)y` is
- *     an error. The all-digit case has the same hazard (`x²y` answers
- *     `(x^y)^2`) and is left as it was, deliberately: it predates this rule, and
- *     changing it changes one-digit output.
+ * A superscript's END is visible, and `^`'s is not, so anything that is not all
+ * digits and has an operand after it — past any spaces — gets the product
+ * written out. Measured, each alternative read the operand into the exponent
+ * and answered as a success: bare `x^-1y` answered `1/x^y`; bracketed
+ * `x^(-1)(y+1)` answered `x^(-y-1)`, because Giac applies a bracket group to
+ * the exponent before it; and `x^-1 y` answered `1/x^y`, a space being
+ * juxtaposition. `x^(-1)*(y+1)` answers `(y+1)/x`.
+ *
+ * Otherwise:
+ *   - All digits: bare, always, so `x²` stays `x^2` byte for byte — including
+ *     before an operand, where it has the hazard above (`x²y` answers
+ *     `(x^y)^2`). Left so deliberately: it predates this function, and the fix
+ *     changes one-digit output.
+ *   - Atomic (isAtomicExponent): bare, the grader's own form.
  *   - Anything else: bracketed, because `^` binds tighter than `+` and `xⁿ⁺¹`
  *     as `x^n+1` is a different expression.
  *
@@ -63,16 +79,25 @@ const SUPERSCRIPT_RUN = new RegExp(`[${Object.keys(SUPERSCRIPT).join('')}]+`, 'g
  * a name just as well (`n2`). And a run straight after `^` or `**` IS that
  * caret's exponent: adding another made `x^^2`, which Giac reads as XOR, so
  * `simplify(x^²)` answered `bitxor(x,2)`.
+ *
+ * Not handled: a postfix `^` or `!` after the run binds into the exponent —
+ * `x⁻¹^2` answers `1/x`, `x²^3` answers `x^8` — and no output of this function
+ * alone can fix that, since the power it should apply to begins at a base this
+ * function does not see. Nor function powers: `sin²(x)` and `sin⁻¹(x)` answer
+ * a lambda, in every spelling including ASCII.
  */
 function superscriptExponent(run: string, at: number, text: string): string {
   const exponent = Array.from(run, (glyph) => SUPERSCRIPT[glyph])
     .join('')
     .replaceAll(/(?<=[a-z])(?=[a-z\d])|(?<=\d)(?=[a-z])/g, '*');
   const caret = text[at - 1] === '^' || text.slice(at - 2, at) === '**' ? '' : '^';
-  // `√` too: this runs before the `√` rules, which turn it into `sqrt(`.
-  const operandFollows = /^[\w.(√]/.test(text.slice(at + run.length));
-  const bare = /^\d+$/.test(exponent) || (/^(-?\d+|[a-z])$/.test(exponent) && !operandFollows);
-  return caret + (bare ? exponent : `(${exponent})`);
+  if (/^\d+$/.test(exponent)) return caret + exponent;
+  // Any letter, not ASCII only — `θ` is an identifier to Giac — and `√`, since
+  // this runs before the rules that turn it into `sqrt(`.
+  if (/^\s*[\p{L}\p{N}_.(√]/u.test(text.slice(at + run.length))) {
+    return `${caret}(${exponent})*`;
+  }
+  return caret + (isAtomicExponent(exponent) ? exponent : `(${exponent})`);
 }
 
 /**

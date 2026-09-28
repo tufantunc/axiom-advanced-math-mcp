@@ -50,17 +50,21 @@ describe('compute end-to-end — superscript runs', () => {
     ['simplify(xⁿⁱ)', 'x^(i*n)'],
     // Not `bitxor(x,2)`, which the doubled caret answered.
     ['simplify(x^²)', 'x^2'],
+    // The operand after the run is a factor, not part of the exponent: not
+    // `1/x^y`, not `x^(-y-1)`.
+    ['simplify(x⁻¹y)', 'y/x'],
+    ['simplify(x⁻¹ y)', 'y/x'],
+    ['simplify(x⁻¹(y+1))', '(y+1)/x'],
   ])('%s evaluates the exponent as written', async (problem, expected) => {
     const r = await computeHandler({ problem });
     const text = allText(r);
     expect(r.isError, text).toBe(false);
-    expect(text).toMatch(new RegExp(`^Result: ${expected.replace(/[*/^()]/g, '\\$&')}$`, 'm'));
+    expect(text).toMatch(new RegExp(`^Result: ${expected.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}$`, 'm'));
   });
 
   // Where no reading is right, the answer has to be an error — each of these
-  // came back as a success before, either as a free symbol or, for `x⁻¹y`,
-  // written bare, as `1/x^y`.
-  it.each([['simplify(x⁼)'], ['simplify(x⁻)'], ['simplify(x⁻¹y)']])(
+  // came back as a success before, as a free symbol.
+  it.each([['simplify(x⁼)'], ['simplify(x⁻)']])(
     '%s is refused rather than answered',
     async (problem) => {
       const r = await computeHandler({ problem });
