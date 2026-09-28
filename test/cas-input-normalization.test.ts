@@ -3,6 +3,7 @@ import { giacEngine } from '../src/server/giac/index.js';
 import { evalWithLatex } from '../src/server/tools/giac-eval.js';
 import { computeHandler } from '../src/server/tools/compute/index.js';
 import { verifyHandler } from '../src/server/tools/verify/index.js';
+import { resultLine } from './helpers/result-line.js';
 
 beforeAll(async () => {
   await giacEngine.initialize();
@@ -67,9 +68,7 @@ describe('compute end-to-end — superscript runs', () => {
     const r = await computeHandler({ problem });
     const text = allText(r);
     expect(r.isError, text).toBe(false);
-    expect(text).toMatch(
-      new RegExp(`^Result: ${expected.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}$`, 'm')
-    );
+    expect(text).toMatch(resultLine(expected));
   });
 
   // Where this cannot tell a reading from a wrong one, the answer has to be an
@@ -94,12 +93,16 @@ describe('compute end-to-end — superscript runs', () => {
   });
 });
 
-// `f⁻¹(x)` reaches Giac as it did on main (see unicodeToAscii), so whatever
-// Giac answers shows that it failed — an error or the glyph — and is not one
-// of the clean products the written `*` gave.
-describe('compute end-to-end — inverse-function notation', () => {
+// Shapes this cannot read with confidence reach Giac glyph by glyph, so
+// whatever Giac answers shows that it failed — an error, the glyph, or `undef`
+// — and is not one of the clean results a guessed reading gave.
+describe('compute end-to-end — shapes read glyph by glyph', () => {
   it.each([
     ['simplify(f⁻¹(x))', 'x/f'],
+    // A space before the run is still a name before it.
+    ['simplify(f ⁻¹(x))', 'x/f'],
+    // `ⁿ²` is n² or n·2; the product was a guess.
+    ['simplify(2ⁿ²)', '(2^n)^2'],
     ['diff(g⁻¹(t), t)', '1/g'],
     ['simplify(f⁻¹(x) + sin(x)^2 + cos(x)^2 - 1 + tan(x)*cos(x) - sin(x))', 'x/f'],
     ['simplify(f10⁻¹(x))', 'x/f10'],
@@ -108,7 +111,7 @@ describe('compute end-to-end — inverse-function notation', () => {
     ['simplify(2⁼¹¹)', '2048'],
   ])('%s is not answered as %s', async (problem, wrong) => {
     const text = allText(await computeHandler({ problem }));
-    expect(text).not.toMatch(new RegExp(`^Result: ${wrong.replace('/', '\\/')}$`, 'm'));
+    expect(text).not.toMatch(resultLine(wrong));
     expect(text).toMatch(/^(Result: .*([⁰¹²³⁴-⁹⁺⁻⁼ⁱⁿ]|undef)|Error: )/mu);
   });
 });
@@ -135,6 +138,17 @@ describe('verify tool — input unicode normalization', () => {
     ['(f⁻⁻ⁿ)(x) = (g⁻⁻ⁿ)(x)'],
     ['(a+b)ⁿ⁺⁻¹(a+b) = (a+b)ⁿ'],
     ['(x+1)⁻⁻¹(x+1) = (x+1)²'],
+    // A name CALL after the run: bracketed, `x^(-1) sin(x)` is `undef(x)`
+    // inside a claim, and both sides were that one `undef(x)`.
+    ['x⁻¹ sin(x) = x⁻¹ cos(x)'],
+    ['x⁻² sin(x) = x⁻¹ sin(x)'],
+    ['x⁻¹sin(x) = x⁻¹cos(x)'],
+    ['x⁻¹ f(x) = x⁻¹ g(x)'],
+    ['xⁿ⁺¹ sin(x) = xⁿ sin(x)'],
+    // A space between the name and the run.
+    ['f ⁻¹(x) = x/f'],
+    // `ⁿ²`, read as the product n·2.
+    ['2ⁿ² = 4ⁿ'],
   ])('does not verify %s', async (claim) => {
     const text = allText(await verifyHandler({ claim }));
     expect(text).not.toContain('Verified: TRUE');

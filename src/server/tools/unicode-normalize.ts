@@ -1,29 +1,31 @@
 /**
- * Unicode's Superscripts block (U+2070–U+207F) less `⁼ ⁽ ⁾`, plus the three
- * Latin-1 digits `¹²³`, as the ASCII each stands for.
+ * The superscript half of Unicode's Superscripts and Subscripts block
+ * (U+2070–U+207F) less `⁼ ⁽ ⁾`, plus the three Latin-1 digits `¹²³`, as the
+ * ASCII each stands for.
  *
- * Nearly the whole block, because the measured alternative was worse at each
+ * Nearly the whole half, because the measured alternative was worse at each
  * glyph left out: an unmapped superscript reaches Giac as part of an
  * identifier and comes back as a confident answer — `simplify(x⁻¹)` answered
  * the free symbol `x⁻`, `simplify(xⁿ⁺¹)` answered `xⁿ⁺`, and `simplify(2ⁱ)`
  * answered `2*i`.
  *
- * Out of scope, deliberately: `⁼`, which in an exponent can only spell one of
- * Giac's operators — `⁼⁼` is `==`, a leading `⁼` is `=nop` — and did: mapped,
- * `x⁼² = x²` and `2⁼¹¹ = 2048` verified. And `⁽ ⁾`, which are three notations
- * rather than one — grouping (`2⁽³⁾`), derivative order (`y⁽³⁾` is y'''),
- * iterate (`f⁽²⁾`) — and every reading measured here answered some input
- * wrongly as a verified success: as grouping, `desolve(y⁽³⁾=0, y)` answered
- * `[0]`; as a derivative, `simplify((a+b)⁽²⁾)` answered 0 and
- * `desolve(y⁽¹⁾³=x, y)` `[x^(1/3)]`; left as typed, `integrate(x⁽ⁿ⁾, x)`
- * answered `x⁽ⁿ⁾*x`.
- * Unmapped, they end a run and reach Giac as they did on main, and measured,
- * each of those inputs then answers as main does: an error, or an answer that
- * shows the glyph (`[(y⁽^⁾)^4]`) rather than a clean-looking wrong one. Also
- * modifier letters outside this block (`ˣ` U+02E3, `ᵃ` U+1D43 and the rest), an
- * open-ended alphabet with no block boundary to stop at — `eˣ` still reaches
- * Giac as an identifier and still answers `eˣ`; and subscripts, since `x₁`
- * reads as a variable named `x₁`, which is a meaning rather than an accident.
+ * Out of scope, deliberately:
+ *   - `⁼`, which in an exponent can only spell one of Giac's operators — `⁼⁼`
+ *     is `==`, a leading `⁼` is `=nop` — and did: mapped, `x⁼² = x²` and
+ *     `2⁼¹¹ = 2048` verified.
+ *   - `⁽ ⁾`, three notations rather than one — grouping (`2⁽³⁾`), derivative
+ *     order (`y⁽³⁾` is y'''), iterate (`f⁽²⁾`) — and every reading measured
+ *     answered some input wrongly as a verified success: as grouping,
+ *     `desolve(y⁽³⁾=0, y)` answered `[0]`; as a derivative,
+ *     `simplify((a+b)⁽²⁾)` answered 0; left as typed, `integrate(x⁽ⁿ⁾, x)`
+ *     answered `x⁽ⁿ⁾*x`. Unmapped, they end a run and reach Giac as glyphs,
+ *     which answers each of those with an error or with the glyph showing
+ *     (`[(y⁽^⁾)^4]`), never a clean-looking wrong result.
+ *   - Modifier letters outside the block (`ˣ` U+02E3, `ᵃ` U+1D43 and the
+ *     rest), an open-ended alphabet with no boundary to stop at — `eˣ` still
+ *     reaches Giac as an identifier and still answers `eˣ`.
+ *   - Subscripts, since `x₁` reads as a variable named `x₁`, which is a
+ *     meaning rather than an accident.
  */
 const SUPERSCRIPT: Readonly<Record<string, string>> = {
   '⁰': '0',
@@ -46,11 +48,18 @@ const SUPERSCRIPT: Readonly<Record<string, string>> = {
 const SUPERSCRIPT_RUN = new RegExp(`[${Object.keys(SUPERSCRIPT).join('')}]+`, 'gu');
 
 /**
+ * How many code units before a run are searched for the name it follows. A
+ * bound only so the search is constant per run; a name whose trailing digits
+ * alone are longer than this reads as a number instead.
+ */
+const NAME_WINDOW = 64;
+
+/**
  * An exponent that needs no brackets after `^`: a signed integer or one letter.
  * Shared with the benchmark grader's `^{…}` rule, so a standalone `x⁻¹` and
  * `x^{-1}` reach one canonical form — each site adds its own policy around it,
  * this is only the part the two must agree on. They still differ when an
- * operand follows (`x⁻¹y` writes the product, `x^{-1}y` does not); see
+ * operand follows (`x⁻¹y` brackets its exponent, `x^{-1}y` does not); see
  * test/normalizer.test.ts.
  */
 export function isAtomicExponent(token: string): boolean {
@@ -58,101 +67,89 @@ export function isAtomicExponent(token: string): boolean {
 }
 
 /**
- * Main's reading of a run, for the shapes where no reading of this function's
- * can be stood behind: each digit glyph as its own `^d`, every other glyph as
- * typed. Not the raw run — Giac lexes a raw `¹` as `undef`, which drops the
- * name it follows — and not a guess.
+ * The reading for a run this cannot read with confidence: each digit glyph as
+ * its own `^d`, every other glyph as typed — what every glyph got before runs
+ * were read at all. Not the raw run, since Giac lexes a raw `¹` as `undef` and
+ * drops the name it follows, and not a guess. After a caret the first `^` is
+ * the caret's own: `x^¹⁺` as `x^^1⁺` is XOR.
  */
-function asOnMain(run: string): string {
-  return Array.from(run, (glyph) =>
+function perGlyphPowers(run: string, caret: string): string {
+  const powers = Array.from(run, (glyph) =>
     /\d/.test(SUPERSCRIPT[glyph]) ? `^${SUPERSCRIPT[glyph]}` : glyph
   ).join('');
+  return caret === '' ? powers.replace(/^\^/, '') : powers;
 }
 
 /**
- * The ASCII for one superscript run found at `at` in `text`: ONE exponent, since
- * replaced a glyph at a time `10⁸⁰` became `10^8^0`, which Giac reads
+ * The ASCII for one superscript run found at `at` in `text`: ONE exponent.
+ * Replaced a glyph at a time, `10⁸⁰` was `10^8^0`, which Giac reads
  * right-associatively as 10^(8^0) — so `simplify(10⁸⁰)` answered 10, as a
  * success, and `2²³` answered 256.
  *
- * A superscript's END is visible, and `^`'s is not, so when anything that is
- * not all digits has an operand after it — past any spaces — the boundary has
- * to be written down. Measured, each unwritten form read the operand into the
- * exponent and answered as a success: bare `x^-1y` answered `1/x^y`; bracketed
- * `x^(-1)(y+1)` answered `x^(-y-1)`, because Giac applies a bracket group to
- * the exponent before it; and `x^-1 y` answered `1/x^y`, a space being
- * juxtaposition. How it is written depends on what follows:
- *   - A digit, a bracket, a decimal point or `√` gets the product:
- *     `2^(-1)*(y+1)` answers `(y+1)/2`. None of them can begin a word. The
- *     exception is a bracket after a NAME, where the run gets main's
- *     reading (asOnMain).
- *   - A run that is not one term gets main's reading too — which leaves
- *     one-sided limit notation (`0⁺`) as main read it, `0*⁺`.
- *   - A letter gets brackets and NO product, since a word may be an operand or
- *     one of Giac's word operators, and a `*` before an operator answered as a
- *     success — `3⁻¹ mod 7` gave `undef % 7`, `2⁻¹ in [1/2,1]` gave 0, and a
- *     list of operators to skip was incomplete twice. Left bracketed, Giac
- *     decides: measured, it refuses `x^(-1)y`, `x^(-1) y`, `x^(-1)θ` and
- *     `x^(-1)sin(x)`, and reads `3^(-1) mod 7`, `3^(-1)mod 7`, `2^(-1) in […]`
- *     and `x^(-1) union y` correctly. So `x⁻¹y` is an error, not `y/x`: the
- *     price of never writing a `*` before a word.
+ * Decided in this order:
  *
- * Otherwise:
- *   - All digits: bare, always, so `x²` stays `x^2` byte for byte — including
- *     before an operand, where it has the hazard above (`x²y` answers
- *     `(x^y)^2`). Left so deliberately: it predates this function, and the fix
- *     changes one-digit output.
- *   - Atomic (isAtomicExponent): bare, the grader's own form.
- *   - Anything else: bracketed, because `^` binds tighter than `+` and `xⁿ⁺¹`
- *     as `x^n+1` is a different expression.
+ *   1. After `^` or `**` the run IS that caret's exponent and gets no caret of
+ *      its own: `x^^2` is XOR, and `simplify(x^²)` answered `bitxor(x,2)`. The
+ *      one change to one-digit output, deliberately.
+ *   2. All digits: bare, whatever follows, so `x²` stays `x^2` byte for byte.
+ *      That keeps a known hazard: `x²y` answers `(x^y)^2`.
+ *   3. Not one term — a sign, then operands joined by single signs — or a
+ *      letter then a digit: per glyph (perGlyphPowers). Any other join spells
+ *      something else to Giac: ending in a sign, `^(+)` is `undef`, and
+ *      `(f⁺)(x) = (f⁻)(x)` verified; doubled, `⁺⁺ⁿ` is the increment `++n`.
+ *      And `ⁿ²` is n² as often as n·2, since superscripts cannot nest; the
+ *      product verified `2ⁿ² = 4ⁿ`.
+ *   4. Then by what follows, past any spaces, since a superscript's END is
+ *      visible and `^`'s is not. Unwritten, each boundary read the operand
+ *      into the exponent and answered as a success: bare `x^-1y` answered
+ *      `1/x^y`; `x^(-1)(y+1)` answered `x^(-y-1)`, Giac applying the bracket
+ *      to the exponent; `x^-1 y` answered `1/x^y`.
+ *        - A bracket after a NAME, before the run or its spaces: per glyph.
+ *          `x⁻¹(y+1)` and `f⁻¹(x)` are one shape, and the product answered
+ *          `f⁻¹(x)` as `x/f`. A name ends in a letter and digits — `12a`
+ *          included, which Giac reads as 12*a.
+ *        - A NAME CALL: per glyph. Bracketed, `x^(-1) sin(x)` is `undef(x)`
+ *          inside a claim, and `x⁻¹ sin(x) = x⁻¹ cos(x)` verified. A word
+ *          operator before a bracket (`3⁻¹ mod (7)`) reads this way too.
+ *        - A digit, a bracket, a decimal point or `√`: the product, since none
+ *          can begin a word. `2^(-1)*(y+1)` answers `(y+1)/2`. `.` counts only
+ *          before a digit: `..` is Giac's range, and a `*` before it made
+ *          `10⁻³..1` answer `0 .. 1/1000`.
+ *        - A letter: brackets and NO product, since a word may be a factor or
+ *          a word operator, and a `*` before an operator answered as a success
+ *          (`3⁻¹ mod 7` gave `undef % 7`). Giac then refuses the factor —
+ *          `x^(-1)y`, `x^(-1) θ` — and reads `3^(-1) mod 7`, `2^(-1) in […]`
+ *          and `x^(-1) union y` correctly. So `x⁻¹y` is an error, not `y/x`.
+ *   5. Otherwise an atomic exponent (isAtomicExponent) is bare, the grader's
+ *      own form, and anything else bracketed: `^` binds tighter than `+`.
  *
- * Letters are multiplied explicitly — joined with nothing, `xⁿⁱ` became the free
- * symbol `x^ni` and was answered as a success, a digit beside a letter makes a
- * name just as well (`n2`). And a run straight after `^` or `**` IS that
- * caret's exponent: adding another made `x^^2`, which Giac reads as XOR, so
- * `simplify(x^²)` answered `bitxor(x,2)`. This is the ONE change
- * to one-digit output, made deliberately and against the rule above: `x^²`
- * and `x**²` were `x^^2` on main.
+ * Inside a term, letters are multiplied explicitly — joined with nothing, `xⁿⁱ`
+ * was the free symbol `x^ni`, answered as a success — as is a digit before a
+ * letter (`x²ⁿ` is x^(2*n)).
  *
  * Not handled: a postfix `^` or `!` after the run binds into the exponent —
- * `x⁻¹^2` answers `1/x`, `x²^3` answers `x^8` — and no output of this function
- * alone can fix that, since the power it should apply to begins at a base this
- * function does not see. Nor function powers: `sin²(x)` and `sin⁻¹(x)` answer
- * a lambda, in every spelling including ASCII.
+ * `x⁻¹^2` answers `1/x`, `x²^3` answers `x^8` — which no output of this
+ * function alone can fix, since the power it should apply to begins at a base
+ * it does not see. Nor function powers: `sin²(x)` answers a lambda, in every
+ * spelling including ASCII. Nor one-sided limit notation: `0⁺` is read per
+ * glyph, as `0*⁺`.
  */
 function superscriptExponent(run: string, at: number, text: string): string {
-  const exponent = Array.from(run, (glyph) => SUPERSCRIPT[glyph])
-    .join('')
-    .replaceAll(/(?<=[a-z])(?=[a-z\d])|(?<=\d)(?=[a-z])/g, '*');
+  const glyphs = Array.from(run, (glyph) => SUPERSCRIPT[glyph]).join('');
   const caret = text[at - 1] === '^' || text.slice(at - 2, at) === '**' ? '' : '^';
-  if (/^\d+$/.test(exponent)) return caret + exponent;
-  // Only a TERM becomes one exponent: a sign, then operands joined by single
-  // signs. Any other join spells something else to Giac — ending in a sign,
-  // `^(+)` is `undef`, and as `(f^(+))(x)` a function head that let
-  // `(f⁺)(x) = (f⁻)(x)` verify; doubled, `⁺⁺ⁿ` is the increment `++n`. An
-  // allow-list, because the deny-lists this replaced were each one shape short.
-  if (!/^[-+]?[a-z\d*]+(?:[-+][a-z\d*]+)*$/.test(exponent)) return asOnMain(run);
-  const rest = text.slice(at + run.length);
-  // `.` only as a decimal point: before another `.` it is Giac's range
-  // operator, and a `*` there made `10⁻³..1` answer `0 .. 1/1000`. `√` too,
-  // since this runs before the rules that turn it into `sqrt(`.
-  if (/^\s*(?:[\p{N}(√]|\.\p{N})/u.test(rest)) {
-    // Between a NAME and a bracket, a power times a factor and an inverse
-    // function are one shape — `x⁻¹(y+1)`, `f⁻¹(x)` — and the product answered
-    // `f⁻¹(x)` as `x/f`, clean-looking where main showed the glyph. So the run
-    // gets main's reading there, one digit glyph at a time and the rest as
-    // typed — not the raw run, whose `¹` Giac lexes as `undef`, dropping the
-    // name: `x⁻¹(y) = z⁻¹(y)` became `undef(y) = undef(y)` and verified. A name is whatever ends in a letter and digits —
-    // `12a` included, which Giac reads as 12*a, a power of the name `a`. 64
-    // code units back is further than any name.
-    const before = text.slice(Math.max(0, at - 64), at);
-    if (/^\s*\(/u.test(rest) && /[\p{L}_][\p{L}\p{N}_]*$/u.test(before)) {
-      return asOnMain(run);
-    }
-    return `${caret}(${exponent})*`;
+  if (/^\d+$/.test(glyphs)) return caret + glyphs;
+  if (!/^[-+]?[a-z\d]+(?:[-+][a-z\d]+)*$/.test(glyphs) || /[a-z]\d/.test(glyphs)) {
+    return perGlyphPowers(run, caret);
   }
-  // Any letter, not ASCII only — `θ` is an identifier to Giac, and so is `𝑦`,
+  const exponent = glyphs.replaceAll(/(?<=[a-z\d])(?=[a-z])/g, '*');
+  const rest = text.slice(at + run.length);
+  const before = text.slice(Math.max(0, at - NAME_WINDOW), at);
+  // Any letter, not ASCII only: `θ` is an identifier to Giac, and so is `𝑦`,
   // which `u` reads as one character rather than two halves of a surrogate.
+  const nameBefore = /[\p{L}_][\p{L}\p{N}_]*\s*$/u.test(before);
+  if (nameBefore && /^\s*\(/u.test(rest)) return perGlyphPowers(run, caret);
+  if (/^\s*[\p{L}_][\p{L}\p{N}_]*\s*\(/u.test(rest)) return perGlyphPowers(run, caret);
+  if (/^\s*(?:[\p{N}(√]|\.\p{N})/u.test(rest)) return `${caret}(${exponent})*`;
   if (/^\s*[\p{L}_]/u.test(rest)) return `${caret}(${exponent})`;
   return caret + (isAtomicExponent(exponent) ? exponent : `(${exponent})`);
 }

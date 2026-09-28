@@ -98,7 +98,6 @@ describe('unicodeToAscii', () => {
   it.each([
     ['xⁿⁱ', 'x^(n*i)'],
     ['x²ⁿ', 'x^(2*n)'],
-    ['xⁿ²', 'x^(n*2)'],
   ])('writes the product inside a superscript run: %s', (input, expected) => {
     expect(unicodeToAscii(input)).toBe(expected);
   });
@@ -195,6 +194,40 @@ describe('unicodeToAscii', () => {
     expect(unicodeToAscii(`f⁻¹(x)${tail}`)).toBe(`f⁻^1(x)${tail}`);
   });
 
+  // A letter then a digit is n² as often as n·2 — superscripts cannot nest, so
+  // `2ⁿ²` is how 2^(n²) is written in plain text — and the product was a
+  // guess that verified `2ⁿ² = 4ⁿ`. Such a run is read glyph by glyph.
+  it.each([
+    ['2ⁿ²', '2ⁿ^2'],
+    ['xⁱ²', 'xⁱ^2'],
+    ['xⁿ²⁺¹', 'xⁿ^2⁺^1'],
+  ])('reads a letter-then-digit run glyph by glyph: %s', (input, expected) => {
+    expect(unicodeToAscii(input)).toBe(expected);
+  });
+
+  // A NAME CALL after the run is neither a factor nor a word operator: Giac
+  // reads `x^(-1) sin(x)` inside a claim as `undef(x)`, and
+  // `x⁻¹ sin(x) = x⁻¹ cos(x)` verified. Read glyph by glyph instead.
+  it.each([
+    ['x⁻¹ sin(x)', 'x⁻^1 sin(x)'],
+    ['x⁻¹sin(x)', 'x⁻^1sin(x)'],
+    ['xⁿ⁺¹ f(x)', 'xⁿ⁺^1 f(x)'],
+    ['x⁻¹ f (x)', 'x⁻^1 f (x)'],
+    ['x⁻¹ θ(x)', 'x⁻^1 θ(x)'],
+  ])('reads a run before a name call glyph by glyph: %s', (input, expected) => {
+    expect(unicodeToAscii(input)).toBe(expected);
+  });
+
+  // A space between a name and the run is still a name before it: without
+  // it, `f ⁻¹(x)` got the product and answered `x/f`.
+  it.each([
+    ['f ⁻¹(x)', 'f ⁻^1(x)'],
+    ['x ⁻¹(y+1)', 'x ⁻^1(y+1)'],
+    ['f\t⁻¹(x)', 'f\t⁻^1(x)'],
+  ])('reads a run after a name and a space as before: %s', (input, expected) => {
+    expect(unicodeToAscii(input)).toBe(expected);
+  });
+
   // Before a LETTER it cannot: a word may be an operand or one of Giac's word
   // operators, and a `*` in front of an operator answered as a success —
   // `simplify(3⁻¹ mod 7)` gave `undef % 7`, `2⁻¹ in [1/2,1]` gave 0, and a
@@ -263,6 +296,9 @@ describe('unicodeToAscii', () => {
     ['x^⁻¹2', 'x^(-1)*2'],
     ['x**⁻¹2', 'x^(-1)*2'],
     ['x^⁻¹y', 'x^(-1)y'],
+    // Read glyph by glyph too: `x^^1⁺` was XOR.
+    ['x^¹⁺', 'x^1⁺'],
+    ['x**¹⁺', 'x^1⁺'],
   ])('adds no second caret after ^ or **: %s', (input, expected) => {
     expect(unicodeToAscii(input)).toBe(expected);
   });
