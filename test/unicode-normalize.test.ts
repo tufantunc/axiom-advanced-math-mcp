@@ -72,8 +72,6 @@ describe('unicodeToAscii', () => {
     ['xⁿ', 'x^n'],
     ['2ⁱ', '2^i'],
     ['xⁿ⁺¹', 'x^(n+1)'],
-    // After a number a bracket group is only a bracket: `2⁽³⁾` is 2³.
-    ['2⁽³⁾', '2^((3))'],
     // Meaningless as an exponent — mapped so compute rejects it, rather than
     // Giac reading it as the identifier `x⁼`.
     ['x⁼', 'x^(=)'],
@@ -81,26 +79,19 @@ describe('unicodeToAscii', () => {
     expect(unicodeToAscii(input)).toBe(expected);
   });
 
-  // After a letter, one bracketed digit is a derivative ORDER, not a power —
-  // `y⁽³⁾` is y'''. Read as `y^((3))`, `desolve(y⁽³⁾=0, y)` answered `[0]`
-  // with a passing substitution check, where main refused it.
+  // `⁽ ⁾` are out of scope: grouping, derivative order and iterate are three
+  // readings of one spelling, and each answered some input wrongly as a
+  // verified success. Unmapped, they end a run, so only the glyphs between
+  // them are read — and Giac, measured, answers these as it did on main: an
+  // error, or an answer showing the glyph.
   it.each([
-    ['y⁽³⁾', "y'''"],
-    ['y⁽¹⁾', "y'"],
-    ['y⁽⁰⁾', 'y'],
-    ['f⁽²⁾(x)', "f''(x)"],
-    ['y⁽⁴⁾=y', "y''''=y"],
-    // A letter outside the BMP is two code units; the second is not a letter.
-    ['𝑦⁽³⁾', "𝑦'''"],
-  ])('reads a bracketed digit after a letter as a derivative order: %s', (input, expected) => {
+    ['y⁽³⁾', 'y⁽^3⁾'],
+    ['x⁽²⁾', 'x⁽^2⁾'],
+    ['2⁽³⁾', '2⁽^3⁾'],
+    ['(a+b)⁽²⁾', '(a+b)⁽^2⁾'],
+    ['y⁽¹⁾³', 'y⁽^1⁾^3'],
+  ])('leaves superscript brackets unmapped: %s', (input, expected) => {
     expect(unicodeToAscii(input)).toBe(expected);
-  });
-
-  // Any other lone bracket group after a letter has no reading this can stand
-  // behind — `y⁽ⁿ⁾` is an order nothing can spell in primes, `y⁽¹⁰⁾` one too
-  // long to — so it is left as typed, and Giac sees exactly what it saw on main.
-  it.each([['y⁽ⁿ⁾'], ['y⁽¹⁰⁾'], ['y⁽⁻¹⁾']])('leaves %s as typed', (input) => {
-    expect(unicodeToAscii(input)).toBe(input);
   });
 
   // Joined with nothing between them, two letters were one identifier:
@@ -110,11 +101,6 @@ describe('unicodeToAscii', () => {
     ['xⁿⁱ', 'x^(n*i)'],
     ['x²ⁿ', 'x^(2*n)'],
     ['xⁿ²', 'x^(n*2)'],
-    // Beside a bracket too: `n(i+1)` is a call to a function `n`, and measured,
-    // `simplify(xⁿ⁽ⁱ⁺¹⁾)` answered `x^(n(1+i))` as a success.
-    ['xⁿ⁽ⁱ⁺¹⁾', 'x^(n*(i+1))'],
-    ['x⁽ⁿ⁾ⁱ', 'x^((n)*i)'],
-    ['x²⁽ⁿ⁾', 'x^(2*(n))'],
   ])('writes the product inside a superscript run: %s', (input, expected) => {
     expect(unicodeToAscii(input)).toBe(expected);
   });

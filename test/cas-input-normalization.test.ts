@@ -54,8 +54,6 @@ describe('compute end-to-end — superscript runs', () => {
     // not `x^(-y-1)`, not `1/x^12`.
     ['simplify(x⁻¹(y+1))', '(y+1)/x'],
     ['simplify(x⁻¹2)', '2/x'],
-    // Not `x^(n(1+i))`, a call to a function `n`.
-    ['simplify(xⁿ⁽ⁱ⁺¹⁾)', 'x^((1+i)*n)'],
     // A word operator after the run is an operator: not `undef % 7`, not 0,
     // not an `undef` set expression.
     ['simplify(3⁻¹ mod 7)', '-2 % 7'],
@@ -65,19 +63,6 @@ describe('compute end-to-end — superscript runs', () => {
     ['simplify(10⁻³..1)', '(1/1000) .. 1'],
     ['integrate(x, x=10⁻³..1)', '999999/2000000'],
   ])('%s evaluates the exponent as written', async (problem, expected) => {
-    const r = await computeHandler({ problem });
-    const text = allText(r);
-    expect(r.isError, text).toBe(false);
-    expect(text).toMatch(
-      new RegExp(`^Result: ${expected.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}$`, 'm')
-    );
-  });
-
-  // A derivative order is solved as one: not `[0]`, the root of y³ = 0.
-  it.each([
-    ['desolve(y⁽³⁾=0, y)', '(x^2*c_2+2*x*c_1+2*c_0)/2'],
-    ['desolve([y⁽²⁾+y=0, y(0)=1, y⁽¹⁾(0)=0], y)', 'cos(x)'],
-  ])('%s solves the ODE the notation denotes', async (problem, expected) => {
     const r = await computeHandler({ problem });
     const text = allText(r);
     expect(r.isError, text).toBe(false);
@@ -99,8 +84,11 @@ describe('compute end-to-end — superscript runs', () => {
     ['simplify(x⁻¹𝑦)'],
     ['simplify(x⁻¹Y)'],
     ['simplify(2⁻¹ Pi)'],
-    // An order no primes spell: refused, as on main — not a power.
-    ['desolve(y⁽ⁿ⁾=0, y)'],
+    // Superscript brackets are not read (see unicodeToAscii): each of these
+    // answered a clean-looking wrong result, verified, while they were.
+    ['desolve(y⁽³⁾=0, y)'],
+    ['desolve(y⁽¹⁾³=x, y)'],
+    ['simplify((a+b)⁽²⁾)'],
   ])('%s is refused rather than answered', async (problem) => {
     const r = await computeHandler({ problem });
     expect(r.isError, allText(r)).toBe(true);

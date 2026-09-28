@@ -1,9 +1,9 @@
 /**
- * Every character of Unicode's Superscripts block (U+2070–U+207F), plus the three
- * Latin-1 digits `¹²³`, as the ASCII it stands for.
+ * Unicode's Superscripts block (U+2070–U+207F) less its brackets, plus the three
+ * Latin-1 digits `¹²³`, as the ASCII each stands for.
  *
- * The whole block, because the measured alternative was worse at every glyph
- * left out: an unmapped superscript reaches Giac as part of an identifier and
+ * Nearly the whole block, because the measured alternative was worse at each
+ * glyph left out: an unmapped superscript reaches Giac as part of an identifier and
  * comes back as a confident answer — `simplify(x⁻¹)` answered the free symbol
  * `x⁻`, `simplify(xⁿ⁺¹)` answered `xⁿ⁺`, and `simplify(2ⁱ)` answered `2*i`. `⁼`
  * has no meaning in an exponent and is mapped anyway, so `x⁼` becomes `x^(=)`,
@@ -12,14 +12,17 @@
  * in ASCII — a defect of verify's identity path that this spelling reaches but
  * did not create.
  *
- * `⁽ ⁾` after a letter are derivative-order notation rather than grouping, so
- * `y⁽³⁾` is y''' — and `x⁽²⁾` is therefore x'' (answering 0), not x²: the
- * notation is ambiguous and the derivative is its conventional reading. See
- * superscriptExponent.
- *
- * Out of scope, deliberately: modifier letters outside this block (`ˣ` U+02E3,
- * `ᵃ` U+1D43 and the rest), an open-ended alphabet with no block boundary to
- * stop at — `eˣ` still reaches Giac as an identifier and still answers `eˣ`; and
+ * Out of scope, deliberately: `⁽ ⁾`, which are three notations rather than one
+ * — grouping (`2⁽³⁾`), derivative order (`y⁽³⁾` is y'''), iterate (`f⁽²⁾`) —
+ * and every reading measured here answered some input wrongly as a verified
+ * success: as grouping, `desolve(y⁽³⁾=0, y)` answered `[0]`; as a derivative,
+ * `simplify((a+b)⁽²⁾)` answered 0 and `desolve(y⁽¹⁾³=x, y)` `[x^(1/3)]`; left
+ * as typed, `integrate(x⁽ⁿ⁾, x)` answered `x⁽ⁿ⁾*x`. Unmapped, they end a run
+ * and reach Giac as they did on main, and measured, each of those inputs then
+ * answers as main does: an error, or an answer that shows the glyph
+ * (`[(y⁽^⁾)^4]`) rather than a clean-looking wrong one. Also modifier letters
+ * outside this block (`ˣ` U+02E3, `ᵃ` U+1D43 and the rest), an open-ended
+ * alphabet with no block boundary to stop at — `eˣ` still reaches Giac as an identifier and still answers `eˣ`; and
  * subscripts, since `x₁` reads as a variable named `x₁`, which is a meaning
  * rather than an accident.
  */
@@ -37,8 +40,6 @@ const SUPERSCRIPT: Readonly<Record<string, string>> = {
   '⁺': '+',
   '⁻': '-',
   '⁼': '=',
-  '⁽': '(',
-  '⁾': ')',
   ⁱ: 'i',
   ⁿ: 'n',
 };
@@ -93,10 +94,11 @@ export function isAtomicExponent(token: string): boolean {
  *
  * Letters are multiplied explicitly — joined with nothing, `xⁿⁱ` became the free
  * symbol `x^ni` and was answered as a success, a digit beside a letter makes a
- * name just as well (`n2`), and a letter before a bracket makes a call (`n(i+1)`
- * answered `x^(n(1+i))`). And a run straight after `^` or `**` IS that
+ * name just as well (`n2`). And a run straight after `^` or `**` IS that
  * caret's exponent: adding another made `x^^2`, which Giac reads as XOR, so
- * `simplify(x^²)` answered `bitxor(x,2)`.
+ * `simplify(x^²)` answered `bitxor(x,2)`. This is the ONE change
+ * to one-digit output, made deliberately and against the rule above: `x^²`
+ * and `x**²` were `x^^2` on main.
  *
  * Not handled: a postfix `^` or `!` after the run binds into the exponent —
  * `x⁻¹^2` answers `1/x`, `x²^3` answers `x^8` — and no output of this function
@@ -105,19 +107,9 @@ export function isAtomicExponent(token: string): boolean {
  * a lambda, in every spelling including ASCII.
  */
 function superscriptExponent(run: string, at: number, text: string): string {
-  // After a letter, a lone bracket group is a derivative ORDER, not a power:
-  // `y⁽³⁾` is y'''. Read as `y^((3))`, `desolve(y⁽³⁾=0, y)` answered `[0]` —
-  // the root of y³ = 0 — with a passing substitution check, where main refused
-  // it. One digit is spelled in primes; any other order (`⁽ⁿ⁾`, `⁽¹⁰⁾`) has no
-  // spelling this can stand behind, and is left exactly as typed. The slice
-  // is two code units so a letter outside the BMP is read whole.
-  if (/^⁽[^⁽⁾]*⁾$/u.test(run) && /[\p{L}_]$/u.test(text.slice(Math.max(0, at - 2), at))) {
-    const order = /^⁽([⁰¹²³⁴⁵⁶⁷⁸⁹])⁾$/u.exec(run)?.[1];
-    return order === undefined ? run : "'".repeat(Number(SUPERSCRIPT[order]));
-  }
   const exponent = Array.from(run, (glyph) => SUPERSCRIPT[glyph])
     .join('')
-    .replaceAll(/(?<=[a-z)])(?=[a-z\d(])|(?<=\d)(?=[a-z(])/g, '*');
+    .replaceAll(/(?<=[a-z])(?=[a-z\d])|(?<=\d)(?=[a-z])/g, '*');
   const caret = text[at - 1] === '^' || text.slice(at - 2, at) === '**' ? '' : '^';
   if (/^\d+$/.test(exponent)) return caret + exponent;
   const rest = text.slice(at + run.length);
