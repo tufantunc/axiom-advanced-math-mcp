@@ -1490,9 +1490,10 @@ describe('a condition is bounded by what it denotes, not by one operator at a ti
   // downstream of this whole bound — at giac-eval.ts, long after it has
   // returned — so the guard has to normalise its own input or it is reading a
   // different string from the one Giac gets. A run of superscripts is one
-  // exponent, so `⁹⁹` is `^99`: 99 × log10(1000!) is 254,193 digits. It was
-  // `^9^9` — 1000!^(9^9), 994,742,646,824 digits — while the normaliser mapped
-  // each digit separately, which is what this row pinned until that was fixed.
+  // exponent, so `⁹⁹` is `^99`, and 1000!^99 has floor(99 × log10 1000!) + 1
+  // = 254,193 digits. It was `^9^9` — 1000!^(9^9), 994,742,646,824 digits —
+  // while the normaliser mapped each digit separately, which is what this row
+  // pinned until that was fixed.
   it('refuses 1000!⁹⁹, whose `^` only exists after normalisation', async () => {
     const r = await computeHandler({ problem: "desolve(y'=y, y(0)=1000!\u{2079}\u{2079}, x, y)" });
     expect(r.isError, text(r)).toBe(true);
