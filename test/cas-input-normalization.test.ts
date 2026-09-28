@@ -51,8 +51,9 @@ describe('compute end-to-end — superscript runs', () => {
     // Not `bitxor(x,2)`, which the doubled caret answered.
     ['simplify(x^²)', 'x^2'],
     // A bracket or digit after the run is a factor, not part of the exponent:
-    // not `x^(-y-1)`, not `1/x^12`.
-    ['simplify(x⁻¹(y+1))', '(y+1)/x'],
+    // not `2^(-y-1)`, not `1/x^12`.
+    ['simplify(2⁻¹(y+1))', '(y+1)/2'],
+    ['simplify((x+1)⁻¹(x-1))', '(x-1)/(x+1)'],
     ['simplify(x⁻¹2)', '2/x'],
     // A word operator after the run is an operator: not `undef % 7`, not 0,
     // not an `undef` set expression.
@@ -86,12 +87,29 @@ describe('compute end-to-end — superscript runs', () => {
     ['simplify(2⁻¹ Pi)'],
     // Superscript brackets are not read (see unicodeToAscii): each of these
     // answered a clean-looking wrong result, verified, while they were.
+    // One-sided limit notation is not read: on main `0⁻` was the product
+    // `0*⁻`, so this answered `infinity`, and the left limit is -infinity.
+    ['limit(1/x, x, 0⁻)'],
     ['desolve(y⁽³⁾=0, y)'],
     ['desolve(y⁽¹⁾³=x, y)'],
     ['simplify((a+b)⁽²⁾)'],
   ])('%s is refused rather than answered', async (problem) => {
     const r = await computeHandler({ problem });
     expect(r.isError, allText(r)).toBe(true);
+  });
+});
+
+// `f⁻¹(x)` is left as typed (see unicodeToAscii), so whatever Giac answers
+// shows that it failed — an error, the glyph, or `undef` — and is not one of
+// the clean products the written `*` gave.
+describe('compute end-to-end — inverse-function notation', () => {
+  it.each([
+    ['simplify(f⁻¹(x))', 'x/f'],
+    ['diff(g⁻¹(t), t)', '1/g'],
+  ])('%s is not answered as %s', async (problem, wrong) => {
+    const text = allText(await computeHandler({ problem }));
+    expect(text).not.toMatch(new RegExp(`^Result: ${wrong.replace('/', '\\/')}$`, 'm'));
+    expect(text).toMatch(/^(Result: .*(⁻|undef)|Error: )/m);
   });
 });
 

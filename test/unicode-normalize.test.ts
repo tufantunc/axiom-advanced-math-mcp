@@ -112,8 +112,9 @@ describe('unicodeToAscii', () => {
   // Before a digit, a bracket, `.` or `√` — none of which can begin a word —
   // the product the typography means is written out.
   it.each([
-    ['x⁻¹(y+1)', 'x^(-1)*(y+1)'],
-    ['x⁻¹ (y+1)', 'x^(-1)* (y+1)'],
+    ['2⁻¹(y+1)', '2^(-1)*(y+1)'],
+    ['(x+1)⁻¹(x-1)', '(x+1)^(-1)*(x-1)'],
+    ['2⁻¹ (y+1)', '2^(-1)* (y+1)'],
     ['x⁻¹√2', 'x^(-1)*sqrt(2)'],
     // A digit, bare, would extend the exponent: `x^-12` is not x⁻¹·2.
     ['x⁻¹2', 'x^(-1)*2'],
@@ -125,6 +126,17 @@ describe('unicodeToAscii', () => {
   ])('writes the product before a non-letter operand: %s', (input, expected) => {
     expect(unicodeToAscii(input)).toBe(expected);
   });
+
+  // Between a NAME and a bracket, nothing local tells a power times a factor
+  // from an inverse function: `x⁻¹(y+1)` and `f⁻¹(x)` are one shape. The
+  // product answered `f⁻¹(x)` as `x/f` and `g⁻¹(t)`'s derivative as `1/g`,
+  // clean-looking where main showed the glyph, so the run is left as typed.
+  it.each([['f⁻¹(x)'], ['x⁻¹(y+1)'], ['y1⁻¹(x)'], ['12a⁻¹(x)'], ['x⁻¹ (y+1)'], ['𝑓⁻¹(x)']])(
+    'leaves a run between a name and a bracket as typed: %s',
+    (input) => {
+      expect(unicodeToAscii(input)).toBe(input);
+    }
+  );
 
   // Before a LETTER it cannot: a word may be an operand or one of Giac's word
   // operators, and a `*` in front of an operator answered as a success —

@@ -73,7 +73,11 @@ export function isAtomicExponent(token: string): boolean {
  * the exponent before it; and `x^-1 y` answered `1/x^y`, a space being
  * juxtaposition. How it is written depends on what follows:
  *   - A digit, a bracket, a decimal point or `√` gets the product:
- *     `x^(-1)*(y+1)` answers `(y+1)/x`. None of them can begin a word.
+ *     `2^(-1)*(y+1)` answers `(y+1)/2`. None of them can begin a word. The
+ *     exception is a bracket after a NAME, where the run is left as typed.
+ *     One-sided limit notation (`0⁺`, `0⁻`) is not read either: `0^(+)` is
+ *     refused, where main read `0⁻` as the product `0*⁻` and answered
+ *     `limit(1/x, x, 0⁻)` as infinity.
  *   - A letter gets brackets and NO product, since a word may be an operand or
  *     one of Giac's word operators, and a `*` before an operator answered as a
  *     success — `3⁻¹ mod 7` gave `undef % 7`, `2⁻¹ in [1/2,1]` gave 0, and a
@@ -116,7 +120,19 @@ function superscriptExponent(run: string, at: number, text: string): string {
   // `.` only as a decimal point: before another `.` it is Giac's range
   // operator, and a `*` there made `10⁻³..1` answer `0 .. 1/1000`. `√` too,
   // since this runs before the rules that turn it into `sqrt(`.
-  if (/^\s*(?:[\p{N}(√]|\.\p{N})/u.test(rest)) return `${caret}(${exponent})*`;
+  if (/^\s*(?:[\p{N}(√]|\.\p{N})/u.test(rest)) {
+    // Between a NAME and a bracket, a power times a factor and an inverse
+    // function are one shape — `x⁻¹(y+1)`, `f⁻¹(x)` — and the product answered
+    // `f⁻¹(x)` as `x/f`, clean-looking where main showed the glyph. So the run
+    // is left as typed there. A name is whatever ends in a letter and digits —
+    // `12a` included, which Giac reads as 12*a, a power of the name `a`. 64
+    // code units back is further than any name.
+    const before = text.slice(Math.max(0, at - 64), at);
+    if (/^\s*\(/u.test(rest) && /[\p{L}_][\p{L}\p{N}_]*$/u.test(before)) {
+      return run;
+    }
+    return `${caret}(${exponent})*`;
+  }
   // Any letter, not ASCII only — `θ` is an identifier to Giac, and so is `𝑦`,
   // which `u` reads as one character rather than two halves of a surrogate.
   if (/^\s*[\p{L}_]/u.test(rest)) return `${caret}(${exponent})`;
