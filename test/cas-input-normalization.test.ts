@@ -99,13 +99,15 @@ describe('compute end-to-end — superscript runs', () => {
   });
 });
 
-// `f⁻¹(x)` is left as typed (see unicodeToAscii), so whatever Giac answers
-// shows that it failed — an error, the glyph, or `undef` — and is not one of
-// the clean products the written `*` gave.
+// `f⁻¹(x)` reaches Giac as it did on main (see unicodeToAscii), so whatever
+// Giac answers shows that it failed — an error or the glyph — and is not one
+// of the clean products the written `*` gave.
 describe('compute end-to-end — inverse-function notation', () => {
   it.each([
     ['simplify(f⁻¹(x))', 'x/f'],
     ['diff(g⁻¹(t), t)', '1/g'],
+    ['simplify(f⁻¹(x) + sin(x)^2 + cos(x)^2 - 1 + tan(x)*cos(x) - sin(x))', 'x/f'],
+    ['simplify(f10⁻¹(x))', 'x/f10'],
   ])('%s is not answered as %s', async (problem, wrong) => {
     const text = allText(await computeHandler({ problem }));
     expect(text).not.toMatch(new RegExp(`^Result: ${wrong.replace('/', '\\/')}$`, 'm'));
@@ -114,6 +116,16 @@ describe('compute end-to-end — inverse-function notation', () => {
 });
 
 describe('verify tool — input unicode normalization', () => {
+  // Sent raw, `¹` lexes as `undef` and drops the name, so both sides became
+  // one `undef(y)` and these were verified with high confidence.
+  it.each([['sin⁻¹(x) = cos⁻¹(x)'], ['x⁻¹(y) = z⁻¹(y)'], ['x⁻¹(y) = x⁺¹(y)']])(
+    'does not verify %s',
+    async (claim) => {
+      const text = allText(await verifyHandler({ claim }));
+      expect(text).not.toContain('Verified: TRUE');
+    }
+  );
+
   it('reads a multi-digit superscript as one exponent', async () => {
     const r = await verifyHandler({ claim: '2²³ = 8388608' });
     expect(allText(r)).toContain('Verified: TRUE ✓');

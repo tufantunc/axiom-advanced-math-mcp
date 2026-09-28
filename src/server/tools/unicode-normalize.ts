@@ -124,12 +124,16 @@ function superscriptExponent(run: string, at: number, text: string): string {
     // Between a NAME and a bracket, a power times a factor and an inverse
     // function are one shape — `x⁻¹(y+1)`, `f⁻¹(x)` — and the product answered
     // `f⁻¹(x)` as `x/f`, clean-looking where main showed the glyph. So the run
-    // is left as typed there. A name is whatever ends in a letter and digits —
+    // gets main's reading there, one digit glyph at a time and the rest as
+    // typed — not the raw run, whose `¹` Giac lexes as `undef`, dropping the
+    // name: `x⁻¹(y) = z⁻¹(y)` became `undef(y) = undef(y)` and verified. A name is whatever ends in a letter and digits —
     // `12a` included, which Giac reads as 12*a, a power of the name `a`. 64
     // code units back is further than any name.
     const before = text.slice(Math.max(0, at - 64), at);
     if (/^\s*\(/u.test(rest) && /[\p{L}_][\p{L}\p{N}_]*$/u.test(before)) {
-      return run;
+      return Array.from(run, (glyph) =>
+        /\d/.test(SUPERSCRIPT[glyph]) ? `^${SUPERSCRIPT[glyph]}` : glyph
+      ).join('');
     }
     return `${caret}(${exponent})*`;
   }

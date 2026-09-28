@@ -130,13 +130,33 @@ describe('unicodeToAscii', () => {
   // Between a NAME and a bracket, nothing local tells a power times a factor
   // from an inverse function: `x⁻¹(y+1)` and `f⁻¹(x)` are one shape. The
   // product answered `f⁻¹(x)` as `x/f` and `g⁻¹(t)`'s derivative as `1/g`,
-  // clean-looking where main showed the glyph, so the run is left as typed.
-  it.each([['f⁻¹(x)'], ['x⁻¹(y+1)'], ['y1⁻¹(x)'], ['12a⁻¹(x)'], ['x⁻¹ (y+1)'], ['𝑓⁻¹(x)']])(
-    'leaves a run between a name and a bracket as typed: %s',
-    (input) => {
-      expect(unicodeToAscii(input)).toBe(input);
-    }
-  );
+  // clean-looking where main showed the glyph. So the run gets main's
+  // one-glyph-at-a-time reading — and not the raw run, whose `¹` Giac lexes
+  // as `undef`, which let verify prove `x⁻¹(y) = z⁻¹(y)`.
+  it.each([
+    ['f⁻¹(x)', 'f⁻^1(x)'],
+    ['x⁻¹(y+1)', 'x⁻^1(y+1)'],
+    ['y1⁻¹(x)', 'y1⁻^1(x)'],
+    ['12a⁻¹(x)', '12a⁻^1(x)'],
+    ['f10⁻¹(x)', 'f10⁻^1(x)'],
+    ['x12⁻¹(y+1)', 'x12⁻^1(y+1)'],
+    // Long trailing digits, so the window behind the run is known to reach
+    // the name's letter: cut short, `a1234567890` reads as a number.
+    ['theta2024⁻¹(x)', 'theta2024⁻^1(x)'],
+    ['a1234567890⁻¹(x)', 'a1234567890⁻^1(x)'],
+    ['x⁻¹ (y+1)', 'x⁻^1 (y+1)'],
+    ['𝑓⁻¹(x)', '𝑓⁻^1(x)'],
+    ['xⁿ⁺¹²(y)', 'xⁿ⁺^1^2(y)'],
+  ])('reads a run between a name and a bracket as main did: %s', (input, expected) => {
+    expect(unicodeToAscii(input)).toBe(expected);
+  });
+
+  // The name is read from a window behind the run; near the start of a long
+  // text that window must still be the text's start, not its end.
+  it('reads an early run between a name and a bracket as main did, in a long text', () => {
+    const tail = ` + ${'a+'.repeat(40)}a`;
+    expect(unicodeToAscii(`f⁻¹(x)${tail}`)).toBe(`f⁻^1(x)${tail}`);
+  });
 
   // Before a LETTER it cannot: a word may be an operand or one of Giac's word
   // operators, and a `*` in front of an operator answered as a success —
