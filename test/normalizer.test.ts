@@ -32,10 +32,20 @@ describe('normalizer — LaTeX/Unicode basics', () => {
     expect(normalize('10⁻³')).toMatchObject({ canonical: '10^-3', decimal: 0.001 });
   });
 
-  it('gives a superscript exponent the same canonical form as its LaTeX spelling', () => {
+  it('gives a standalone superscript exponent the same canonical form as its LaTeX spelling', () => {
     expect(normalize('x⁻¹').canonical).toBe(normalize('x^{-1}').canonical);
     expect(normalize('xⁿ').canonical).toBe(normalize('x^{n}').canonical);
     expect(normalize('xⁿ⁺¹').canonical).toBe(normalize('x^{n+1}').canonical);
+  });
+
+  // KNOWN DIFFERENCE, pinned so that closing it is a decision: followed by an
+  // operand, the superscript writes the product (Giac otherwise reads the
+  // operand into the exponent) and the grader's `^{…}` rule does not. Making
+  // the grader write it too changes benchmark scoring, which is not this rule's
+  // call to make.
+  it('does not yet match the LaTeX spelling when an operand follows', () => {
+    expect(normalize('x⁻¹y').canonical).toBe('x^(-1)*y');
+    expect(normalize('x^{-1}y').canonical).toBe('x^-1y');
   });
 
   it('rewrites \\cdot, \\times, ÷', () => {

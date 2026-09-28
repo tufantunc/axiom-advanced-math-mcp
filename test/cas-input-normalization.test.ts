@@ -55,11 +55,19 @@ describe('compute end-to-end — superscript runs', () => {
     ['simplify(x⁻¹y)', 'y/x'],
     ['simplify(x⁻¹ y)', 'y/x'],
     ['simplify(x⁻¹(y+1))', '(y+1)/x'],
+    // Not `1/x^12`.
+    ['simplify(x⁻¹2)', '2/x'],
+    // Not `x^(n(1+i))`, a call to a function `n`.
+    ['simplify(xⁿ⁽ⁱ⁺¹⁾)', 'x^((1+i)*n)'],
+    // The inverse of 3 mod 7 is 5 ≡ -2 — not `undef % 7`.
+    ['simplify(3⁻¹ mod 7)', '-2 % 7'],
   ])('%s evaluates the exponent as written', async (problem, expected) => {
     const r = await computeHandler({ problem });
     const text = allText(r);
     expect(r.isError, text).toBe(false);
-    expect(text).toMatch(new RegExp(`^Result: ${expected.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}$`, 'm'));
+    expect(text).toMatch(
+      new RegExp(`^Result: ${expected.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}$`, 'm')
+    );
   });
 
   // Where no reading is right, the answer has to be an error — each of these

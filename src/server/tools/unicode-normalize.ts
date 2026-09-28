@@ -43,9 +43,11 @@ const SUPERSCRIPT_RUN = new RegExp(`[${Object.keys(SUPERSCRIPT).join('')}]+`, 'g
 
 /**
  * An exponent that needs no brackets after `^`: a signed integer or one letter.
- * Shared with the benchmark grader's `^{…}` rule, so `x⁻¹` and `x^{-1}` reach
- * one canonical form — each site adds its own policy around it, this is only
- * the part the two must agree on.
+ * Shared with the benchmark grader's `^{…}` rule, so a standalone `x⁻¹` and
+ * `x^{-1}` reach one canonical form — each site adds its own policy around it,
+ * this is only the part the two must agree on. They still differ when an
+ * operand follows (`x⁻¹y` writes the product, `x^{-1}y` does not); see
+ * test/normalizer.test.ts.
  */
 export function isAtomicExponent(token: string): boolean {
   return /^(-?\d+|[A-Za-z])$/.test(token);
@@ -75,8 +77,9 @@ export function isAtomicExponent(token: string): boolean {
  *     as `x^n+1` is a different expression.
  *
  * Letters are multiplied explicitly — joined with nothing, `xⁿⁱ` became the free
- * symbol `x^ni` and was answered as a success, and a digit beside a letter makes
- * a name just as well (`n2`). And a run straight after `^` or `**` IS that
+ * symbol `x^ni` and was answered as a success, a digit beside a letter makes a
+ * name just as well (`n2`), and a letter before a bracket makes a call (`n(i+1)`
+ * answered `x^(n(1+i))`). And a run straight after `^` or `**` IS that
  * caret's exponent: adding another made `x^^2`, which Giac reads as XOR, so
  * `simplify(x^²)` answered `bitxor(x,2)`.
  *
@@ -89,12 +92,14 @@ export function isAtomicExponent(token: string): boolean {
 function superscriptExponent(run: string, at: number, text: string): string {
   const exponent = Array.from(run, (glyph) => SUPERSCRIPT[glyph])
     .join('')
-    .replaceAll(/(?<=[a-z])(?=[a-z\d])|(?<=\d)(?=[a-z])/g, '*');
+    .replaceAll(/(?<=[a-z)])(?=[a-z\d(])|(?<=\d)(?=[a-z(])/g, '*');
   const caret = text[at - 1] === '^' || text.slice(at - 2, at) === '**' ? '' : '^';
   if (/^\d+$/.test(exponent)) return caret + exponent;
   // Any letter, not ASCII only — `θ` is an identifier to Giac — and `√`, since
-  // this runs before the rules that turn it into `sqrt(`.
-  if (/^\s*[\p{L}\p{N}_.(√]/u.test(text.slice(at + run.length))) {
+  // this runs before the rules that turn it into `sqrt(`. But not Giac's word
+  // operators, which are letters and not operands: a `*` before `mod` made
+  // `simplify(3⁻¹ mod 7)` answer `undef % 7`.
+  if (/^\s*(?!(?:mod|and|or|xor)\b)[\p{L}\p{N}_.(√]/u.test(text.slice(at + run.length))) {
     return `${caret}(${exponent})*`;
   }
   return caret + (isAtomicExponent(exponent) ? exponent : `(${exponent})`);

@@ -87,6 +87,11 @@ describe('unicodeToAscii', () => {
     ['xⁿⁱ', 'x^(n*i)'],
     ['x²ⁿ', 'x^(2*n)'],
     ['xⁿ²', 'x^(n*2)'],
+    // Beside a bracket too: `n(i+1)` is a call to a function `n`, and measured,
+    // `simplify(xⁿ⁽ⁱ⁺¹⁾)` answered `x^(n(1+i))` as a success.
+    ['xⁿ⁽ⁱ⁺¹⁾', 'x^(n*(i+1))'],
+    ['x⁽ⁿ⁾ⁱ', 'x^((n)*i)'],
+    ['x²⁽ⁿ⁾', 'x^(2*(n))'],
   ])('writes the product inside a superscript run: %s', (input, expected) => {
     expect(unicodeToAscii(input)).toBe(expected);
   });
@@ -105,9 +110,23 @@ describe('unicodeToAscii', () => {
     ['xⁿ⁺¹y', 'x^(n+1)*y'],
     ['x⁻¹π', 'x^(-1)*pi'],
     ['x⁻¹√2', 'x^(-1)*sqrt(2)'],
+    // A digit, bare, would extend the exponent: `x^-12` is not x⁻¹·2.
+    ['x⁻¹2', 'x^(-1)*2'],
+    ['x⁻¹ 2', 'x^(-1)* 2'],
+    ['2ⁿ3', '2^(n)*3'],
+    ['x⁻¹.5', 'x^(-1)*.5'],
+    ['x⁻¹_a', 'x^(-1)*_a'],
     // An operator is a boundary already.
     ['x⁻¹+1', 'x^-1+1'],
     ['x⁻¹ + 1', 'x^-1 + 1'],
+    // Giac's word operators are letters but not operands: a `*` in front of
+    // `mod` made `simplify(3⁻¹ mod 7)` answer `undef % 7`, as a success.
+    ['3⁻¹ mod 7', '3^-1 mod 7'],
+    ['xⁿ and y', 'x^n and y'],
+    ['xⁿ or y', 'x^n or y'],
+    ['x⁻¹ xor y', 'x^-1 xor y'],
+    // …and only as whole words: `modulus` is an operand.
+    ['x⁻¹ modulus', 'x^(-1)* modulus'],
   ])('writes the product after a signed or letter exponent: %s', (input, expected) => {
     expect(unicodeToAscii(input)).toBe(expected);
   });
@@ -127,6 +146,9 @@ describe('unicodeToAscii', () => {
     ['x**²', 'x^2'],
     ['x^⁻¹', 'x^-1'],
     ['x^²³', 'x^23'],
+    // The same caret, when the exponent also needs its product written.
+    ['x^⁻¹y', 'x^(-1)*y'],
+    ['x**⁻¹y', 'x^(-1)*y'],
   ])('adds no second caret after ^ or **: %s', (input, expected) => {
     expect(unicodeToAscii(input)).toBe(expected);
   });
