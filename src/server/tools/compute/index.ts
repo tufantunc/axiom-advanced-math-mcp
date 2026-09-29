@@ -5,6 +5,7 @@ import type { ComputeEnvelope } from './types.js';
 import { COMPONENT_ORDER_PREFIX } from '../response-formatter.js';
 import { applyHygiene } from './hygiene.js';
 import { giacEngine } from '../../giac/index.js';
+import { superscriptRefusal } from '../unicode-normalize.js';
 
 export { computeSchema } from './schema.js';
 export type { ComputeEnvelope, ResultType } from './types.js';
@@ -13,6 +14,7 @@ export type { ComputeEnvelope, ResultType } from './types.js';
  * Main compute handler — single gateway for all math computations.
  *
  * Flow:
+ * 0. Refuse: a superscript with no reading is refused before any route sees it
  * 1. Route: pattern-match the problem string → handler key + extracted args
  * 2. Dispatch: call the existing handler with extracted args
  * 3. Normalize: convert MCP response → ComputeEnvelope
@@ -26,6 +28,18 @@ export async function computeHandler(
   const format = (args.format as string) || 'text';
 
   try {
+    // 0. Refuse. Here, once, because every route normalises on its own path —
+    // some through evalWithLatex, some straight to the engine. Through normalize
+    // like any other failure, so json gets the envelope every failure gets.
+    const refusal = typeof problem === 'string' ? superscriptRefusal(problem) : undefined;
+    if (refusal !== undefined) {
+      const refused = {
+        content: [{ type: 'text' as const, text: `Error: ${refusal}` }],
+        isError: true,
+      };
+      return formatOutput(normalize(refused, 'refused', {}), format, refused);
+    }
+
     // 1. Route
     const { handler, args: handlerArgs } = route(problem, domain);
 

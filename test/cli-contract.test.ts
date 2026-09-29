@@ -121,6 +121,14 @@ describe('CLI — compute', () => {
     expect(envelope.display).toBe('{-2, 2}');
   }, 30_000);
 
+  // Refused, not evaluated: `2ⁱ²` answered -2 when it was read glyph by glyph.
+  it('exits 1 with nothing on stdout for an ambiguous superscript', async () => {
+    const r = await cli(['compute', 'simplify(2ⁱ²)']);
+    expect(r.code).toBe(1);
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toContain('`ⁱ²`');
+  }, 30_000);
+
   it('reads the expression from stdin', async () => {
     const r = await cli(['compute', '-q'], 'diff(x^3,x)\n');
     expect(r.code).toBe(0);
@@ -212,6 +220,15 @@ describe('CLI — verify', () => {
     expect(r.stdout).toBe('');
   }, 30_000);
 
+  // The superscript refusal lives in the handlers both surfaces call: pinned
+  // here so it cannot move to one surface and leave the CLI evaluating `2ⁱ²`.
+  it('exits 1 with nothing on stdout for a claim with an ambiguous superscript', async () => {
+    const r = await cli(['verify', 'x⁻¹ sin(x) = x⁻¹ cos(x)']);
+    expect(r.code).toBe(1);
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toContain('more than one reading');
+  }, 30_000);
+
   it('-q emits no verdict at all when the claim could not be checked', async () => {
     // A quiet-mode "false" on stdout would be captured by a script as a real
     // verdict, so nothing may reach stdout on this path.
@@ -272,7 +289,7 @@ describe('CLI — meta', () => {
     expect(r.stdout).toContain('axiom-math compute');
   });
 
-  it('compute --help exits 0 and documents only compute\'s own flags', async () => {
+  it("compute --help exits 0 and documents only compute's own flags", async () => {
     const r = await cli(['compute', '--help']);
     expect(r.code).toBe(0);
     expect(r.stdout).toContain('axiom-math compute');
@@ -283,7 +300,7 @@ describe('CLI — meta', () => {
     expect(r.stdout).not.toContain('--x-min');
   });
 
-  it('verify --help exits 0 and documents only verify\'s own flags', async () => {
+  it("verify --help exits 0 and documents only verify's own flags", async () => {
     const r = await cli(['verify', '--help']);
     expect(r.code).toBe(0);
     expect(r.stdout).toContain('axiom-math verify');
@@ -293,7 +310,7 @@ describe('CLI — meta', () => {
     expect(r.stdout).not.toContain('--variable');
   });
 
-  it('plot --help exits 0 and documents only plot\'s own flags', async () => {
+  it("plot --help exits 0 and documents only plot's own flags", async () => {
     const r = await cli(['plot', '--help']);
     expect(r.code).toBe(0);
     expect(r.stdout).toContain('axiom-math plot');

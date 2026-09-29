@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { MAX_EXPRESSION_LENGTH } from '../limits.js';
 import { giacEngine } from '../../giac/index.js';
-import { unicodeToAscii } from '../unicode-normalize.js';
+import { superscriptRefusal, unicodeToAscii } from '../unicode-normalize.js';
 import { rewriteCombinatorics } from '../combinatorics-rewrite.js';
 import { stripOrderTerm } from '../output-cleanup.js';
 
@@ -420,11 +420,27 @@ function isTrailingComparisonEquals(expr: string, i: number): boolean {
 export async function verifyHandler(
   args: Record<string, unknown>
 ): Promise<{ content: { type: 'text'; text: string }[]; isError: boolean }> {
-  const claim = rewriteCombinatorics(
-    unicodeToAscii(typeof args.claim === 'string' ? args.claim : '')
-  );
+  const raw = typeof args.claim === 'string' ? args.claim : '';
   const method = (args.method as string) || 'both';
   const format = args.format === 'json' ? 'json' : 'text';
+
+  // On the RAW claim, since normalised text has no superscripts left to judge.
+  // Unevaluated rather than an error: the verdict a claim that cannot be read
+  // gets, and what the CLI exits 1 on.
+  const refusal = superscriptRefusal(raw);
+  if (refusal !== undefined) {
+    return formatVerifyResponse(
+      {
+        verified: false,
+        evaluated: false,
+        confidence: 'low',
+        explanation: `Could not check the claim: ${refusal}.`,
+        checks_performed: ['superscript_reading'],
+      },
+      format
+    );
+  }
+  const claim = rewriteCombinatorics(unicodeToAscii(raw));
 
   try {
     const parsed = parseClaim(claim);

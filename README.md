@@ -202,9 +202,10 @@ Exit codes: `0` success · `1` tool or usage error · `2` `verify` checked the
 claim and it is **false**.
 
 `2` is a mathematical verdict, so a claim that never got checked does not use
-it: one that fails to parse, or that the CAS cannot evaluate, exits `1` with
-nothing on stdout. `axiom-math verify '...' && ...` therefore never reads a
-syntax error as a disproof.
+it: one that fails to parse, that the CAS cannot evaluate, or that has a
+superscript with more than one reading, exits `1` with nothing on stdout.
+`axiom-math verify '...' && ...` therefore never reads a syntax error as a
+disproof.
 
 A ready-to-use agent skill is in [skills/axiom-math/SKILL.md](skills/axiom-math/SKILL.md).
 
@@ -340,8 +341,9 @@ Independently check a mathematical claim. Useful as a second, tool-grounded opin
 Returns four fields: `verified`, `evaluated`, `confidence`, and `checks_performed`.
 
 `evaluated` is the one to read first. It is `false` when no check produced a
-usable answer — the claim did not parse, or the CAS could not evaluate it — in
-which case `verified: false` means "unknown", not "refuted". Treating the two as
+usable answer — the claim did not parse, the CAS could not evaluate it, or it
+has a superscript with more than one reading — in which case `verified: false`
+means "unknown", not "refuted". Treating the two as
 the same turns a syntax error into a disproof.
 
 ### plot

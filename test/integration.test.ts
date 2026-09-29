@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { resultLine } from './helpers/result-line.js';
 
 let client: Client;
 
@@ -24,11 +25,6 @@ function getTextContent(res: Awaited<ReturnType<typeof client.callTool>>): strin
     .map((c) => c.text)
     .join('\n');
 }
-
-/** Matches a whole `Result: …` line, regex-escaping the needle — a substring
- *  match passes on wrong answers that happen to contain the digits. */
-const resultLine = (s: string): RegExp =>
-  new RegExp(`Result: ${s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\n`);
 
 describe('MCP Server Integration — 3-Tool Architecture', () => {
   // =========================================================================
