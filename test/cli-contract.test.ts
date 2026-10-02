@@ -129,6 +129,13 @@ describe('CLI — compute', () => {
     expect(r.stderr).toContain('`ⁱ²`');
   }, 30_000);
 
+  // `1` is Giac's own "from the right"; it was read as the left.
+  it('takes a one-sided limit from the side it is asked for', async () => {
+    const r = await cli(['compute', '-q', 'limit(1/x, x, 0, 1)']);
+    expect(r.code).toBe(0);
+    expect(r.stdout.trim()).toBe('+infinity');
+  }, 30_000);
+
   it('reads the expression from stdin', async () => {
     const r = await cli(['compute', '-q'], 'diff(x^3,x)\n');
     expect(r.code).toBe(0);
