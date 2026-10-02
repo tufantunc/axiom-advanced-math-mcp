@@ -38,6 +38,10 @@ npx -y axiom-math compute --json 'solve(x^2-4=0,x)'
 Options: `--domain real|complex|numeric|exact`, `--precision 1..50`,
 `--latex` for LaTeX-focused text.
 
+A one-sided limit takes its side as a fourth argument: `+`, `+1` or `1` from
+the right, `-` or `-1` from the left, `0` (or none) both sides —
+`limit(1/x, x, 0, +)` is `+infinity`. Any other value is refused.
+
 Superscripts are read as exponents (`10⁸⁰`, `x⁻¹`, `xⁿ⁺¹`). One with more than
 one reading — `x⁻¹ sin(x)`, `f⁻¹(x)`, `2ⁿ²`, the limit point `0⁺` — is
 refused with a message naming it; write the exponent with `^` and brackets
