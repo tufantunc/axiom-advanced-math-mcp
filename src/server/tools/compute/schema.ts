@@ -43,6 +43,7 @@ export const computeSchema = z.object({
         '  diff(x^3, x)             — differentiate\n' +
         '  int(x^2, x, 0, 1)       — definite integral\n' +
         '  limit(sin(x)/x, x, 0)   — limit\n' +
+        '  limit(1/x, x, 0, +)     — one-sided limit (+ or 1 right, - or -1 left)\n' +
         '  taylor(exp(x), x=0, 5)  — Taylor series\n' +
         '  factor(x^2-4)            — factorize\n' +
         '  simplify((x^2-1)/(x-1)) — simplify\n' +

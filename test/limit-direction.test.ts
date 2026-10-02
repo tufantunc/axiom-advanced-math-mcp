@@ -1,15 +1,12 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { giacEngine } from '../src/server/giac/index.js';
 import { computeHandler } from '../src/server/tools/compute/index.js';
+import { allText } from './helpers/all-text.js';
 import { resultLine } from './helpers/result-line.js';
 
 beforeAll(async () => {
   await giacEngine.initialize();
 }, 60000);
-
-function allText(r: { content: { text: string }[] }): string {
-  return r.content.map((c) => c.text).join('\n');
-}
 
 // The direction argument of a one-sided limit. Every spelling but `+` used to
 // become -1, so `limit(1/x, x, 0, 1)` — Giac's own spelling of "from the
@@ -46,7 +43,17 @@ describe('limit direction', () => {
     const r = await computeHandler({ problem });
     const text = allText(r);
     expect(r.isError, text).toBe(true);
-    expect(text).toContain(`limit direction \`${direction}\``);
-    expect(text).toContain('+ (from the right)');
+    expect(text).toContain(
+      `unknown limit direction \`${direction}\` — use + (from the right), - (from the left), ` +
+        'or leave it out for both sides'
+    );
+  });
+
+  // Quoted as other refusals in this handler are, to its first 60 characters.
+  it('quotes a long direction to its first 60 characters', async () => {
+    const r = await computeHandler({ problem: `limit(1/x, x, 0, ${'a'.repeat(100)})` });
+    const text = allText(r);
+    expect(r.isError, text).toBe(true);
+    expect(text).toContain(`limit direction \`${'a'.repeat(60)}\``);
   });
 });

@@ -11,28 +11,25 @@ import { verifyIntegrate, verifyOdeSystem, verifyOdeSolution } from './self-veri
 import { parseOdeSystem } from './ode-system-shape.js';
 import { translateOdeSystem } from './ode-system.js';
 
+/** Giac's spelling of a limit's direction: from the right, from the left, both sides. */
+type GiacLimitDirection = '1' | '-1' | '0';
+
 /**
  * Each spelling of a limit's direction, as Giac's own: `1` from the right, `-1`
  * from the left, and `0` both sides, as with no direction at all.
  * Every spelling but `+` used to become -1, so Giac's own `1` — and `right`,
  * `2`, a two-sided `0` — answered the left-hand limit as a success:
  * `limit(1/x, x, 0, 1)` was -infinity. Anything not here names no side and is
- * refused (validateLimit) rather than read as one.
+ * refused rather than read as one. A Map, so no inherited key is a spelling.
  */
-const LIMIT_DIRECTIONS: Readonly<Record<string, '1' | '-1' | '0'>> = {
-  '+': '1',
-  '+1': '1',
-  '1': '1',
-  '-': '-1',
-  '-1': '-1',
-  '0': '0',
-};
-
-/** The direction as Giac spells it, or undefined when it names no side. */
-function limitDirection(direction: unknown): '1' | '-1' | '0' | undefined {
-  const key = String(direction);
-  return Object.hasOwn(LIMIT_DIRECTIONS, key) ? LIMIT_DIRECTIONS[key] : undefined;
-}
+const LIMIT_DIRECTIONS: ReadonlyMap<string, GiacLimitDirection> = new Map([
+  ['+', '1'],
+  ['+1', '1'],
+  ['1', '1'],
+  ['-', '-1'],
+  ['-1', '-1'],
+  ['0', '0'],
+]);
 
 function buildSimpleCommand(operation: string, args: Record<string, unknown>): string {
   switch (operation) {
@@ -55,9 +52,18 @@ function buildSimpleCommand(operation: string, args: Record<string, unknown>): s
       const expr = args.expression as string;
       const v = args.variable as string;
       const pt = args.point as string;
-      const dir = limitDirection(args.direction);
-      if (dir !== undefined) return `limit(${expr},${v},${pt},${dir})`;
-      return `limit(${expr},${v},${pt})`;
+      if (args.direction === undefined) return `limit(${expr},${v},${pt})`;
+      const dir = LIMIT_DIRECTIONS.get(String(args.direction));
+      // Thrown, as a command that cannot be built is in this file: refused
+      // here, where the command is built, so no path to it can fall back on
+      // the two-sided limit for a side it does not recognise.
+      if (dir === undefined) {
+        throw new Error(
+          `unknown limit direction \`${String(args.direction).slice(0, 60)}\` — use + ` +
+            '(from the right), - (from the left), or leave it out for both sides'
+        );
+      }
+      return `limit(${expr},${v},${pt},${dir})`;
     }
     case 'taylor': {
       const expr = args.expression as string;
@@ -149,12 +155,6 @@ function validateLimit(args: Record<string, unknown>): string | null {
   if (!args.expression) return "'expression' is required for limit";
   if (!args.variable) return "'variable' is required for limit";
   if (!args.point) return "'point' is required for limit";
-  if (args.direction !== undefined && limitDirection(args.direction) === undefined) {
-    return (
-      `unknown limit direction \`${String(args.direction)}\` — use + (from the right), ` +
-      '- (from the left), or leave it out for both sides'
-    );
-  }
   return null;
 }
 
