@@ -183,7 +183,13 @@ async function verifySymbolic(
     const expr = `simplify((${lhs}) - (${rhs}))`;
     const result = await giacEngine.evaluate(expr);
 
-    if (!result || result === 'undef') {
+    // The marker anywhere in the reading — not only as the whole result —
+    // means the difference is undefined, so nothing was compared. The sides
+    // are refused upstream when THEY read undefined; this parse site keeps
+    // the same invariant for a marker the simplification itself produces
+    // (`undef(…)`-shaped output would otherwise report a refutation instead
+    // of a non-answer).
+    if (!result || containsUndefinedMarker(result)) {
       return { verified: false, evaluated: false, detail: 'Simplification returned undefined' };
     }
 
@@ -612,16 +618,20 @@ async function handleSolutionVerification(
   }
   const checks: string[] = [];
 
-  // Same refusal as the identity path, on the claim's own pieces: an equation
-  // both sides of which read undefined collapses to 0 under substitution, and
-  // a value that reads undefined asserts a notation that was never read.
+  // Same refusal as the identity path, on the pieces the substitution check
+  // actually reads: the asserted value and the FIRST TWO `=`-separated parts
+  // (verifySolution destructures exactly two). An equation both sides of
+  // which read undefined collapses to 0 under substitution, and a value that
+  // reads undefined asserts a notation that was never read. Parts past the
+  // second are never used downstream — walking them would be a
+  // user-controlled loop of Giac round trips (an 8 KB claim carries
+  // thousands of `=`), each under the session mutex with its own timeout.
   if (await readsAsUndefined(value)) {
     return undefinedReadingResult(`the value ${value}`);
   }
-  const equationParts = equation.includes('=') ? equation.split('=') : [equation];
-  for (const part of equationParts) {
-    const trimmed = part.trim();
-    if (trimmed && (await readsAsUndefined(trimmed))) {
+  const [eqLhs, eqRhs] = equation.split('=').map((s) => s.trim());
+  for (const part of [eqLhs, eqRhs]) {
+    if (part && (await readsAsUndefined(part))) {
       return undefinedReadingResult(`a side of ${equation}`);
     }
   }

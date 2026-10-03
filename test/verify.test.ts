@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { verifyHandler } from '../src/server/tools/verify/index.js';
 import { giacEngine } from '../src/server/giac/index.js';
 
@@ -185,15 +185,53 @@ describe('Verify Tool', () => {
       expect(parsed.evaluated).toBe(false);
     });
 
+    // On main this reported FALSE (evaluated: true) — a refutation of
+    // notation that was never read. The mixed one-defined-side case is the
+    // verdict flip most visible to existing callers; pin it so the guard
+    // cannot regress from `||` to `&&` with the suite green.
+    it('stays UNKNOWN, not FALSE, when exactly one side reads undefined', async () => {
+      const res = await verifyHandler({
+        claim: '(f^(+))(x) = sin(x)^2 + cos(x)^2',
+        format: 'json',
+      });
+      const parsed = JSON.parse(getText(res));
+      expect(parsed.verified).toBe(false);
+      expect(parsed.evaluated).toBe(false);
+    });
+
+    it('does not size the equation-part walk by the number of `=` packed in', async () => {
+      // The substitution check reads only the first two `=`-separated parts,
+      // so the reading guard must not make a worker round trip per extra
+      // `=` — an 8 KB claim can carry four thousand of them, each trip under
+      // the session mutex (found by review, measured: a 67-char claim held
+      // the CAS for 50 s; the cap-of-two bound was the agreed remedy).
+      const countEvaluates = async (claim: string): Promise<number> => {
+        const spy = vi.spyOn(giacEngine, 'evaluate');
+        try {
+          await verifyHandler({ claim, format: 'json' });
+        } finally {
+          const n = spy.mock.calls.length;
+          spy.mockRestore();
+          return n;
+        }
+      };
+      const few = await countEvaluates('x=1 satisfies 1=1=1');
+      const many = await countEvaluates('x=1 satisfies ' + '1='.repeat(40) + '1');
+      expect(many).toBe(few);
+    });
+
     it('says UNKNOWN, not FALSE, in text mode for an undefined-collapse claim', async () => {
       const text = getText(await verifyHandler({ claim: 'x^(-1) sin(x) = x^(-1) cos(x)' }));
       expect(text).toContain('Verified: UNKNOWN');
       expect(text).not.toContain('FALSE');
     });
 
-    // Whole-result undef sides were already refused before this guard
-    // existed; it must not loosen that.
-    it.each(['1/0 = 1/0', 'x^(-1)y = x^(-1)z'])('keeps refusing whole-undef sides: %s', async (claim) => {
+    // Division-by-zero identities were already refused before this guard
+    // existed, at a different layer: `1/0`'s sides read `infinity` and the
+    // refusal comes from the strategies (the difference simplifies to whole
+    // `undef`, numeric samples are NaN), while `x^(-1)y`'s sides read bare
+    // `undef` and now refuse at the reading guard. Both must stay UNKNOWN.
+    it.each(['1/0 = 1/0', 'x^(-1)y = x^(-1)z'])('keeps refusing undefined sides: %s', async (claim) => {
       const res = await verifyHandler({ claim, format: 'json' });
       const parsed = JSON.parse(getText(res));
       expect(parsed.verified).toBe(false);
