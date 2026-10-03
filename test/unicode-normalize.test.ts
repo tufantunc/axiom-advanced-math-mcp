@@ -536,6 +536,16 @@ describe('caretExponentRefusal', () => {
     ['2^(==)+1', '^(==)'],
     ['x^(==)*y', '^(==)'],
     ['2**==', '**=='],
+    // The tail after a legitimate run still gets its own scan: skipping
+    // wholesale past an operand-bearing run would let `a^b^==` through.
+    ['a^b^==', '^=='],
+    // A C-style comment is transparent to Giac — it discards /*…*/
+    // wholesale — so the operand characters inside one are not real and
+    // the effective exponent is still soup.
+    ['x^ /*c*/ (==)', '(==)'],
+    ['x^(/*c*/ ==)', '^(/*c*/ ==)'],
+    ['x^/**/(==)', '(==)'],
+    ['x^= /*c*/ =', '^='],
   ])('refuses the operand-free exponent in %s', (input, slice) => {
     const refusal = caretExponentRefusal(input);
     expect(refusal).toBeDefined();
@@ -547,6 +557,7 @@ describe('caretExponentRefusal', () => {
     'x^(-1)',
     'x^- 1',
     'x ^ - 1',
+    'x^- /*c*/ 1',
     'x^[1,2]',
     'x^(n+1)',
     'e^(x)',

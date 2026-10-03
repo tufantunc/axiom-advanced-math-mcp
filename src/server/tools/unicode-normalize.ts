@@ -278,6 +278,18 @@ function isInvisible(ch: string): boolean {
   return /\s/u.test(ch) || ch === '\u200b' || ch === '\u2060' || ch === '\ufeff';
 }
 
+/**
+ * Length of the `/* … *​/` comment starting at `i`, or 0 when `i` is not
+ * one. Giac discards comments wholesale, so their contents are invisible to
+ * the mathematics — an operand character inside one is not real, and
+ * `x^ /*c*​/ (==)` is the soup `x^(==)` underneath.
+ */
+function commentLength(text: string, i: number): number {
+  if (text[i] !== '/' || text[i + 1] !== '*') return 0;
+  const close = text.indexOf('*/', i + 2);
+  return close === -1 ? 0 : close + 2 - i;
+}
+
 /** A character that can carry meaning inside an exponent (operand material). */
 function isOperandChar(ch: string): boolean {
   return !CARET_SOUP.has(ch) && !'()[]{}'.includes(ch) && !isInvisible(ch);
@@ -322,7 +334,12 @@ export function caretExponentRefusal(text: string): string | undefined {
     const start = i;
     const after = i + (doubleStar ? 2 : 1);
     let head = after;
-    while (head < text.length && isInvisible(text[head])) head++;
+    for (;;) {
+      while (head < text.length && isInvisible(text[head])) head++;
+      const comment = commentLength(text, head);
+      if (comment === 0) break;
+      head += comment;
+    }
     const verdict = exponentVerdict(text, start, head);
     if (verdict.refusal !== undefined) {
       return (
@@ -358,6 +375,11 @@ function exponentVerdict(text: string, start: number, head: number): ExponentVer
         depth--;
         if (depth === 0) {
           for (let j = head + 1; j < i; j++) {
+            const comment = commentLength(text, j);
+            if (comment > 0) {
+              j += comment - 1;
+              continue;
+            }
             if (isOperandChar(text[j])) return { resumeAt: i + 1 };
           }
           return { refusal: text.slice(start, i + 1), resumeAt: i + 1 };
@@ -370,6 +392,11 @@ function exponentVerdict(text: string, start: number, head: number): ExponentVer
   let end = head;
   let lastOperand = -1;
   while (end < text.length) {
+    const comment = commentLength(text, end);
+    if (comment > 0) {
+      end += comment;
+      continue;
+    }
     const ch = text[end];
     if (/[A-Za-z0-9_]/.test(ch)) lastOperand = end;
     else if (!CARET_SOUP.has(ch) && !isInvisible(ch)) break;

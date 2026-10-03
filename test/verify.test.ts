@@ -620,6 +620,13 @@ describe('Verify Tool', () => {
       'x^ (==) = x',
       'x ^ (==) = x',
       '2 ^ (==)+1 = 3',
+      // A C-style comment blinds the scan the same way: Giac discards
+      // /*…*/ wholesale, so the operand characters inside one are not real
+      // and the effective exponent is still soup (found by verification —
+      // `x^ /*c*/ (==) = x` verified TRUE/high).
+      'x^ /*c*/ (==) = x',
+      'x^(/*c*/ ==) = x',
+      '2^ /*c*/ (==)+1 = 3',
     ])('stays UNKNOWN for the operand-free exponent: %s', async (claim) => {
       const res = await verifyHandler({ claim, format: 'json' });
       const parsed = JSON.parse(getText(res));
