@@ -138,12 +138,15 @@ interface SideReading {
   expr: string;
   /** Giac's own reading of this side carries its undefined marker. */
   readsUndefined: boolean;
+  /** The reading never came back — the engine errored or answered nothing. */
+  unreadable: boolean;
 }
 
 /**
  * Pre-normalize one side of an identity claim: when it evaluates to a series
  * result carrying an order_size remainder, substitute the bare polynomial.
- * Any evaluation problem leaves the side untouched.
+ * An evaluation problem marks the side unreadable rather than silently
+ * proceeding on it.
  */
 async function normalizeSide(side: string): Promise<SideReading> {
   try {
@@ -155,17 +158,25 @@ async function normalizeSide(side: string): Promise<SideReading> {
       // identical undefined readings AGREE — the symbolic difference is 0 and
       // every sampled point substitutes to 0 — and would certify the claim.
       if (containsUndefinedMarker(r)) {
-        return { expr: side, readsUndefined: true };
+        return { expr: side, readsUndefined: true, unreadable: false };
       }
       if (r.includes('order_size')) {
         const stripped = stripOrderTerm(r);
-        if (stripped && stripped !== r) return { expr: `(${stripped})`, readsUndefined: false };
+        if (stripped && stripped !== r) {
+          return { expr: `(${stripped})`, readsUndefined: false, unreadable: false };
+        }
       }
+    } else {
+      // An empty answer is not a clean reading; the worker resolved nothing.
+      return { expr: side, readsUndefined: false, unreadable: true };
     }
   } catch {
-    // keep original side
+    // A side the engine could not read cannot be checked — and letting the
+    // strategies run on it lets a transient failure (worker crash, IPC loss,
+    // timeout) fabricate a verdict out of notation that was never read.
+    return { expr: side, readsUndefined: false, unreadable: true };
   }
-  return { expr: side, readsUndefined: false };
+  return { expr: side, readsUndefined: false, unreadable: false };
 }
 
 /**
@@ -331,7 +342,7 @@ async function verifySolution(
     // Parse equation into expression = 0 form
     let expr: string;
     if (equation.includes('=')) {
-      const [lhs, rhs] = equation.split('=').map((s) => s.trim());
+      const [lhs, rhs] = splitEquation(equation);
       expr = `(${lhs}) - (${rhs})`;
     } else {
       expr = equation;
@@ -398,6 +409,19 @@ interface ParsedClaim {
   variable?: string;
   value?: string;
   equation?: string;
+}
+
+/**
+ * Split an equation string at its `=` separators into the two sides the
+ * solution check reads. Exactly two sides are read: anything past a second
+ * top-level `=` is dropped (a chain `a=b=c` is checked as `a=b` —
+ * pre-existing semantics). Shared by the reading guard, the substitution and
+ * the symbolic follow-up so their notions of "the equation's sides" cannot
+ * drift apart.
+ */
+function splitEquation(equation: string): [lhs: string, rhs?: string] {
+  const [lhs, rhs] = equation.split('=').map((s) => s.trim());
+  return [lhs, rhs];
 }
 
 function parseClaim(claim: string): ParsedClaim {
@@ -552,6 +576,22 @@ async function handleIdentityVerification(
   if (lhsReading.readsUndefined || rhsReading.readsUndefined) {
     return undefinedReadingResult(`a side of ${lhsReading.expr} = ${rhsReading.expr}`);
   }
+  // A reading that never came back gets the same verdict class: nothing was
+  // read, so nothing can be checked. Proceeding instead would let a
+  // transient engine failure silently disable the guard above — the numeric
+  // strategy substitutes through the unread side and can report a
+  // refutation of notation that was never read.
+  if (lhsReading.unreadable || rhsReading.unreadable) {
+    return {
+      verified: false,
+      evaluated: false,
+      confidence: 'low',
+      explanation:
+        `Could not read a side of ${lhsReading.expr} = ${rhsReading.expr}: ` +
+        `the engine returned no reading.`,
+      checks_performed: ['unreadable_side'],
+    };
+  }
   const lhs = lhsReading.expr;
   const rhs = rhsReading.expr;
   const checks: string[] = [];
@@ -619,17 +659,17 @@ async function handleSolutionVerification(
   const checks: string[] = [];
 
   // Same refusal as the identity path, on the pieces the substitution check
-  // actually reads: the asserted value and the FIRST TWO `=`-separated parts
-  // (verifySolution destructures exactly two). An equation both sides of
-  // which read undefined collapses to 0 under substitution, and a value that
-  // reads undefined asserts a notation that was never read. Parts past the
-  // second are never used downstream — walking them would be a
-  // user-controlled loop of Giac round trips (an 8 KB claim carries
-  // thousands of `=`), each under the session mutex with its own timeout.
+  // actually reads: the asserted value and the equation's two sides
+  // (verifySolution reads exactly two). An equation both sides of which read
+  // undefined collapses to 0 under substitution, and a value that reads
+  // undefined asserts a notation that was never read. Parts past the second
+  // are never used downstream — walking them would be a user-controlled loop
+  // of Giac round trips (an 8 KB claim carries thousands of `=`), each under
+  // the session mutex with its own timeout.
   if (await readsAsUndefined(value)) {
     return undefinedReadingResult(`the value ${value}`);
   }
-  const [eqLhs, eqRhs] = equation.split('=').map((s) => s.trim());
+  const [eqLhs, eqRhs] = splitEquation(equation);
   for (const part of [eqLhs, eqRhs]) {
     if (part && (await readsAsUndefined(part))) {
       return undefinedReadingResult(`a side of ${equation}`);
@@ -640,7 +680,6 @@ async function handleSolutionVerification(
   checks.push(`Substitution: ${solution.detail}`);
 
   if ((method === 'symbolic' || method === 'both') && equation.includes('=')) {
-    const [eqLhs, eqRhs] = equation.split('=').map((s) => s.trim());
     const substLhs = `subst(${eqLhs}, ${variable}=${value})`;
     const substRhs = `subst(${eqRhs}, ${variable}=${value})`;
     const symbolic = await verifySymbolic(substLhs, substRhs);

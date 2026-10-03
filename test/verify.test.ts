@@ -188,7 +188,12 @@ describe('Verify Tool', () => {
     // On main this reported FALSE (evaluated: true) — a refutation of
     // notation that was never read. The mixed one-defined-side case is the
     // verdict flip most visible to existing callers; pin it so the guard
-    // cannot regress from `||` to `&&` with the suite green.
+    // cannot regress from `||` to `&&` with the suite green. The
+    // checks_performed assertion names the REFUSAL POINT, not just the
+    // outcome: under the `&&` regression the numeric strategy's behavior on
+    // an undefined side is not deterministic (its sampled differences
+    // sometimes fabricate numbers, sometimes skip), so the outcome alone
+    // does not always redden — the guard's signature does.
     it('stays UNKNOWN, not FALSE, when exactly one side reads undefined', async () => {
       const res = await verifyHandler({
         claim: '(f^(+))(x) = sin(x)^2 + cos(x)^2',
@@ -197,6 +202,30 @@ describe('Verify Tool', () => {
       const parsed = JSON.parse(getText(res));
       expect(parsed.verified).toBe(false);
       expect(parsed.evaluated).toBe(false);
+      expect(parsed.checks_performed).toContain('undefined_reading');
+    });
+
+    it('stays UNKNOWN when a side reading never comes back from the engine', async () => {
+      // A transient engine failure while reading a side (worker crash, IPC
+      // loss, timeout) must not silently disable the reading guard: the
+      // numeric strategy would then substitute through the unread side and
+      // can fabricate a refutation. One rejected reading, everything else
+      // real.
+      const spy = vi
+        .spyOn(giacEngine, 'evaluate')
+        .mockRejectedValueOnce(new Error('worker crashed mid-read'));
+      try {
+        const res = await verifyHandler({
+          claim: '(f^(+))(x) = sin(x)^2 + cos(x)^2',
+          format: 'json',
+        });
+        const parsed = JSON.parse(getText(res));
+        expect(parsed.verified).toBe(false);
+        expect(parsed.evaluated).toBe(false);
+        expect(parsed.checks_performed).toContain('unreadable_side');
+      } finally {
+        spy.mockRestore();
+      }
     });
 
     it('does not size the equation-part walk by the number of `=` packed in', async () => {
@@ -217,6 +246,9 @@ describe('Verify Tool', () => {
       };
       const few = await countEvaluates('x=1 satisfies 1=1=1');
       const many = await countEvaluates('x=1 satisfies ' + '1='.repeat(40) + '1');
+      // Guard against a vacuous 0 === 0 if a future refactor stops both
+      // claims from reaching the engine at all.
+      expect(few).toBeGreaterThan(0);
       expect(many).toBe(few);
     });
 
