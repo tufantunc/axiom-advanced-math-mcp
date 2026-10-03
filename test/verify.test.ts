@@ -314,6 +314,17 @@ describe('Verify Tool', () => {
       'x=2 satisfies 24=4!=(f^(+))(x)',
       'x=2 satisfies x^2-4=0, x != 5',
       'x=2 satisfies x^2=4!=0',
+      // Bang-only is the same factorial mangle with no equation '=' to mix
+      // with: `x != 2` splits to lhs `x !` — a FACTORIAL — so the false
+      // claim "2 ≠ 2" certified TRUE (2!−2=0) and the true "1 ≠ 2" was
+      // refuted (1!−2=−1). Unicode ≥/≤ are Giac-live operators the
+      // canonicaliser did not map, so compound clauses evaluated COMPLETE
+      // and the verdict inverted against them (found by adversarial
+      // re-review; the ASCII twins already refused).
+      'x=2 satisfies x != 2',
+      'x=1 satisfies 1 != 2',
+      'x=1 satisfies x^2-1=0, 2 ≥ x',
+      'x=1 satisfies x^2-1=0, 0 ≥ x',
     ])('stays UNKNOWN for the chained or comparison-mixed equation: %s', async (claim) => {
       const res = await verifyHandler({ claim, format: 'json' });
       const parsed = JSON.parse(getText(res));
@@ -326,8 +337,24 @@ describe('Verify Tool', () => {
     // as lhs='1', rhs='1=2', and the numeric arm once certified it TRUE —
     // parseFloat stops at '=' so '1.0=2.0' parsed as 1. Refused the same
     // way: a side that still carries a top-level '=' is chain residue.
-    it.each(['1=1=2', '1=1=1', 'x+y=2, x-y=0', '2=3==4'])(
+    it.each(['1=1=2', '1=1=1', 'x+y=2, x-y=0', '2=3==4', '1 <= 2 = 1'])(
       'stays UNKNOWN for the chained identity-shaped claim: %s',
+      async (claim) => {
+        const res = await verifyHandler({ claim, format: 'json' });
+        const parsed = JSON.parse(getText(res));
+        expect(parsed.verified).toBe(false);
+        expect(parsed.evaluated).toBe(false);
+        expect(parsed.checks_performed).toContain('equation_shape');
+      }
+    );
+
+    // The solution regex carves the value as ([^,\s]+) — permissive enough
+    // to carry '=' itself. `x=2=99 satisfies x^2=4` substituted
+    // `x=2=99`, Giac answered the equation object `0=9797`, and
+    // parseFloat stopped at '=' → 0 → verified TRUE (adversarial
+    // re-review). The value now faces the same shape policy.
+    it.each(['x=2=99 satisfies x^2=4', 'x=2!=3 satisfies x^2-4=0'])(
+      'stays UNKNOWN when the asserted value itself chains: %s',
       async (claim) => {
         const res = await verifyHandler({ claim, format: 'json' });
         const parsed = JSON.parse(getText(res));
@@ -346,30 +373,21 @@ describe('Verify Tool', () => {
       expect(parsed.evaluated).toBe(true);
     });
 
-    it('does not mistake a top-level == comparison for a chain', async () => {
-      // `==` is a comparison, not an equation separator (findMainEquals
-      // skips it the same way). This claim must keep going down the
-      // substitution path — which then finds no number — rather than being
-      // refused as a chain. A `==` only refuses when it mixes with a real
-      // equation `=`.
-      const res = await verifyHandler({ claim: 'x=1 satisfies y == y', format: 'json' });
+    // A comparison operator is not an equation separator, alone or mixed:
+    // the naive split breaks inside every one of them (x ! re-reads as a
+    // FACTORIAL, a dangling < or > reads undef, ≥ evaluates whole and inverts
+    // the verdict). Comparison-only and comparison-mixed shapes are refused
+    // alike — the equation_shape invariant is uniform: exactly one top-level
+    // `=`, nothing else.
+    it.each([
+      'x=1 satisfies y == y',
+      'x=1 satisfies x^2-4=0, x >= 0',
+    ])('stays UNKNOWN for the comparison-bearing equation: %s', async (claim) => {
+      const res = await verifyHandler({ claim, format: 'json' });
       const parsed = JSON.parse(getText(res));
+      expect(parsed.verified).toBe(false);
       expect(parsed.evaluated).toBe(false);
-      expect(parsed.checks_performed.join('\n')).toContain('Substitution');
-      expect(parsed.checks_performed).not.toContain('equation_shape');
-    });
-
-    it('does not mistake a comparison tail (>=, <=) for more equation equals', async () => {
-      // The trailing `=` of >= is a comparison, not a separator: with the
-      // equation's own `=` present, counting it would refuse this realistic
-      // compound claim as a chain. It must keep going down the reading path
-      // (which refuses it here because the naive split mangles the side —
-      // pinned by name so an earlier different-tag refusal cannot pass).
-      const res = await verifyHandler({ claim: 'x=1 satisfies x^2-4=0, x >= 0', format: 'json' });
-      const parsed = JSON.parse(getText(res));
-      expect(parsed.evaluated).toBe(false);
-      expect(parsed.checks_performed).toContain('undefined_reading');
-      expect(parsed.checks_performed).not.toContain('equation_shape');
+      expect(parsed.checks_performed).toContain('equation_shape');
     });
 
     // An `=` nested inside the equation's own sides cannot be split apart
@@ -381,6 +399,10 @@ describe('Verify Tool', () => {
     it.each([
       'x=1 satisfies abs(x=1) = 1',
       'x=2 satisfies ifte(x=2,1,0) = 1',
+      // Nested-only: findMainEquals answers -1, the first `=` CHARACTER is
+      // inside the parens, and the split mangled it — `x=1 satisfies
+      // (x=1)+(x=1)` was refuted on the reading `(x) - (1)+(x=1)`.
+      'x=1 satisfies (x=1)+(x=1)',
     ])('stays UNKNOWN when the equals nests inside a side: %s', async (claim) => {
       const res = await verifyHandler({ claim, format: 'json' });
       const parsed = JSON.parse(getText(res));
