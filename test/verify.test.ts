@@ -370,6 +370,14 @@ describe('Verify Tool', () => {
       expect(parsed.verified).toBe(false);
       expect(parsed.evaluated).toBe(true);
       expect(parsed.confidence).toBe('low');
+      // Pin which arm carried which evidence: the same verdict triple is
+      // producible by a plain symbolic refutation, but this cell is proof +
+      // counterexample, and the explanation must say so rather than print
+      // "≠" next to a proof line.
+      const detail = parsed.checks_performed.join('\n');
+      expect(detail).toContain('simplify(LHS - RHS) = 0 ✓');
+      expect(detail).toMatch(/At x=-1: diff = -6\.28/);
+      expect(parsed.explanation).toContain('in conflict');
     });
 
     // The same principle, symmetric arm: a symbolic run that died without an
@@ -419,6 +427,7 @@ describe('Verify Tool', () => {
       const parsed = JSON.parse(getText(res));
       expect(parsed.verified).toBe(false);
       expect(parsed.evaluated).toBe(false);
+      expect(parsed.confidence).toBe('low');
     });
 
     // The refutation direction is untouched: a real symbolic difference is

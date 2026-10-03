@@ -648,6 +648,11 @@ async function handleIdentityVerification(
     explanation = `Could not evaluate the claim: ${lhs} = ${rhs}`;
   } else if (verified) {
     explanation = `Identity verified: ${lhs} = ${rhs}`;
+  } else if (symbolicOk === true && numericDisputes) {
+    // Printing "≠" here would contradict the proof line in checks_performed.
+    explanation =
+      `Identity in conflict: the symbolic difference simplifies to 0, but the ` +
+      `numeric check found a counterexample (${lhs} = ${rhs})`;
   } else {
     explanation = `Identity NOT verified: ${lhs} ≠ ${rhs}`;
   }

@@ -199,8 +199,8 @@ describe('CLI — verify', () => {
     expect(r.code).toBe(2);
   }, 30_000);
 
-  // The headline flip of the combination fix: a symbolic proof no longer
-  // borrows exit 2 just because the huge sides overflow parseFloat.
+  // CLI-seam pin for the combination fix: a symbolic proof no longer borrows
+  // exit 2 just because the huge sides overflow parseFloat.
   it('exits 0 for a proven identity whose sides overflow the numeric arm', async () => {
     const r = await cli(['verify', '2^1100 = 2^1100']);
     expect(r.code).toBe(0);
