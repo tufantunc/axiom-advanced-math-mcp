@@ -417,14 +417,37 @@ interface ParsedClaim {
 /**
  * Split an equation string at its `=` separators into the two sides the
  * solution check reads. Exactly two sides are read: anything past a second
- * top-level `=` is dropped (a chain `a=b=c` is checked as `a=b` —
- * pre-existing semantics). Shared by the reading guard, the substitution and
- * the symbolic follow-up so their notions of "the equation's sides" cannot
- * drift apart.
+ * top-level `=` is dropped — which is why countTopLevelEquals refuses chains
+ * before anything reads them. Shared by the reading guard, the substitution
+ * and the symbolic follow-up so their notions of "the equation's sides"
+ * cannot drift apart.
  */
 function splitEquation(equation: string): [lhs: string, rhs?: string] {
   const [lhs, rhs] = equation.split('=').map((s) => s.trim());
   return [lhs, rhs];
+}
+
+/**
+ * Count the equation's top-level `=` separators: `=` at paren/bracket depth
+ * zero, with `==` (and the tail of `!=`, `<=`, `>=`) skipped as comparisons,
+ * mirroring findMainEquals. A chain `a=b=c` counts more than one.
+ */
+function countTopLevelEquals(equation: string): number {
+  let depth = 0;
+  let bracketDepth = 0;
+  let count = 0;
+  for (let i = 0; i < equation.length; i++) {
+    const ch = equation[i];
+    [depth, bracketDepth] = trackDepth(ch, depth, bracketDepth);
+    if (ch === '=' && depth === 0 && bracketDepth === 0) {
+      if (equation[i + 1] === '=') {
+        i++;
+        continue;
+      }
+      if (!isTrailingComparisonEquals(equation, i)) count++;
+    }
+  }
+  return count;
 }
 
 function parseClaim(claim: string): ParsedClaim {
@@ -680,6 +703,22 @@ async function handleSolutionVerification(
     };
   }
   const checks: string[] = [];
+
+  // A chain `a=b=c` is ambiguous notation, not an equation: the substitution
+  // check reads only the first two parts and used to certify claims whose
+  // remaining notation it never looked at (measured: `x^2-4=0=(f^(+))(x)`
+  // verified TRUE with an unreadable tail). Refused before any engine call.
+  if (countTopLevelEquals(equation) > 1) {
+    return {
+      verified: false,
+      evaluated: false,
+      confidence: 'low',
+      explanation:
+        `Could not check the claim: ${equation} chains more than one '=' — ` +
+        `write a single equation.`,
+      checks_performed: ['equation_shape'],
+    };
+  }
 
   // Same refusal as the identity path, on the pieces the substitution check
   // actually reads: the asserted value and the equation's two sides
