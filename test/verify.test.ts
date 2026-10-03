@@ -333,6 +333,122 @@ describe('Verify Tool', () => {
     );
   });
 
+  describe('How the strategies combine into one verdict', () => {
+    // A numeric run that produced no usable number is missing evidence, not
+    // a counterexample. `2^1100 = 2^1100` once reported NOT verified with
+    // HIGH confidence while its own checks list carried the symbolic proof
+    // (simplify(LHS - RHS) = 0): parseFloat overflows both sides to Infinity,
+    // the direct difference is NaN, and the combination rule counted that
+    // "could not evaluate" as a refutation.
+    it.each(['2^1100 = 2^1100', '10^400 = 10^400'])(
+      'a symbolic proof stands when numeric merely has no number: %s',
+      async (claim) => {
+        const res = await verifyHandler({ claim, format: 'json' });
+        const parsed = JSON.parse(getText(res));
+        expect(parsed.verified).toBe(true);
+        expect(parsed.evaluated).toBe(true);
+        expect(parsed.confidence).toBe('high');
+      }
+    );
+
+    it('a huge identity still verifies with method=symbolic alone', async () => {
+      const res = await verifyHandler({ claim: '2^1100 = 2^1100', method: 'symbolic', format: 'json' });
+      const parsed = JSON.parse(getText(res));
+      expect(parsed.verified).toBe(true);
+      expect(parsed.evaluated).toBe(true);
+      expect(parsed.confidence).toBe('high');
+    });
+
+    // A real counterexample disputes the proof: ln(x^2) = 2*ln(x) simplifies
+    // to 0 symbolically, but the numeric arm samples x=-1, where ln(-1) is
+    // complex and the parsed difference is -6.28… — the identity genuinely
+    // fails off the positive reals. Not verified, checked, LOW confidence:
+    // proof and counterexample in one run is a conflict, not certainty.
+    it('a numeric counterexample disputes the symbolic proof: ln(x^2) = 2*ln(x)', async () => {
+      const res = await verifyHandler({ claim: 'ln(x^2) = 2*ln(x)', format: 'json' });
+      const parsed = JSON.parse(getText(res));
+      expect(parsed.verified).toBe(false);
+      expect(parsed.evaluated).toBe(true);
+      expect(parsed.confidence).toBe('low');
+      // Pin which arm carried which evidence: the same verdict triple is
+      // producible by a plain symbolic refutation, but this cell is proof +
+      // counterexample, and the explanation must say so rather than print
+      // "≠" next to a proof line.
+      const detail = parsed.checks_performed.join('\n');
+      expect(detail).toContain('simplify(LHS - RHS) = 0 ✓');
+      expect(detail).toMatch(/At x=-1: diff = -6\.28/);
+      expect(parsed.explanation).toContain('in conflict');
+    });
+
+    // The same principle, symmetric arm: a symbolic run that died without an
+    // answer (timeout, worker crash) is missing evidence, not a refutation.
+    // Injected here by rejecting the simplify round trip; the numeric arm
+    // runs for real and settles 2+3 = 5.
+    it('a symbolic run that never answered does not refute what numeric settles', async () => {
+      const real = giacEngine.evaluate.bind(giacEngine);
+      const spy = vi.spyOn(giacEngine, 'evaluate').mockImplementation(async (expr: string) => {
+        if (expr.startsWith('simplify(')) throw new Error('Giac evaluation timed out');
+        return real(expr);
+      });
+      try {
+        const res = await verifyHandler({ claim: '2+3 = 5', format: 'json' });
+        const parsed = JSON.parse(getText(res));
+        expect(parsed.verified).toBe(true);
+        expect(parsed.evaluated).toBe(true);
+        expect(parsed.confidence).toBe('medium');
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    // And the other side of the symmetry: a symbolic run that genuinely
+    // compared and found a nonzero difference refutes the claim even when
+    // the numeric arm's sampled points all agree. Injected by answering the
+    // simplify round trip with a fabricated nonzero difference.
+    it('a genuine symbolic refutation stands even when numeric samples agree', async () => {
+      const real = giacEngine.evaluate.bind(giacEngine);
+      const spy = vi.spyOn(giacEngine, 'evaluate').mockImplementation(async (expr: string) => {
+        if (expr.startsWith('simplify(')) return '1';
+        return real(expr);
+      });
+      try {
+        const res = await verifyHandler({ claim: '2+3 = 5', format: 'json' });
+        const parsed = JSON.parse(getText(res));
+        expect(parsed.verified).toBe(false);
+        expect(parsed.evaluated).toBe(true);
+        expect(parsed.confidence).toBe('low');
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it('numeric-only on a no-number claim stays UNKNOWN', async () => {
+      const res = await verifyHandler({ claim: '2^1100 = 2^1100', method: 'numeric', format: 'json' });
+      const parsed = JSON.parse(getText(res));
+      expect(parsed.verified).toBe(false);
+      expect(parsed.evaluated).toBe(false);
+      expect(parsed.confidence).toBe('low');
+    });
+
+    // The refutation direction is untouched: a real symbolic difference is
+    // still a refutation even when numeric has no number either.
+    it('a huge non-identity is still refuted when numeric has no number', async () => {
+      const res = await verifyHandler({ claim: '2^1100 = 2^1100 + 1', format: 'json' });
+      const parsed = JSON.parse(getText(res));
+      expect(parsed.verified).toBe(false);
+      expect(parsed.evaluated).toBe(true);
+      expect(parsed.confidence).toBe('low');
+    });
+
+    // Within double range both arms agree and nothing changes.
+    it('a huge-but-representable identity still verifies through both arms', async () => {
+      const res = await verifyHandler({ claim: '2^1000 = 2^1000', format: 'json' });
+      const parsed = JSON.parse(getText(res));
+      expect(parsed.verified).toBe(true);
+      expect(parsed.confidence).toBe('high');
+    });
+  });
+
   describe('Comparison-operator claims', () => {
     it('a bracketed identity still finds its main equals', async () => {
     // trackDepth's paren/bracket bookkeeping: swapping the counters makes

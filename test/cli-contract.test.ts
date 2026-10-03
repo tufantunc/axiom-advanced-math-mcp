@@ -199,6 +199,14 @@ describe('CLI — verify', () => {
     expect(r.code).toBe(2);
   }, 30_000);
 
+  // CLI-seam pin for the combination fix: a symbolic proof no longer borrows
+  // exit 2 just because the huge sides overflow parseFloat.
+  it('exits 0 for a proven identity whose sides overflow the numeric arm', async () => {
+    const r = await cli(['verify', '2^1100 = 2^1100']);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('Verified: TRUE');
+  }, 30_000);
+
   it('--json exposes the verified field', async () => {
     const r = await cli(['verify', '--json', 'sin(x)^2+cos(x)^2 = 1']);
     expect(r.code).toBe(0);

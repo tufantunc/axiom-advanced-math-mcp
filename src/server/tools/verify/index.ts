@@ -600,11 +600,14 @@ async function handleIdentityVerification(
   const checks: string[] = [];
   let symbolicOk: boolean | null = null;
   let numericOk: boolean | null = null;
+  let symbolicEvaluated = false;
+  let numericEvaluated = false;
   let anyEvaluated = false;
 
   if (method === 'symbolic' || method === 'both') {
     const symbolic = await verifySymbolic(lhs, rhs);
     symbolicOk = symbolic.verified;
+    symbolicEvaluated = symbolic.evaluated;
     anyEvaluated ||= symbolic.evaluated;
     checks.push(`Symbolic: ${symbolic.detail}`);
   }
@@ -612,18 +615,30 @@ async function handleIdentityVerification(
   if (method === 'numeric' || method === 'both') {
     const numeric = await verifyNumeric(lhs, rhs);
     numericOk = numeric.verified;
+    numericEvaluated = numeric.evaluated;
     anyEvaluated ||= numeric.evaluated;
     checks.push(`Numeric: ${numeric.detail}`);
   }
 
+  // A run that produced no usable answer is missing evidence, not a
+  // counterexample. `2^1100 = 2^1100` once reported NOT verified with HIGH
+  // confidence while its own checks carried the symbolic proof, because
+  // parseFloat overflowed both sides to Infinity and the direct difference
+  // came back NaN; symmetrically, a symbolic run that timed out let a
+  // numerically-settled claim report itself disproved. Only a run that
+  // actually compared — a nonzero symbolic difference, a sampled numeric
+  // mismatch — may dispute the other arm's answer.
+  const numericDisputes = numericOk === false && numericEvaluated;
+  const symbolicDisputes = symbolicOk === false && symbolicEvaluated;
+
   const verified =
-    symbolicOk === true || numericOk === true ? symbolicOk !== false && numericOk !== false : false;
+    symbolicOk === true || numericOk === true ? !symbolicDisputes && !numericDisputes : false;
 
   let confidence: 'high' | 'medium' | 'low';
-  if (symbolicOk === true) confidence = 'high';
-  else if (numericOk === true && symbolicOk === null) confidence = 'medium';
-  else if (numericOk === true && symbolicOk === false) confidence = 'low';
-  else confidence = verified ? 'medium' : 'low';
+  if (symbolicOk === true) confidence = numericDisputes ? 'low' : 'high';
+  else if (numericOk === true && symbolicDisputes) confidence = 'low';
+  else if (numericOk === true) confidence = 'medium';
+  else confidence = 'low';
 
   // One strategy succeeding is enough to call the claim checked: with
   // `method: 'both'`, symbolic can legitimately fail on a claim numeric
@@ -633,6 +648,11 @@ async function handleIdentityVerification(
     explanation = `Could not evaluate the claim: ${lhs} = ${rhs}`;
   } else if (verified) {
     explanation = `Identity verified: ${lhs} = ${rhs}`;
+  } else if (symbolicOk === true && numericDisputes) {
+    // Printing "≠" here would contradict the proof line in checks_performed.
+    explanation =
+      `Identity in conflict: the symbolic difference simplifies to 0, but the ` +
+      `numeric check found a counterexample (${lhs} = ${rhs})`;
   } else {
     explanation = `Identity NOT verified: ${lhs} ≠ ${rhs}`;
   }
