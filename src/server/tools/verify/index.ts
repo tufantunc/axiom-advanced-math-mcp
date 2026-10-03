@@ -427,24 +427,26 @@ function splitEquation(equation: string): [lhs: string, rhs?: string] {
   return [lhs, rhs];
 }
 
-/** Top-level `=` characters of a string, split into equation `=` and `==` comparisons. */
+/** Top-level `=` characters of a string, split into equation `=` and comparison tails. */
 interface TopLevelEquals {
   singles: number;
   doubles: number;
+  bangs: number;
 }
 
 /**
  * Count the string's top-level `=` characters — at paren/bracket depth zero,
- * mirroring findMainEquals, with `==` counted as a comparison pair and the
- * tail of `!=`/`<=`/`>=` skipped. A chain `a=b=c` carries more than one
- * single; `a=b==c` carries one of each, and the naive splitEquation breaks
- * at every `=` CHARACTER, so its two parts cover the string only when the
- * singles are alone.
+ * mirroring findMainEquals. `==` counts as a comparison pair; the `=` of a
+ * `!=` counts as a bang (the naive splitEquation breaks at every `=`
+ * CHARACTER, and the piece before a bang-equal re-reads as a FACTORIAL, so
+ * its mangle can come back a number — `24=4!=x` certified TRUE that way);
+ * the `=` of `<=`/`>=` counts as nothing (a dangling `<`/`>` never
+ * evaluates). A chain `a=b=c` carries more than one single.
  */
 function countTopLevelEquals(equation: string): TopLevelEquals {
   let depth = 0;
   let bracketDepth = 0;
-  const counts: TopLevelEquals = { singles: 0, doubles: 0 };
+  const counts: TopLevelEquals = { singles: 0, doubles: 0, bangs: 0 };
   for (let i = 0; i < equation.length; i++) {
     const ch = equation[i];
     [depth, bracketDepth] = trackDepth(ch, depth, bracketDepth);
@@ -452,6 +454,10 @@ function countTopLevelEquals(equation: string): TopLevelEquals {
       if (equation[i + 1] === '=') {
         counts.doubles++;
         i++;
+        continue;
+      }
+      if (equation[i - 1] === '!') {
+        counts.bangs++;
         continue;
       }
       if (!isTrailingComparisonEquals(equation, i)) counts.singles++;
@@ -463,27 +469,27 @@ function countTopLevelEquals(equation: string): TopLevelEquals {
 /**
  * Whether a two-part reading of the equation (splitEquation) covers every
  * top-level `=` character: a chain `a=b=c` (more than one single) or an
- * equation glued to a comparison `a=b==c` leaves notation the two parts
- * never reach — notation that would be certified unread.
+ * equation glued to a comparison — `a=b==c`, `a=b!=c` — leaves notation the
+ * two parts never reach, notation that would be certified unread.
  */
 function hasUnreadTopLevelEquals(equation: string): boolean {
-  const { singles, doubles } = countTopLevelEquals(equation);
-  return singles > 1 || (singles >= 1 && doubles >= 1);
+  const { singles, doubles, bangs } = countTopLevelEquals(equation);
+  return singles > 1 || (singles >= 1 && doubles + bangs >= 1);
 }
 
 /**
- * The UNKNOWN verdict for a chained or ==-mixed claim: the substitution
- * check reads only two parts and would rule on the first pair while the
- * rest of the notation goes unread. Not FALSE — nothing was compared.
+ * The UNKNOWN verdict for an equation whose shape the solution check cannot
+ * read: the substitution reads only two parts split at the first `=`
+ * CHARACTER, so chained, comparison-mixed or nested-`=` equations would be
+ * ruled on with part of the notation unread. Not FALSE — nothing was
+ * compared.
  */
-function equationShapeRefusal(what: string): VerifyResult {
+function equationShapeRefusal(what: string, why: string): VerifyResult {
   return {
     verified: false,
     evaluated: false,
     confidence: 'low',
-    explanation:
-      `Could not check the claim: ${what} chains or mixes more than one ` +
-      `top-level '=' — write a single equation.`,
+    explanation: `Could not check the claim: ${what} ${why}`,
     checks_performed: ['equation_shape'],
   };
 }
@@ -639,9 +645,12 @@ async function handleIdentityVerification(
   // exited 0). The at-pattern's two structural `=` land inside subst(...)
   // parens and never reach here. Refused before any engine call.
   for (const side of [parsed.lhs ?? '', parsed.rhs ?? '']) {
-    const { singles, doubles } = countTopLevelEquals(side);
-    if (singles + doubles > 0) {
-      return equationShapeRefusal(side);
+    const { singles, doubles, bangs } = countTopLevelEquals(side);
+    if (singles + doubles + bangs > 0) {
+      return equationShapeRefusal(
+        `the side '${side}' of the claim`,
+        `carries a top-level '=' — write a single equation.`
+      );
     }
   }
   const lhsReading = await normalizeSide(parsed.lhs ?? '');
@@ -757,11 +766,30 @@ async function handleSolutionVerification(
   // A chain `a=b=c` is ambiguous notation, not an equation: the substitution
   // check reads only the first two parts and used to certify claims whose
   // remaining notation it never looked at (measured: `x^2-4=0=(f^(+))(x)`
-  // verified TRUE with an unreadable tail). A `==` glued to the equation's
-  // own `=` is the same hole one operator wide (review found
-  // `x^2-4=0==(f^(+))(x)` certifying TRUE). Refused before any engine call.
+  // verified TRUE with an unreadable tail). A `==` or `!=` glued to the
+  // equation's own `=` is the same hole one operator wide (review found
+  // `x^2-4=0==(f^(+))(x)` and `24=4!=(f^(+))(x)` certifying TRUE). Refused
+  // before any engine call.
   if (hasUnreadTopLevelEquals(equation)) {
-    return equationShapeRefusal(equation);
+    return equationShapeRefusal(
+      equation,
+      `chains or mixes more than one top-level '=' — write a single equation.`
+    );
+  }
+  // An `=` nested inside the equation's own sides cannot be split apart:
+  // the split breaks at the first `=` CHARACTER, landing inside the nested
+  // notation and ruling on the mangled remainder (`abs(x=1) = 1` verified
+  // TRUE on the reading `abs(x) - 1`, measured). Depth-aware splitting was
+  // declined — it hands piecewise notation to a substitution that answers
+  // ifte(x=2,1,0) - 1 at x=2 with -1, a wrong refutation. The identity path
+  // evaluates sides whole, so piecewise claims belong there.
+  const mainEquals = findMainEquals(equation);
+  if (mainEquals !== -1 && mainEquals !== equation.indexOf('=')) {
+    return equationShapeRefusal(
+      equation,
+      `nests '=' inside its sides, which the solution check cannot split ` +
+        `apart — write it as an identity (LHS = RHS) instead.`
+    );
   }
 
   // Same refusal as the identity path, on the pieces the substitution check

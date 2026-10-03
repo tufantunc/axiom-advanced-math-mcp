@@ -307,7 +307,14 @@ describe('Verify Tool', () => {
       'x=2 satisfies x^2-4=0==(f^(+))(x)',
       'x=1 satisfies 1=1==tail',
       'n=2 satisfies n^2=4 == (n mod 2 == 0)',
-    ])('stays UNKNOWN for the chained or ==-mixed equation: %s', async (claim) => {
+      // `!=` is the same hole one operator over (found by re-review): the
+      // naive split breaks inside it, the tail goes unread, and the mangled
+      // rhs `4!` is a FACTORIAL — `24=4!=tail` certified TRUE, and the true
+      // compound claim `x^2-4=0, x != 5` was refuted with exit 2.
+      'x=2 satisfies 24=4!=(f^(+))(x)',
+      'x=2 satisfies x^2-4=0, x != 5',
+      'x=2 satisfies x^2=4!=0',
+    ])('stays UNKNOWN for the chained or comparison-mixed equation: %s', async (claim) => {
       const res = await verifyHandler({ claim, format: 'json' });
       const parsed = JSON.parse(getText(res));
       expect(parsed.verified).toBe(false);
@@ -319,7 +326,7 @@ describe('Verify Tool', () => {
     // as lhs='1', rhs='1=2', and the numeric arm once certified it TRUE —
     // parseFloat stops at '=' so '1.0=2.0' parsed as 1. Refused the same
     // way: a side that still carries a top-level '=' is chain residue.
-    it.each(['1=1=2', '1=1=1', 'x+y=2, x-y=0'])(
+    it.each(['1=1=2', '1=1=1', 'x+y=2, x-y=0', '2=3==4'])(
       'stays UNKNOWN for the chained identity-shaped claim: %s',
       async (claim) => {
         const res = await verifyHandler({ claim, format: 'json' });
@@ -352,30 +359,34 @@ describe('Verify Tool', () => {
       expect(parsed.checks_performed).not.toContain('equation_shape');
     });
 
-    it('does not mistake a comparison tail (>=, <=, !=) for more equation equals', async () => {
+    it('does not mistake a comparison tail (>=, <=) for more equation equals', async () => {
       // The trailing `=` of >= is a comparison, not a separator: with the
       // equation's own `=` present, counting it would refuse this realistic
       // compound claim as a chain. It must keep going down the reading path
-      // (which refuses it here because the naive split mangles the side).
+      // (which refuses it here because the naive split mangles the side —
+      // pinned by name so an earlier different-tag refusal cannot pass).
       const res = await verifyHandler({ claim: 'x=1 satisfies x^2-4=0, x >= 0', format: 'json' });
       const parsed = JSON.parse(getText(res));
       expect(parsed.evaluated).toBe(false);
+      expect(parsed.checks_performed).toContain('undefined_reading');
       expect(parsed.checks_performed).not.toContain('equation_shape');
     });
 
-    // Characterization: an equation whose inner `=` sits inside parentheses
-    // (piecewise notation) is NOT a chain, but the naive split still breaks
-    // it and the strategies answer UNKNOWN through their own error paths.
-    // Depth-aware splitting was deliberately declined: it flips this claim
-    // to a WRONG refutation (Giac's subst answers ifte(x=2,1,0) at x=2 as
-    // -1, so 1-1 reads ≠ 0) — UNKNOWN is the better verdict, and this row
-    // is the tripwire against that refactor.
-    it('an equation with a parenthesized inner = is not refused as a chain', async () => {
-      const res = await verifyHandler({ claim: 'x=2 satisfies ifte(x=2,1,0) = 1', format: 'json' });
+    // An `=` nested inside the equation's own sides cannot be split apart
+    // by the solution check: the naive split used to break INSIDE it and
+    // rule on the mangled remainder — `abs(x=1) = 1` verified TRUE on the
+    // reading `abs(x) - 1` (re-review measurement), and ifte forms errored
+    // into UNKNOWN. Refused now; the identity path evaluates piecewise
+    // sides whole and handles them correctly, so the message points there.
+    it.each([
+      'x=1 satisfies abs(x=1) = 1',
+      'x=2 satisfies ifte(x=2,1,0) = 1',
+    ])('stays UNKNOWN when the equals nests inside a side: %s', async (claim) => {
+      const res = await verifyHandler({ claim, format: 'json' });
       const parsed = JSON.parse(getText(res));
       expect(parsed.verified).toBe(false);
       expect(parsed.evaluated).toBe(false);
-      expect(parsed.checks_performed).not.toContain('equation_shape');
+      expect(parsed.checks_performed).toContain('equation_shape');
     });
   });
 
