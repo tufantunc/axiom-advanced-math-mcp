@@ -269,11 +269,11 @@ describe('Verify Tool', () => {
       expect(parsed.checks_performed).toContain('unreadable_side');
     });
 
-    it('does not size the equation-part walk by the number of `=` packed in', async () => {
-      // Chained equations are refused outright (see the equation_shape rows
-      // below), so a many-`=` claim must make NO engine call at all — the
-      // pre-refusal bound (a cap-of-two walk) is pinned by the two-part
-      // claim's fixed small count.
+    it('a chained equation is refused with zero engine calls', async () => {
+      // The contract this pins: a chained equation never reaches the engine
+      // at all — refusal happens at parse shape, before any reading. The
+      // two-part claim only proves the engine is reachable (anti-vacuous
+      // guard against 0 === 0).
       const countEvaluates = async (claim: string): Promise<number> => {
         const spy = vi.spyOn(giacEngine, 'evaluate');
         try {
@@ -286,22 +286,28 @@ describe('Verify Tool', () => {
       };
       const few = await countEvaluates('x=1 satisfies 1=1');
       const many = await countEvaluates('x=1 satisfies ' + '1='.repeat(40) + '1');
-      // Guard against a vacuous 0 === 0 if a future refactor stops both
-      // claims from reaching the engine at all.
       expect(few).toBeGreaterThan(0);
       expect(many).toBe(0);
     });
+  });
 
+  describe('Chained and comparison-shaped equations', () => {
     // A chain `a=b=c` is ambiguous notation, not an equation: the
     // substitution check reads only the first two `=`-separated parts and
     // certified claims whose remaining notation it never looked at
     // (measured: `x^2-4=0=(f^(+))(x)` verified TRUE with an unreadable
-    // tail). Refused before any engine call.
+    // tail). Refused before any engine call. A `==` glued to the equation's
+    // own `=` is the same hole one operator wide: the naive split still
+    // breaks at every `=` character, so the comparison tail is never read
+    // (found by review — `x^2-4=0==(f^(+))(x)` verified TRUE/high).
     it.each([
       'x=1 satisfies 1=1=1',
       'x=1 satisfies 1=1=1=1=(f^(+))(x)',
       'x=2 satisfies x^2-4=0=(f^(+))(x)',
-    ])('stays UNKNOWN for the chained equation: %s', async (claim) => {
+      'x=2 satisfies x^2-4=0==(f^(+))(x)',
+      'x=1 satisfies 1=1==tail',
+      'n=2 satisfies n^2=4 == (n mod 2 == 0)',
+    ])('stays UNKNOWN for the chained or ==-mixed equation: %s', async (claim) => {
       const res = await verifyHandler({ claim, format: 'json' });
       const parsed = JSON.parse(getText(res));
       expect(parsed.verified).toBe(false);
@@ -309,11 +315,36 @@ describe('Verify Tool', () => {
       expect(parsed.checks_performed).toContain('equation_shape');
     });
 
+    // Identity-path sibling (pre-existing, found by review): `1=1=2` parses
+    // as lhs='1', rhs='1=2', and the numeric arm once certified it TRUE —
+    // parseFloat stops at '=' so '1.0=2.0' parsed as 1. Refused the same
+    // way: a side that still carries a top-level '=' is chain residue.
+    it.each(['1=1=2', '1=1=1', 'x+y=2, x-y=0'])(
+      'stays UNKNOWN for the chained identity-shaped claim: %s',
+      async (claim) => {
+        const res = await verifyHandler({ claim, format: 'json' });
+        const parsed = JSON.parse(getText(res));
+        expect(parsed.verified).toBe(false);
+        expect(parsed.evaluated).toBe(false);
+        expect(parsed.checks_performed).toContain('equation_shape');
+      }
+    );
+
+    // The at-pattern's two structural `=` end up inside subst(...) parens
+    // after parsing — the shape refusal must not touch this claim form.
+    it('a point-evaluation claim with its two structural equals still verifies', async () => {
+      const res = await verifyHandler({ claim: 'x^2 at x=2 = 4', format: 'json' });
+      const parsed = JSON.parse(getText(res));
+      expect(parsed.verified).toBe(true);
+      expect(parsed.evaluated).toBe(true);
+    });
+
     it('does not mistake a top-level == comparison for a chain', async () => {
       // `==` is a comparison, not an equation separator (findMainEquals
       // skips it the same way). This claim must keep going down the
       // substitution path — which then finds no number — rather than being
-      // refused as a chain.
+      // refused as a chain. A `==` only refuses when it mixes with a real
+      // equation `=`.
       const res = await verifyHandler({ claim: 'x=1 satisfies y == y', format: 'json' });
       const parsed = JSON.parse(getText(res));
       expect(parsed.evaluated).toBe(false);
@@ -321,11 +352,24 @@ describe('Verify Tool', () => {
       expect(parsed.checks_performed).not.toContain('equation_shape');
     });
 
+    it('does not mistake a comparison tail (>=, <=, !=) for more equation equals', async () => {
+      // The trailing `=` of >= is a comparison, not a separator: with the
+      // equation's own `=` present, counting it would refuse this realistic
+      // compound claim as a chain. It must keep going down the reading path
+      // (which refuses it here because the naive split mangles the side).
+      const res = await verifyHandler({ claim: 'x=1 satisfies x^2-4=0, x >= 0', format: 'json' });
+      const parsed = JSON.parse(getText(res));
+      expect(parsed.evaluated).toBe(false);
+      expect(parsed.checks_performed).not.toContain('equation_shape');
+    });
+
     // Characterization: an equation whose inner `=` sits inside parentheses
     // (piecewise notation) is NOT a chain, but the naive split still breaks
     // it and the strategies answer UNKNOWN through their own error paths.
-    // This pins the boundary — depth is respected by the chain check — while
-    // the mangled-split behavior itself stays as it is.
+    // Depth-aware splitting was deliberately declined: it flips this claim
+    // to a WRONG refutation (Giac's subst answers ifte(x=2,1,0) at x=2 as
+    // -1, so 1-1 reads ≠ 0) — UNKNOWN is the better verdict, and this row
+    // is the tripwire against that refactor.
     it('an equation with a parenthesized inner = is not refused as a chain', async () => {
       const res = await verifyHandler({ claim: 'x=2 satisfies ifte(x=2,1,0) = 1', format: 'json' });
       const parsed = JSON.parse(getText(res));
@@ -333,7 +377,9 @@ describe('Verify Tool', () => {
       expect(parsed.evaluated).toBe(false);
       expect(parsed.checks_performed).not.toContain('equation_shape');
     });
+  });
 
+  describe('Undefined-marker edge forms (text mode, whole-result, identifiers)', () => {
     it('says UNKNOWN, not FALSE, in text mode for an undefined-collapse claim', async () => {
       const text = getText(await verifyHandler({ claim: 'x^(-1) sin(x) = x^(-1) cos(x)' }));
       expect(text).toContain('Verified: UNKNOWN');

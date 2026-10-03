@@ -427,27 +427,65 @@ function splitEquation(equation: string): [lhs: string, rhs?: string] {
   return [lhs, rhs];
 }
 
+/** Top-level `=` characters of a string, split into equation `=` and `==` comparisons. */
+interface TopLevelEquals {
+  singles: number;
+  doubles: number;
+}
+
 /**
- * Count the equation's top-level `=` separators: `=` at paren/bracket depth
- * zero, with `==` (and the tail of `!=`, `<=`, `>=`) skipped as comparisons,
- * mirroring findMainEquals. A chain `a=b=c` counts more than one.
+ * Count the string's top-level `=` characters — at paren/bracket depth zero,
+ * mirroring findMainEquals, with `==` counted as a comparison pair and the
+ * tail of `!=`/`<=`/`>=` skipped. A chain `a=b=c` carries more than one
+ * single; `a=b==c` carries one of each, and the naive splitEquation breaks
+ * at every `=` CHARACTER, so its two parts cover the string only when the
+ * singles are alone.
  */
-function countTopLevelEquals(equation: string): number {
+function countTopLevelEquals(equation: string): TopLevelEquals {
   let depth = 0;
   let bracketDepth = 0;
-  let count = 0;
+  const counts: TopLevelEquals = { singles: 0, doubles: 0 };
   for (let i = 0; i < equation.length; i++) {
     const ch = equation[i];
     [depth, bracketDepth] = trackDepth(ch, depth, bracketDepth);
     if (ch === '=' && depth === 0 && bracketDepth === 0) {
       if (equation[i + 1] === '=') {
+        counts.doubles++;
         i++;
         continue;
       }
-      if (!isTrailingComparisonEquals(equation, i)) count++;
+      if (!isTrailingComparisonEquals(equation, i)) counts.singles++;
     }
   }
-  return count;
+  return counts;
+}
+
+/**
+ * Whether a two-part reading of the equation (splitEquation) covers every
+ * top-level `=` character: a chain `a=b=c` (more than one single) or an
+ * equation glued to a comparison `a=b==c` leaves notation the two parts
+ * never reach — notation that would be certified unread.
+ */
+function hasUnreadTopLevelEquals(equation: string): boolean {
+  const { singles, doubles } = countTopLevelEquals(equation);
+  return singles > 1 || (singles >= 1 && doubles >= 1);
+}
+
+/**
+ * The UNKNOWN verdict for a chained or ==-mixed claim: the substitution
+ * check reads only two parts and would rule on the first pair while the
+ * rest of the notation goes unread. Not FALSE — nothing was compared.
+ */
+function equationShapeRefusal(what: string): VerifyResult {
+  return {
+    verified: false,
+    evaluated: false,
+    confidence: 'low',
+    explanation:
+      `Could not check the claim: ${what} chains or mixes more than one ` +
+      `top-level '=' — write a single equation.`,
+    checks_performed: ['equation_shape'],
+  };
 }
 
 function parseClaim(claim: string): ParsedClaim {
@@ -594,6 +632,18 @@ async function handleIdentityVerification(
   parsed: ParsedClaim,
   method: string
 ): Promise<VerifyResult> {
+  // A side that still carries a top-level `=` is chain residue: `1=1=2`
+  // parses as lhs='1', rhs='1=2', and the strategies ruled on the first
+  // pair only — the numeric arm once certified it TRUE because parseFloat
+  // stops at '=' (review-measured; with method=numeric `verify '1=1=2'`
+  // exited 0). The at-pattern's two structural `=` land inside subst(...)
+  // parens and never reach here. Refused before any engine call.
+  for (const side of [parsed.lhs ?? '', parsed.rhs ?? '']) {
+    const { singles, doubles } = countTopLevelEquals(side);
+    if (singles + doubles > 0) {
+      return equationShapeRefusal(side);
+    }
+  }
   const lhsReading = await normalizeSide(parsed.lhs ?? '');
   const rhsReading = await normalizeSide(parsed.rhs ?? '');
   // Before either strategy runs: symbolic would simplify two identical
@@ -707,17 +757,11 @@ async function handleSolutionVerification(
   // A chain `a=b=c` is ambiguous notation, not an equation: the substitution
   // check reads only the first two parts and used to certify claims whose
   // remaining notation it never looked at (measured: `x^2-4=0=(f^(+))(x)`
-  // verified TRUE with an unreadable tail). Refused before any engine call.
-  if (countTopLevelEquals(equation) > 1) {
-    return {
-      verified: false,
-      evaluated: false,
-      confidence: 'low',
-      explanation:
-        `Could not check the claim: ${equation} chains more than one '=' — ` +
-        `write a single equation.`,
-      checks_performed: ['equation_shape'],
-    };
+  // verified TRUE with an unreadable tail). A `==` glued to the equation's
+  // own `=` is the same hole one operator wide (review found
+  // `x^2-4=0==(f^(+))(x)` certifying TRUE). Refused before any engine call.
+  if (hasUnreadTopLevelEquals(equation)) {
+    return equationShapeRefusal(equation);
   }
 
   // Same refusal as the identity path, on the pieces the substitution check
