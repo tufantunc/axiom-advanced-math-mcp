@@ -356,8 +356,11 @@ async function verifySolution(
     const numResult = Number.parseFloat(result);
 
     // No number back means the substitution did not produce something
-    // comparable to zero — nothing was checked.
-    if (Number.isNaN(numResult)) {
+    // comparable to zero — nothing was checked. An '=' in the answer is an
+    // equation OBJECT, not a number: parseFloat stops at the '=' and would
+    // certify its left side (`0.0=5.0` read as 0 ≈ 0) — unreachable behind
+    // the shape guards today, kept as the belt at this parse site.
+    if (result.includes('=') || Number.isNaN(numResult)) {
       return {
         verified: false,
         evaluated: false,
@@ -567,9 +570,16 @@ function findMainEquals(expr: string): number {
   return -1;
 }
 
-/** Whether this `=` is the tail of `!=`, `<=`, or `>=` rather than a main equals. */
+/**
+ * Whether this `=` is the tail of `!=`, `<=`, or `>=` rather than a main
+ * equals. The lookback skips whitespace: Giac reads `x !` as a factorial
+ * just as happily as `x!`, so `x ! = 2` is a spaced comparison — treating
+ * its `=` as a separator certified the false "2 ≠ 2" TRUE (2!−2=0).
+ */
 function isTrailingComparisonEquals(expr: string, i: number): boolean {
-  return i > 0 && (expr[i - 1] === '!' || expr[i - 1] === '<' || expr[i - 1] === '>');
+  let j = i - 1;
+  while (j >= 0 && /\s/.test(expr[j])) j--;
+  return j >= 0 && (expr[j] === '!' || expr[j] === '<' || expr[j] === '>');
 }
 
 // ---------------------------------------------------------------------------
@@ -773,14 +783,15 @@ async function handleSolutionVerification(
       `chains, mixes or compares with more than one top-level '=' — ` + `write a single equation.`
     );
   }
-  // The value carved by the claim regex may carry '=' itself: `x=2=99
-  // satisfies x^2=4` substituted `x=2=99`, the engine answered the equation
-  // object `0=9797`, and parseFloat stopped at '=' → 0 → verified TRUE.
-  // Same shape policy, allowing no separator at all.
-  if (carriesUnreadEquals(value, false)) {
+  // The value carved by the claim regex may carry '=' itself — at any depth:
+  // `x=2=99 satisfies x^2=4` substituted `x=2=99`, and `x=(0=5)+1 satisfies
+  // x-1=0` substituted an equation OBJECT; both times parseFloat stopped at
+  // the '=' and certified the leftover 0 as ≈ 0 → TRUE. A value is one
+  // token; no legitimate value contains '=' anywhere.
+  if (value.includes('=')) {
     return equationShapeRefusal(
       `the value ${value}`,
-      `carries '=' or a comparison — write one value for the variable.`
+      `carries '=' — write one value for the variable.`
     );
   }
   // An `=` nested inside the equation's own sides cannot be split apart:

@@ -323,6 +323,12 @@ describe('Verify Tool', () => {
       // re-review; the ASCII twins already refused).
       'x=2 satisfies x != 2',
       'x=1 satisfies 1 != 2',
+      // A space inside the comparison defeats a single-character lookback:
+      // Giac reads `x !` as a factorial just as happily, so `x ! = 2`
+      // certified the false "2 ≠ 2" TRUE — the spaced twin of the row
+      // above it.
+      'x=2 satisfies x ! = 2',
+      'x=1 satisfies 1 ! = 2',
       'x=1 satisfies x^2-1=0, 2 ≥ x',
       'x=1 satisfies x^2-1=0, 0 ≥ x',
     ])('stays UNKNOWN for the chained or comparison-mixed equation: %s', async (claim) => {
@@ -353,7 +359,7 @@ describe('Verify Tool', () => {
     // `x=2=99`, Giac answered the equation object `0=9797`, and
     // parseFloat stopped at '=' → 0 → verified TRUE (adversarial
     // re-review). The value now faces the same shape policy.
-    it.each(['x=2=99 satisfies x^2=4', 'x=2!=3 satisfies x^2-4=0'])(
+    it.each(['x=2=99 satisfies x^2=4', 'x=2!=3 satisfies x^2-4=0', 'x=(0=5)+1 satisfies x-1=0'])(
       'stays UNKNOWN when the asserted value itself chains: %s',
       async (claim) => {
         const res = await verifyHandler({ claim, format: 'json' });
@@ -363,6 +369,28 @@ describe('Verify Tool', () => {
         expect(parsed.checks_performed).toContain('equation_shape');
       }
     );
+
+    // A fullwidth ＝ (CJK IMEs) used to sail through as an identifier —
+    // no ASCII '=' anywhere, so the claim routed into the expression=0
+    // path and the TRUE claim `x^2-4＝0` at x=2 was REFUTED. Canonicalised
+    // to '=' like every other operator glyph, it verifies like its ASCII
+    // twin.
+    it('a fullwidth equals canonicalises and verifies: x^2-4＝0 at x=2', async () => {
+      const res = await verifyHandler({ claim: 'x=2 satisfies x^2-4＝0', format: 'json' });
+      const parsed = JSON.parse(getText(res));
+      expect(parsed.verified).toBe(true);
+      expect(parsed.evaluated).toBe(true);
+    });
+
+    // The spaced-comparison twin on the identity seam: no main equals once
+    // the lookback skips whitespace, so the claim degrades to parse-UNKNOWN
+    // instead of ruling on `2 !` (a factorial).
+    it('a spaced ! = comparison has no main equals: 2 ! = 2 stays UNKNOWN', async () => {
+      const res = await verifyHandler({ claim: '2 ! = 2', format: 'json' });
+      const parsed = JSON.parse(getText(res));
+      expect(parsed.verified).toBe(false);
+      expect(parsed.evaluated).toBe(false);
+    });
 
     // The at-pattern's two structural `=` end up inside subst(...) parens
     // after parsing — the shape refusal must not touch this claim form.
