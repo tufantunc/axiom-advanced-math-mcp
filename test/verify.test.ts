@@ -655,6 +655,7 @@ describe('Verify Tool', () => {
       'x^(-x) = x^(-x)',
       'x^- 1 = 1/x',
       'x ^ - 1 = 1/x',
+      'x^ (n+1) = x^(n+1)',
     ])('still verifies the legitimate exponent: %s', async (claim) => {
       const text = getText(await verifyHandler({ claim }));
       expect(text).toContain('Verified: TRUE');
