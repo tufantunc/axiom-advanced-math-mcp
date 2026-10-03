@@ -333,6 +333,49 @@ describe('Verify Tool', () => {
     );
   });
 
+  describe('How the strategies combine into one verdict', () => {
+    // A numeric run that produced no usable number is missing evidence, not
+    // a counterexample. `2^1100 = 2^1100` once reported NOT verified with
+    // HIGH confidence while its own checks list carried the symbolic proof
+    // (simplify(LHS - RHS) = 0): parseFloat overflows both sides to Infinity,
+    // the direct difference is NaN, and the combination rule counted that
+    // "could not evaluate" as a refutation.
+    it.each(['2^1100 = 2^1100', '10^400 = 10^400'])(
+      'a symbolic proof stands when numeric merely has no number: %s',
+      async (claim) => {
+        const res = await verifyHandler({ claim, format: 'json' });
+        const parsed = JSON.parse(getText(res));
+        expect(parsed.verified).toBe(true);
+        expect(parsed.evaluated).toBe(true);
+        expect(parsed.confidence).toBe('high');
+      }
+    );
+
+    it('a huge identity still verifies with method=symbolic alone', async () => {
+      const res = await verifyHandler({ claim: '2^1100 = 2^1100', method: 'symbolic', format: 'json' });
+      const parsed = JSON.parse(getText(res));
+      expect(parsed.verified).toBe(true);
+      expect(parsed.confidence).toBe('high');
+    });
+
+    // The refutation direction is untouched: a real symbolic difference is
+    // still a refutation even when numeric has no number either.
+    it('a huge non-identity is still refuted when numeric has no number', async () => {
+      const res = await verifyHandler({ claim: '2^1100 = 2^1100 + 1', format: 'json' });
+      const parsed = JSON.parse(getText(res));
+      expect(parsed.verified).toBe(false);
+      expect(parsed.evaluated).toBe(true);
+    });
+
+    // Within double range both arms agree and nothing changes.
+    it('a huge-but-representable identity still verifies through both arms', async () => {
+      const res = await verifyHandler({ claim: '2^1000 = 2^1000', format: 'json' });
+      const parsed = JSON.parse(getText(res));
+      expect(parsed.verified).toBe(true);
+      expect(parsed.confidence).toBe('high');
+    });
+  });
+
   describe('Comparison-operator claims', () => {
     it('a bracketed identity still finds its main equals', async () => {
     // trackDepth's paren/bracket bookkeeping: swapping the counters makes

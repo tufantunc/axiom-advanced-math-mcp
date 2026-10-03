@@ -600,6 +600,7 @@ async function handleIdentityVerification(
   const checks: string[] = [];
   let symbolicOk: boolean | null = null;
   let numericOk: boolean | null = null;
+  let numericEvaluated = false;
   let anyEvaluated = false;
 
   if (method === 'symbolic' || method === 'both') {
@@ -612,15 +613,24 @@ async function handleIdentityVerification(
   if (method === 'numeric' || method === 'both') {
     const numeric = await verifyNumeric(lhs, rhs);
     numericOk = numeric.verified;
+    numericEvaluated = numeric.evaluated;
     anyEvaluated ||= numeric.evaluated;
     checks.push(`Numeric: ${numeric.detail}`);
   }
 
+  // A numeric run that produced no usable number is missing evidence, not a
+  // counterexample: `2^1100 = 2^1100` once reported NOT verified with HIGH
+  // confidence while its own checks carried the symbolic proof, because
+  // parseFloat overflowed both sides to Infinity and the direct difference
+  // came back NaN. Only a numeric run that actually compared numbers may
+  // dispute a symbolic proof.
+  const numericDisputes = numericOk === false && numericEvaluated;
+
   const verified =
-    symbolicOk === true || numericOk === true ? symbolicOk !== false && numericOk !== false : false;
+    symbolicOk === true || numericOk === true ? symbolicOk !== false && !numericDisputes : false;
 
   let confidence: 'high' | 'medium' | 'low';
-  if (symbolicOk === true) confidence = 'high';
+  if (symbolicOk === true) confidence = numericDisputes ? 'low' : 'high';
   else if (numericOk === true && symbolicOk === null) confidence = 'medium';
   else if (numericOk === true && symbolicOk === false) confidence = 'low';
   else confidence = verified ? 'medium' : 'low';
