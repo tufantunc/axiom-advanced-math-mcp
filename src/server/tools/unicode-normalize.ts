@@ -270,6 +270,74 @@ export function superscriptRefusal(text: string): string | undefined {
   return `the superscript \`${run}\` has more than one reading here — ${fix}`;
 }
 
+/** Characters that can only be operators: an exponent made of nothing else carries no operand. */
+const CARET_SOUP = new Set('=+-*/^<>!,:;.&|~%');
+
+/** A character that can carry meaning inside an exponent (operand material). */
+function isOperandChar(ch: string): boolean {
+  return !CARET_SOUP.has(ch) && !'()[]{}'.includes(ch) && !/\s/.test(ch);
+}
+
+/**
+ * The first caret exponent in caller text that carries no operand — nothing
+ * but operator characters — or undefined when every exponent reads.
+ *
+ * The ASCII sibling of the superscript refusal above. Giac does not error on
+ * these exponents, it guesses, and every guess is wrong somewhere: `x^(==)`
+ * reads as `x` (the exponent silently dropped), `x^(!=)` as `1`, `2^(==)+1`
+ * as `3`, `x^(==)*y` as `x*y`, while `x^(+)`, `x^()`, `x^-` collapse toward
+ * undef. No answer that comes back can be trusted, so the tools refuse
+ * rather than evaluate. `**` is Giac's own spelling of `^` and is scanned
+ * the same way. Operators AROUND an operand (`x^(-1)`, `x^(n+1)`, `x^.5`)
+ * read fine and are not refused.
+ */
+export function caretExponentRefusal(text: string): string | undefined {
+  for (let i = 0; i < text.length; i++) {
+    const doubleStar = text[i] === '*' && text[i + 1] === '*';
+    if (text[i] !== '^' && !doubleStar) continue;
+    const slice = unreadableExponentSlice(text, i + (doubleStar ? 2 : 1), doubleStar ? '**' : '^');
+    if (slice !== undefined) {
+      return (
+        `the exponent \`${slice}\` carries no operand — write it with ` +
+        `something to raise, e.g. x^2 or x^(n+1)`
+      );
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The exponent slice starting at `after` when it is operator-only, else
+ * undefined. A parenthesised exponent needs its balanced close and an
+ * operand inside; a bare exponent is the run of token characters after the
+ * caret and is refused only when the run is non-empty and alnum-free — the
+ * run scans THROUGH operators so `x^-1` and `x^.5` keep their digits.
+ */
+function unreadableExponentSlice(text: string, after: number, prefix: string): string | undefined {
+  if (text[after] === '(') {
+    let depth = 0;
+    for (let i = after; i < text.length; i++) {
+      if (text[i] === '(') depth++;
+      else if (text[i] === ')') {
+        depth--;
+        if (depth === 0) {
+          const inner = text.slice(after + 1, i);
+          if ([...inner].some(isOperandChar)) return undefined;
+          return text.slice(after - prefix.length, i + 1);
+        }
+      }
+    }
+    return undefined; // unbalanced: the engine's own error answers that
+  }
+  let end = after;
+  while (end < text.length && (CARET_SOUP.has(text[end]) || /[A-Za-z0-9_]/.test(text[end]))) {
+    end++;
+  }
+  const run = text.slice(after, end);
+  if (run === '' || /[A-Za-z0-9_]/.test(run)) return undefined;
+  return prefix + run;
+}
+
 /**
  * Replace Unicode math characters with their ASCII / Giac-plain equivalents.
  * Pure function — used by both runtime tool output (compute hygiene) and the

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { MAX_EXPRESSION_LENGTH } from '../limits.js';
 import { giacEngine } from '../../giac/index.js';
-import { superscriptRefusal, unicodeToAscii } from '../unicode-normalize.js';
+import { caretExponentRefusal, superscriptRefusal, unicodeToAscii } from '../unicode-normalize.js';
 import { rewriteCombinatorics } from '../combinatorics-rewrite.js';
 import { stripOrderTerm } from '../output-cleanup.js';
 
@@ -610,6 +610,26 @@ export async function verifyHandler(
     );
   }
   const claim = rewriteCombinatorics(unicodeToAscii(raw));
+
+  // On the CANONICALISED claim: caret exponents are ASCII here, and the
+  // glyphs above have already become their operator spellings. An
+  // exponent made of nothing but operators has no reading Giac can be
+  // trusted with — `x^(==) = x` verified TRUE with high confidence while
+  // Giac was silently dropping the exponent. Same verdict class as the
+  // superscript refusal: unevaluated, never a refutation.
+  const caret = caretExponentRefusal(claim);
+  if (caret !== undefined) {
+    return formatVerifyResponse(
+      {
+        verified: false,
+        evaluated: false,
+        confidence: 'low',
+        explanation: `Could not check the claim: ${caret}.`,
+        checks_performed: ['exponent_reading'],
+      },
+      format
+    );
+  }
 
   try {
     const parsed = parseClaim(claim);

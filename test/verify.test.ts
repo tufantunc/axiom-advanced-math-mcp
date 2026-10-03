@@ -146,14 +146,14 @@ describe('Verify Tool', () => {
     });
 
     it.each(['symbolic', 'numeric'] as const)(
-      'method=%s alone cannot certify the collapse: (f^(+))(x) = (f^(-))(x)',
+      'method=%s alone cannot certify the collapse: x^(-1) sin(x) = x^(-1) cos(x)',
       async (method) => {
         // The refusal happens before either strategy runs. These rows pin
         // that neither strategy is left as an unguarded way in — a guard
         // that only covered the symbolic path would pass method=symbolic and
         // redden the numeric row (verified by mutation).
         const res = await verifyHandler({
-          claim: '(f^(+))(x) = (f^(-))(x)',
+          claim: 'x^(-1) sin(x) = x^(-1) cos(x)',
           method,
           format: 'json',
         });
@@ -167,7 +167,7 @@ describe('Verify Tool', () => {
       // Both sides of the equation read undef(x); substituting x=2 into
       // undef(x) - undef(x) yields 0 and the solution certified as TRUE.
       const res = await verifyHandler({
-        claim: 'x=2 satisfies (f^(+))(x) = (f^(+))(x)',
+        claim: 'x=2 satisfies x^(-1) sin(x) = x^(-1) sin(x)',
         format: 'json',
       });
       const parsed = JSON.parse(getText(res));
@@ -177,7 +177,7 @@ describe('Verify Tool', () => {
 
     it('stays UNKNOWN when the asserted value itself reads undefined', async () => {
       const res = await verifyHandler({
-        claim: 'x = (f^(+))(x) satisfies x - x = 0',
+        claim: 'x = x^(-1) sin(x) satisfies x - x = 0',
         format: 'json',
       });
       const parsed = JSON.parse(getText(res));
@@ -196,7 +196,7 @@ describe('Verify Tool', () => {
     // environment-dependent); the guard's signature reddens by construction.
     it('stays UNKNOWN, not FALSE, when exactly one side reads undefined', async () => {
       const res = await verifyHandler({
-        claim: '(f^(+))(x) = sin(x)^2 + cos(x)^2',
+        claim: 'x^(-1) sin(x) = sin(x)^2 + cos(x)^2',
         format: 'json',
       });
       const parsed = JSON.parse(getText(res));
@@ -216,7 +216,7 @@ describe('Verify Tool', () => {
         .mockRejectedValueOnce(new Error('worker crashed mid-read'));
       try {
         const res = await verifyHandler({
-          claim: '(f^(+))(x) = sin(x)^2 + cos(x)^2',
+          claim: 'x^(-1) sin(x) = sin(x)^2 + cos(x)^2',
           format: 'json',
         });
         const parsed = JSON.parse(getText(res));
@@ -237,7 +237,7 @@ describe('Verify Tool', () => {
       const spy = vi.spyOn(giacEngine, 'evaluate').mockResolvedValueOnce('');
       try {
         const res = await verifyHandler({
-          claim: '(f^(+))(x) = sin(x)^2 + cos(x)^2',
+          claim: 'x^(-1) sin(x) = sin(x)^2 + cos(x)^2',
           format: 'json',
         });
         const parsed = JSON.parse(getText(res));
@@ -302,16 +302,16 @@ describe('Verify Tool', () => {
     // (found by review — `x^2-4=0==(f^(+))(x)` verified TRUE/high).
     it.each([
       'x=1 satisfies 1=1=1',
-      'x=1 satisfies 1=1=1=1=(f^(+))(x)',
-      'x=2 satisfies x^2-4=0=(f^(+))(x)',
-      'x=2 satisfies x^2-4=0==(f^(+))(x)',
+      'x=1 satisfies 1=1=1=1=garbage_tail',
+      'x=2 satisfies x^2-4=0=garbage_tail',
+      'x=2 satisfies x^2-4=0==garbage_tail',
       'x=1 satisfies 1=1==tail',
       'n=2 satisfies n^2=4 == (n mod 2 == 0)',
       // `!=` is the same hole one operator over (found by re-review): the
       // naive split breaks inside it, the tail goes unread, and the mangled
       // rhs `4!` is a FACTORIAL — `24=4!=tail` certified TRUE, and the true
       // compound claim `x^2-4=0, x != 5` was refuted with exit 2.
-      'x=2 satisfies 24=4!=(f^(+))(x)',
+      'x=2 satisfies 24=4!=garbage_tail',
       'x=2 satisfies x^2-4=0, x != 5',
       'x=2 satisfies x^2=4!=0',
       // Bang-only is the same factorial mangle with no equation '=' to mix
@@ -594,6 +594,51 @@ describe('Verify Tool', () => {
       const parsed = JSON.parse(getText(res));
       expect(parsed.verified).toBe(true);
       expect(parsed.confidence).toBe('high');
+    });
+  });
+
+  describe('Caret exponents with no operand', () => {
+    // Giac does not error on an operator-only exponent — it guesses, and
+    // every guess is wrong somewhere. Measured: `x^(==)` reads as `x` (the
+    // exponent silently dropped), `x^(!=)` as `1`, `2^(==)+1` as `3`,
+    // `x^(==)*y` as `x*y`; `x^(+)`, `x^()`, `x^-` collapse toward undef.
+    // No answer that comes back can be trusted, so the claim is refused
+    // before parsing — this is the ASCII sibling of the superscript
+    // refusal, and `x^(==) = x` used to verify TRUE with high confidence.
+    it.each([
+      'x^(==) = x',
+      'x^(!=) = 1',
+      '2^(==)+1 = 3',
+      'x^(+) = x',
+      'x^() = x^()',
+      'x=2 satisfies x^(==) = x',
+    ])('stays UNKNOWN for the operand-free exponent: %s', async (claim) => {
+      const res = await verifyHandler({ claim, format: 'json' });
+      const parsed = JSON.parse(getText(res));
+      expect(parsed.verified).toBe(false);
+      expect(parsed.evaluated).toBe(false);
+      expect(parsed.checks_performed).toContain('exponent_reading');
+    });
+
+    it('method=numeric alone cannot certify it either: x^(==) = x', async () => {
+      const res = await verifyHandler({ claim: 'x^(==) = x', method: 'numeric', format: 'json' });
+      const parsed = JSON.parse(getText(res));
+      expect(parsed.verified).toBe(false);
+      expect(parsed.evaluated).toBe(false);
+      expect(parsed.checks_performed).toContain('exponent_reading');
+    });
+
+    // Real exponents — operators AROUND an operand are fine; only an
+    // exponent that is nothing BUT operators is refused.
+    it.each([
+      'x^(-1) = 1/x',
+      'e^(x) = exp(x)',
+      'x^(n+1) = x^(n+1)',
+      '2^10 = 1024',
+      'x^(-x) = x^(-x)',
+    ])('still verifies the legitimate exponent: %s', async (claim) => {
+      const text = getText(await verifyHandler({ claim }));
+      expect(text).toContain('Verified: TRUE');
     });
   });
 

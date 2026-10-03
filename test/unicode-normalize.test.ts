@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   ambiguousSuperscript,
+  caretExponentRefusal,
   superscriptRefusal,
   unicodeToAscii,
 } from '../src/server/tools/unicode-normalize.js';
@@ -507,5 +508,49 @@ describe('superscriptRefusal and unicodeToAscii agree', () => {
       }
     }
     expect(leaks).toEqual([]);
+  });
+});
+
+describe('caretExponentRefusal', () => {
+  // An exponent made of nothing but operators has no reading Giac can be
+  // trusted with: `x^(==)` answers `x` (the exponent dropped), `x^(!=)`
+  // answers `1`, `x^(+,)` answers powmod(x,undef,undef). `**` is Giac's own
+  // spelling of `^` and is scanned the same way.
+  it.each([
+    ['x^(==)', '^(==)'],
+    ['x^(!=)', '^(!=)'],
+    ['x^(=)', '^(=)'],
+    ['x^(+)', '^(+)'],
+    ['x^(-)', '^(-)'],
+    ['x^(*)', '^(*)'],
+    ['x^(<=)', '^(<=)'],
+    ['x^()', '^()'],
+    ['x^==', '^=='],
+    ['x^-', '^-'],
+    ['x^(+,)', '^(+,)'],
+    ['2^(==)+1', '^(==)'],
+    ['x^(==)*y', '^(==)'],
+    ['2**==', '**=='],
+  ])('refuses the operand-free exponent in %s', (input, slice) => {
+    const refusal = caretExponentRefusal(input);
+    expect(refusal).toBeDefined();
+    expect(refusal).toContain(slice);
+  });
+
+  it.each([
+    'x^2',
+    'x^(-1)',
+    'x^(n+1)',
+    'e^(x)',
+    'x^(-x)',
+    '2^10',
+    'x^-1',
+    'x^.5',
+    '2**3',
+    'a^b_c',
+    'x^((n+1))',
+    'sqrt(x^2+1)^(-1)',
+  ])('reads every legitimate exponent: %s', (input) => {
+    expect(caretExponentRefusal(input)).toBeUndefined();
   });
 });

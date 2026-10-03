@@ -5,7 +5,7 @@ import type { ComputeEnvelope } from './types.js';
 import { COMPONENT_ORDER_PREFIX } from '../response-formatter.js';
 import { applyHygiene } from './hygiene.js';
 import { giacEngine } from '../../giac/index.js';
-import { superscriptRefusal } from '../unicode-normalize.js';
+import { caretExponentRefusal, superscriptRefusal } from '../unicode-normalize.js';
 
 export { computeSchema } from './schema.js';
 export type { ComputeEnvelope, ResultType } from './types.js';
@@ -31,7 +31,12 @@ export async function computeHandler(
     // 0. Refuse. Here, once, because every route normalises on its own path —
     // some through evalWithLatex, some straight to the engine. Through normalize
     // like any other failure, so json gets the envelope every failure gets.
-    const refusal = typeof problem === 'string' ? superscriptRefusal(problem) : undefined;
+    // The caret sibling refuses on the raw problem: `**` is still `**` there,
+    // and Giac answers `x^(==)` with `x` — the exponent silently dropped.
+    const refusal =
+      typeof problem === 'string'
+        ? (superscriptRefusal(problem) ?? caretExponentRefusal(problem))
+        : undefined;
     if (refusal !== undefined) {
       const refused = {
         content: [{ type: 'text' as const, text: `Error: ${refusal}` }],
