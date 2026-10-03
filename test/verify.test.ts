@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { verifyHandler } from '../src/server/tools/verify/index.js';
 import { giacEngine } from '../src/server/giac/index.js';
 
@@ -124,6 +124,213 @@ describe('Verify Tool', () => {
       expect(parsed.verified).toBe(false);
       expect(parsed.evaluated).toBe(true);
     });
+  });
+
+  describe('Claims a side of which Giac reads as its undefined marker', () => {
+    // Giac does not error on these notations — it answers `(f^(+))(x)` and
+    // `x^(-1) sin(x)` with `undef(x)` (measured on the real engine). Two such
+    // sides then AGREE: the symbolic difference is 0 and every sampled point
+    // substitutes to 0, so the claim certified as TRUE with high confidence.
+    // An `undef` anywhere in a side's reading means the notation was not
+    // understood, and the claim is UNKNOWN — never verified, never refuted.
+    it.each([
+      '(f^(+))(x) = (f^(-))(x)',
+      '(f^())(x) = (g^())(x)',
+      'x^(-1) sin(x) = x^(-1) cos(x)',
+      'x^(-1) f2(x) = x^(-1) g2(x)',
+    ])('stays UNKNOWN: %s', async (claim) => {
+      const res = await verifyHandler({ claim, format: 'json' });
+      const parsed = JSON.parse(getText(res));
+      expect(parsed.verified).toBe(false);
+      expect(parsed.evaluated).toBe(false);
+    });
+
+    it.each(['symbolic', 'numeric'] as const)(
+      'method=%s alone cannot certify the collapse: (f^(+))(x) = (f^(-))(x)',
+      async (method) => {
+        // The refusal happens before either strategy runs. These rows pin
+        // that neither strategy is left as an unguarded way in — a guard
+        // that only covered the symbolic path would pass method=symbolic and
+        // redden the numeric row (verified by mutation).
+        const res = await verifyHandler({
+          claim: '(f^(+))(x) = (f^(-))(x)',
+          method,
+          format: 'json',
+        });
+        const parsed = JSON.parse(getText(res));
+        expect(parsed.verified).toBe(false);
+        expect(parsed.evaluated).toBe(false);
+      }
+    );
+
+    it('stays UNKNOWN when the collapse hides in a solution claim equation', async () => {
+      // Both sides of the equation read undef(x); substituting x=2 into
+      // undef(x) - undef(x) yields 0 and the solution certified as TRUE.
+      const res = await verifyHandler({
+        claim: 'x=2 satisfies (f^(+))(x) = (f^(+))(x)',
+        format: 'json',
+      });
+      const parsed = JSON.parse(getText(res));
+      expect(parsed.verified).toBe(false);
+      expect(parsed.evaluated).toBe(false);
+    });
+
+    it('stays UNKNOWN when the asserted value itself reads undefined', async () => {
+      const res = await verifyHandler({
+        claim: 'x = (f^(+))(x) satisfies x - x = 0',
+        format: 'json',
+      });
+      const parsed = JSON.parse(getText(res));
+      expect(parsed.verified).toBe(false);
+      expect(parsed.evaluated).toBe(false);
+    });
+
+    // On main this reported FALSE (evaluated: true) — a refutation of
+    // notation that was never read. The mixed one-defined-side case is the
+    // verdict flip most visible to existing callers; pin it so the guard
+    // cannot regress from `||` to `&&` with the suite green. The
+    // checks_performed assertion names the REFUSAL POINT, not just the
+    // outcome: under the `&&` regression the outcome assertion is not
+    // GUARANTEED to redden (the numeric strategy's sampled differences on
+    // an undefined side sometimes fabricate numbers, sometimes skip —
+    // environment-dependent); the guard's signature reddens by construction.
+    it('stays UNKNOWN, not FALSE, when exactly one side reads undefined', async () => {
+      const res = await verifyHandler({
+        claim: '(f^(+))(x) = sin(x)^2 + cos(x)^2',
+        format: 'json',
+      });
+      const parsed = JSON.parse(getText(res));
+      expect(parsed.verified).toBe(false);
+      expect(parsed.evaluated).toBe(false);
+      expect(parsed.checks_performed).toContain('undefined_reading');
+    });
+
+    it('stays UNKNOWN when a side reading never comes back from the engine', async () => {
+      // A transient engine failure while reading a side (worker crash, IPC
+      // loss, timeout) must not silently disable the reading guard: the
+      // numeric strategy would then substitute through the unread side and
+      // can fabricate a refutation. One rejected reading, everything else
+      // real.
+      const spy = vi
+        .spyOn(giacEngine, 'evaluate')
+        .mockRejectedValueOnce(new Error('worker crashed mid-read'));
+      try {
+        const res = await verifyHandler({
+          claim: '(f^(+))(x) = sin(x)^2 + cos(x)^2',
+          format: 'json',
+        });
+        const parsed = JSON.parse(getText(res));
+        expect(parsed.verified).toBe(false);
+        expect(parsed.evaluated).toBe(false);
+        expect(parsed.checks_performed).toContain('unreadable_side');
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it('stays UNKNOWN when a side reading comes back empty', async () => {
+      // The sibling of the rejected reading: the worker resolved but sent
+      // nothing. Unreachable with a healthy engine (the worker always sends
+      // a string or rejects), so the empty answer is injected here — the
+      // branch would otherwise be dead weight a regression could delete
+      // with the suite green.
+      const spy = vi.spyOn(giacEngine, 'evaluate').mockResolvedValueOnce('');
+      try {
+        const res = await verifyHandler({
+          claim: '(f^(+))(x) = sin(x)^2 + cos(x)^2',
+          format: 'json',
+        });
+        const parsed = JSON.parse(getText(res));
+        expect(parsed.verified).toBe(false);
+        expect(parsed.evaluated).toBe(false);
+        expect(parsed.checks_performed).toContain('unreadable_side');
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    // Characterization, deliberate trade-off (found by review): a side too
+    // large to evaluate standalone throws in the reading (WASM memory trap),
+    // and the refusal flips verdicts the old code produced — TRUE here (Giac
+    // cancels A - A structurally without evaluating it) and FALSE for the +1
+    // variant. We knowingly give those up: the same old path reported
+    // `2^100000 = 2^100000` as NOT verified with high confidence (numeric
+    // parseFloat of the huge side poisoned the combination), and UNKNOWN is
+    // this product's preferred failure over a might-be-wrong verdict.
+    it.each([
+      '10000!*x = 10000!*x',
+      '10000!*x = 10000!*x + 1',
+      '2^100000 = 2^100000',
+    ])('knowingly refuses the huge-side claim: %s', async (claim) => {
+      const res = await verifyHandler({ claim, format: 'json' });
+      const parsed = JSON.parse(getText(res));
+      expect(parsed.verified).toBe(false);
+      expect(parsed.evaluated).toBe(false);
+      expect(parsed.checks_performed).toContain('unreadable_side');
+    });
+
+    it('does not size the equation-part walk by the number of `=` packed in', async () => {
+      // The substitution check reads only the first two `=`-separated parts,
+      // so the reading guard must not make a worker round trip per extra
+      // `=` — an 8 KB claim can carry four thousand of them, each trip under
+      // the session mutex (found by review, measured: a 67-char claim held
+      // the CAS for 50 s; the cap-of-two bound was the agreed remedy).
+      const countEvaluates = async (claim: string): Promise<number> => {
+        const spy = vi.spyOn(giacEngine, 'evaluate');
+        try {
+          await verifyHandler({ claim, format: 'json' });
+        } finally {
+          const n = spy.mock.calls.length;
+          spy.mockRestore();
+          return n;
+        }
+      };
+      const few = await countEvaluates('x=1 satisfies 1=1=1');
+      const many = await countEvaluates('x=1 satisfies ' + '1='.repeat(40) + '1');
+      // Guard against a vacuous 0 === 0 if a future refactor stops both
+      // claims from reaching the engine at all.
+      expect(few).toBeGreaterThan(0);
+      expect(many).toBe(few);
+    });
+
+    it('says UNKNOWN, not FALSE, in text mode for an undefined-collapse claim', async () => {
+      const text = getText(await verifyHandler({ claim: 'x^(-1) sin(x) = x^(-1) cos(x)' }));
+      expect(text).toContain('Verified: UNKNOWN');
+      expect(text).not.toContain('FALSE');
+    });
+
+    // Division-by-zero identities were already refused before this guard
+    // existed, at a different layer: `1/0`'s sides read `infinity` and the
+    // refusal comes from the strategies (the difference simplifies to whole
+    // `undef`, numeric samples are NaN), while `x^(-1)y`'s sides read bare
+    // `undef` and now refuse at the reading guard. Both must stay UNKNOWN.
+    it.each(['1/0 = 1/0', 'x^(-1)y = x^(-1)z'])('keeps refusing undefined sides: %s', async (claim) => {
+      const res = await verifyHandler({ claim, format: 'json' });
+      const parsed = JSON.parse(getText(res));
+      expect(parsed.verified).toBe(false);
+      expect(parsed.evaluated).toBe(false);
+    });
+
+    // A claim genuinely about `undef` keeps its verdict: the limit side reads
+    // bounded_function(1), the `undef` side now trips the same reading guard
+    // that the old whole-result check caught — UNKNOWN before, UNKNOWN after.
+    it('a claim that a limit equals undef stays UNKNOWN', async () => {
+      const res = await verifyHandler({ claim: 'limit(sin(1/x), x, 0) = undef', format: 'json' });
+      const parsed = JSON.parse(getText(res));
+      expect(parsed.verified).toBe(false);
+      expect(parsed.evaluated).toBe(false);
+    });
+
+    // Giac echoes identifiers that merely contain the letters verbatim
+    // (`undefx+1` evaluates to `undefx+1`), so the marker is matched on word
+    // boundaries and these legitimate claims keep verifying.
+    it.each(['undefx = undefx', 'my_undef = my_undef'])(
+      'does not refuse identifiers containing the letters: %s',
+      async (claim) => {
+        const text = getText(await verifyHandler({ claim }));
+        expect(text).toContain('Verified: TRUE');
+      }
+    );
   });
 
   describe('Comparison-operator claims', () => {

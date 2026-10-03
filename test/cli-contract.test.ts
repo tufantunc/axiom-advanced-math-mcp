@@ -227,6 +227,24 @@ describe('CLI — verify', () => {
     expect(r.stdout).toBe('');
   }, 30_000);
 
+  // Giac reads `x^(-1) sin(x)` as its undefined marker `undef(x)` — no error,
+  // and two such sides agreed (difference 0), so this used to exit 0 as a
+  // verified identity. The refusal lives in verifyHandler, the handler both
+  // surfaces call, so MCP refuses identically.
+  it('exits 1 with nothing on stdout when a side reads as undefined', async () => {
+    const r = await cli(['verify', 'x^(-1) sin(x) = x^(-1) cos(x)']);
+    expect(r.code).toBe(1);
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toContain('could not check');
+  }, 30_000);
+
+  it('-q emits no verdict when a side reads as undefined', async () => {
+    // A quiet-mode verdict here would be captured as a real one.
+    const r = await cli(['verify', '-q', '(f^(+))(x) = (f^(-))(x)']);
+    expect(r.code).toBe(1);
+    expect(r.stdout).toBe('');
+  }, 30_000);
+
   // The superscript refusal lives in the handlers both surfaces call: pinned
   // here so it cannot move to one surface and leave the CLI evaluating `2ⁱ²`.
   it('exits 1 with nothing on stdout for a claim with an ambiguous superscript', async () => {

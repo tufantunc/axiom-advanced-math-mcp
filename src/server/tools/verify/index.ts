@@ -91,21 +91,95 @@ function isOrderResidueOnly(expr: string): boolean {
 }
 
 /**
+ * Giac's undefined marker, wherever it appears in output: bare (`undef`),
+ * applied to what produced it (`undef(x)`), or inside a list (`[undef,x]`).
+ * Matched on word boundaries because Giac echoes identifiers that merely
+ * contain the letters verbatim (`undefx + 1` evaluates to `undefx + 1`,
+ * `my_undef*2` to `my_undef*2`), and those must not be refused.
+ */
+function containsUndefinedMarker(giacOutput: string): boolean {
+  return /\bundef\b/.test(giacOutput);
+}
+
+/**
+ * The UNKNOWN verdict for a claim whose notation Giac read as undefined.
+ * Not FALSE: nothing was compared, and calling it a refutation would tell a
+ * script the mathematics failed when the notation was never understood.
+ */
+function undefinedReadingResult(whatReadsUndefined: string): VerifyResult {
+  return {
+    verified: false,
+    evaluated: false,
+    confidence: 'low',
+    explanation:
+      `Could not check the claim: Giac read ${whatReadsUndefined} as its ` +
+      `undefined marker (undef) — the notation was not understood.`,
+    checks_performed: ['undefined_reading'],
+  };
+}
+
+/**
+ * Whether Giac's reading of `expr` carries its undefined marker. An
+ * evaluation error is not an undefined reading — the existing error paths
+ * handle those — so this answers false there. (Deliberately a weaker policy
+ * than the identity path's unreadable-side refusal: the solution strategies
+ * re-evaluate these same strings and degrade to UNKNOWN on their own, so a
+ * rejected read here costs time, never a verdict.)
+ */
+async function readsAsUndefined(expr: string): Promise<boolean> {
+  try {
+    const r = await giacEngine.evaluate(expr);
+    return !!r && containsUndefinedMarker(r);
+  } catch {
+    return false;
+  }
+}
+
+/** One side of an identity claim, as it will be handed to the strategies. */
+interface SideReading {
+  /** The side itself, or its polynomial part when a series remainder was stripped. */
+  expr: string;
+  /** Giac's own reading of this side carries its undefined marker. */
+  readsUndefined: boolean;
+  /** The reading never came back — the engine errored or answered nothing. */
+  unreadable: boolean;
+}
+
+/**
  * Pre-normalize one side of an identity claim: when it evaluates to a series
  * result carrying an order_size remainder, substitute the bare polynomial.
- * Any evaluation problem leaves the side untouched.
+ * An evaluation problem marks the side unreadable rather than silently
+ * proceeding on it.
  */
-async function normalizeSide(side: string): Promise<string> {
+async function normalizeSide(side: string): Promise<SideReading> {
   try {
     const r = await giacEngine.evaluate(side);
-    if (r && r !== 'undef' && r.includes('order_size')) {
-      const stripped = stripOrderTerm(r);
-      if (stripped && stripped !== r) return `(${stripped})`;
+    if (r) {
+      // A side whose reading carries the undefined marker was not understood,
+      // not evaluated: Giac answers `(f^(+))(x)` with `undef(x)` instead of an
+      // error. Refused here, before either strategy runs, because two
+      // identical undefined readings AGREE — the symbolic difference is 0 and
+      // every sampled point substitutes to 0 — and would certify the claim.
+      if (containsUndefinedMarker(r)) {
+        return { expr: side, readsUndefined: true, unreadable: false };
+      }
+      if (r.includes('order_size')) {
+        const stripped = stripOrderTerm(r);
+        if (stripped && stripped !== r) {
+          return { expr: `(${stripped})`, readsUndefined: false, unreadable: false };
+        }
+      }
+    } else {
+      // An empty answer is not a clean reading; the worker resolved nothing.
+      return { expr: side, readsUndefined: false, unreadable: true };
     }
   } catch {
-    // keep original side
+    // A side the engine could not read cannot be checked — and letting the
+    // strategies run on it lets a transient failure (worker crash, IPC loss,
+    // timeout) fabricate a verdict out of notation that was never read.
+    return { expr: side, readsUndefined: false, unreadable: true };
   }
-  return side;
+  return { expr: side, readsUndefined: false, unreadable: false };
 }
 
 /**
@@ -123,7 +197,13 @@ async function verifySymbolic(
     const expr = `simplify((${lhs}) - (${rhs}))`;
     const result = await giacEngine.evaluate(expr);
 
-    if (!result || result === 'undef') {
+    // The marker anywhere in the reading — not only as the whole result —
+    // means the difference is undefined, so nothing was compared. The sides
+    // are refused upstream when THEY read undefined; this parse site keeps
+    // the same invariant for a marker the simplification itself produces
+    // (`undef(…)`-shaped output would otherwise report a refutation instead
+    // of a non-answer).
+    if (!result || containsUndefinedMarker(result)) {
       return { verified: false, evaluated: false, detail: 'Simplification returned undefined' };
     }
 
@@ -265,7 +345,7 @@ async function verifySolution(
     // Parse equation into expression = 0 form
     let expr: string;
     if (equation.includes('=')) {
-      const [lhs, rhs] = equation.split('=').map((s) => s.trim());
+      const [lhs, rhs] = splitEquation(equation);
       expr = `(${lhs}) - (${rhs})`;
     } else {
       expr = equation;
@@ -332,6 +412,19 @@ interface ParsedClaim {
   variable?: string;
   value?: string;
   equation?: string;
+}
+
+/**
+ * Split an equation string at its `=` separators into the two sides the
+ * solution check reads. Exactly two sides are read: anything past a second
+ * top-level `=` is dropped (a chain `a=b=c` is checked as `a=b` —
+ * pre-existing semantics). Shared by the reading guard, the substitution and
+ * the symbolic follow-up so their notions of "the equation's sides" cannot
+ * drift apart.
+ */
+function splitEquation(equation: string): [lhs: string, rhs?: string] {
+  const [lhs, rhs] = equation.split('=').map((s) => s.trim());
+  return [lhs, rhs];
 }
 
 function parseClaim(claim: string): ParsedClaim {
@@ -478,8 +571,32 @@ async function handleIdentityVerification(
   parsed: ParsedClaim,
   method: string
 ): Promise<VerifyResult> {
-  const lhs = await normalizeSide(parsed.lhs ?? '');
-  const rhs = await normalizeSide(parsed.rhs ?? '');
+  const lhsReading = await normalizeSide(parsed.lhs ?? '');
+  const rhsReading = await normalizeSide(parsed.rhs ?? '');
+  // Before either strategy runs: symbolic would simplify two identical
+  // undefined readings to 0 and numeric would sample them to 0, so neither
+  // may see a claim whose side reads undefined.
+  if (lhsReading.readsUndefined || rhsReading.readsUndefined) {
+    return undefinedReadingResult(`a side of ${lhsReading.expr} = ${rhsReading.expr}`);
+  }
+  // A reading that never came back gets the same verdict class: nothing was
+  // read, so nothing can be checked. Proceeding instead would let a
+  // transient engine failure silently disable the guard above — the numeric
+  // strategy substitutes through the unread side and can report a
+  // refutation of notation that was never read.
+  if (lhsReading.unreadable || rhsReading.unreadable) {
+    return {
+      verified: false,
+      evaluated: false,
+      confidence: 'low',
+      explanation:
+        `Could not read a side of ${lhsReading.expr} = ${rhsReading.expr}: ` +
+        `the engine errored or returned no reading.`,
+      checks_performed: ['unreadable_side'],
+    };
+  }
+  const lhs = lhsReading.expr;
+  const rhs = rhsReading.expr;
   const checks: string[] = [];
   let symbolicOk: boolean | null = null;
   let numericOk: boolean | null = null;
@@ -544,11 +661,28 @@ async function handleSolutionVerification(
   }
   const checks: string[] = [];
 
+  // Same refusal as the identity path, on the pieces the substitution check
+  // actually reads: the asserted value and the equation's two sides
+  // (verifySolution reads exactly two). An equation both sides of which read
+  // undefined collapses to 0 under substitution, and a value that reads
+  // undefined asserts a notation that was never read. Parts past the second
+  // are never used downstream — walking them would be a user-controlled loop
+  // of Giac round trips (an 8 KB claim carries thousands of `=`), each under
+  // the session mutex with its own timeout.
+  if (await readsAsUndefined(value)) {
+    return undefinedReadingResult(`the value ${value}`);
+  }
+  const [eqLhs, eqRhs] = splitEquation(equation);
+  for (const part of [eqLhs, eqRhs]) {
+    if (part && (await readsAsUndefined(part))) {
+      return undefinedReadingResult(`a side of ${equation}`);
+    }
+  }
+
   const solution = await verifySolution(variable, value, equation);
   checks.push(`Substitution: ${solution.detail}`);
 
   if ((method === 'symbolic' || method === 'both') && equation.includes('=')) {
-    const [eqLhs, eqRhs] = equation.split('=').map((s) => s.trim());
     const substLhs = `subst(${eqLhs}, ${variable}=${value})`;
     const substRhs = `subst(${eqRhs}, ${variable}=${value})`;
     const symbolic = await verifySymbolic(substLhs, substRhs);
