@@ -190,10 +190,10 @@ describe('Verify Tool', () => {
     // verdict flip most visible to existing callers; pin it so the guard
     // cannot regress from `||` to `&&` with the suite green. The
     // checks_performed assertion names the REFUSAL POINT, not just the
-    // outcome: under the `&&` regression the numeric strategy's behavior on
-    // an undefined side is not deterministic (its sampled differences
-    // sometimes fabricate numbers, sometimes skip), so the outcome alone
-    // does not always redden — the guard's signature does.
+    // outcome: under the `&&` regression the outcome assertion is not
+    // GUARANTEED to redden (the numeric strategy's sampled differences on
+    // an undefined side sometimes fabricate numbers, sometimes skip —
+    // environment-dependent); the guard's signature reddens by construction.
     it('stays UNKNOWN, not FALSE, when exactly one side reads undefined', async () => {
       const res = await verifyHandler({
         claim: '(f^(+))(x) = sin(x)^2 + cos(x)^2',
@@ -226,6 +226,47 @@ describe('Verify Tool', () => {
       } finally {
         spy.mockRestore();
       }
+    });
+
+    it('stays UNKNOWN when a side reading comes back empty', async () => {
+      // The sibling of the rejected reading: the worker resolved but sent
+      // nothing. Unreachable with a healthy engine (the worker always sends
+      // a string or rejects), so the empty answer is injected here — the
+      // branch would otherwise be dead weight a regression could delete
+      // with the suite green.
+      const spy = vi.spyOn(giacEngine, 'evaluate').mockResolvedValueOnce('');
+      try {
+        const res = await verifyHandler({
+          claim: '(f^(+))(x) = sin(x)^2 + cos(x)^2',
+          format: 'json',
+        });
+        const parsed = JSON.parse(getText(res));
+        expect(parsed.verified).toBe(false);
+        expect(parsed.evaluated).toBe(false);
+        expect(parsed.checks_performed).toContain('unreadable_side');
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    // Characterization, deliberate trade-off (found by review): a side too
+    // large to evaluate standalone throws in the reading (WASM memory trap),
+    // and the refusal flips verdicts the old code produced — TRUE here (Giac
+    // cancels A - A structurally without evaluating it) and FALSE for the +1
+    // variant. We knowingly give those up: the same old path reported
+    // `2^100000 = 2^100000` as NOT verified with high confidence (numeric
+    // parseFloat of the huge side poisoned the combination), and UNKNOWN is
+    // this product's preferred failure over a might-be-wrong verdict.
+    it.each([
+      '10000!*x = 10000!*x',
+      '10000!*x = 10000!*x + 1',
+      '2^100000 = 2^100000',
+    ])('knowingly refuses the huge-side claim: %s', async (claim) => {
+      const res = await verifyHandler({ claim, format: 'json' });
+      const parsed = JSON.parse(getText(res));
+      expect(parsed.verified).toBe(false);
+      expect(parsed.evaluated).toBe(false);
+      expect(parsed.checks_performed).toContain('unreadable_side');
     });
 
     it('does not size the equation-part walk by the number of `=` packed in', async () => {

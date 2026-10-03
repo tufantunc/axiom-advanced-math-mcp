@@ -121,7 +121,10 @@ function undefinedReadingResult(whatReadsUndefined: string): VerifyResult {
 /**
  * Whether Giac's reading of `expr` carries its undefined marker. An
  * evaluation error is not an undefined reading — the existing error paths
- * handle those — so this answers false there.
+ * handle those — so this answers false there. (Deliberately a weaker policy
+ * than the identity path's unreadable-side refusal: the solution strategies
+ * re-evaluate these same strings and degrade to UNKNOWN on their own, so a
+ * rejected read here costs time, never a verdict.)
  */
 async function readsAsUndefined(expr: string): Promise<boolean> {
   try {
@@ -588,7 +591,7 @@ async function handleIdentityVerification(
       confidence: 'low',
       explanation:
         `Could not read a side of ${lhsReading.expr} = ${rhsReading.expr}: ` +
-        `the engine returned no reading.`,
+        `the engine errored or returned no reading.`,
       checks_performed: ['unreadable_side'],
     };
   }
