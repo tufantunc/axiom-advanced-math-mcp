@@ -126,6 +126,102 @@ describe('Verify Tool', () => {
     });
   });
 
+  describe('Claims a side of which Giac reads as its undefined marker', () => {
+    // Giac does not error on these notations — it answers `(f^(+))(x)` and
+    // `x^(-1) sin(x)` with `undef(x)` (measured on the real engine). Two such
+    // sides then AGREE: the symbolic difference is 0 and every sampled point
+    // substitutes to 0, so the claim certified as TRUE with high confidence.
+    // An `undef` anywhere in a side's reading means the notation was not
+    // understood, and the claim is UNKNOWN — never verified, never refuted.
+    it.each([
+      '(f^(+))(x) = (f^(-))(x)',
+      '(f^())(x) = (g^())(x)',
+      'x^(-1) sin(x) = x^(-1) cos(x)',
+      'x^(-1) f2(x) = x^(-1) g2(x)',
+    ])('stays UNKNOWN: %s', async (claim) => {
+      const res = await verifyHandler({ claim, format: 'json' });
+      const parsed = JSON.parse(getText(res));
+      expect(parsed.verified).toBe(false);
+      expect(parsed.evaluated).toBe(false);
+    });
+
+    it.each(['symbolic', 'numeric'] as const)(
+      'method=%s alone cannot certify the collapse: (f^(+))(x) = (f^(-))(x)',
+      async (method) => {
+        // The refusal happens before either strategy runs. These rows pin
+        // that neither strategy is left as an unguarded way in — a guard
+        // that only covered the symbolic path would pass method=symbolic and
+        // redden the numeric row (verified by mutation).
+        const res = await verifyHandler({
+          claim: '(f^(+))(x) = (f^(-))(x)',
+          method,
+          format: 'json',
+        });
+        const parsed = JSON.parse(getText(res));
+        expect(parsed.verified).toBe(false);
+        expect(parsed.evaluated).toBe(false);
+      }
+    );
+
+    it('stays UNKNOWN when the collapse hides in a solution claim equation', async () => {
+      // Both sides of the equation read undef(x); substituting x=2 into
+      // undef(x) - undef(x) yields 0 and the solution certified as TRUE.
+      const res = await verifyHandler({
+        claim: 'x=2 satisfies (f^(+))(x) = (f^(+))(x)',
+        format: 'json',
+      });
+      const parsed = JSON.parse(getText(res));
+      expect(parsed.verified).toBe(false);
+      expect(parsed.evaluated).toBe(false);
+    });
+
+    it('stays UNKNOWN when the asserted value itself reads undefined', async () => {
+      const res = await verifyHandler({
+        claim: 'x = (f^(+))(x) satisfies x - x = 0',
+        format: 'json',
+      });
+      const parsed = JSON.parse(getText(res));
+      expect(parsed.verified).toBe(false);
+      expect(parsed.evaluated).toBe(false);
+    });
+
+    it('says UNKNOWN, not FALSE, in text mode for an undefined-collapse claim', async () => {
+      const text = getText(await verifyHandler({ claim: 'x^(-1) sin(x) = x^(-1) cos(x)' }));
+      expect(text).toContain('Verified: UNKNOWN');
+      expect(text).not.toContain('FALSE');
+    });
+
+    // Whole-result undef sides were already refused before this guard
+    // existed; it must not loosen that.
+    it.each(['1/0 = 1/0', 'x^(-1)y = x^(-1)z'])('keeps refusing whole-undef sides: %s', async (claim) => {
+      const res = await verifyHandler({ claim, format: 'json' });
+      const parsed = JSON.parse(getText(res));
+      expect(parsed.verified).toBe(false);
+      expect(parsed.evaluated).toBe(false);
+    });
+
+    // A claim genuinely about `undef` keeps its verdict: the limit side reads
+    // bounded_function(1), the `undef` side now trips the same reading guard
+    // that the old whole-result check caught — UNKNOWN before, UNKNOWN after.
+    it('a claim that a limit equals undef stays UNKNOWN', async () => {
+      const res = await verifyHandler({ claim: 'limit(sin(1/x), x, 0) = undef', format: 'json' });
+      const parsed = JSON.parse(getText(res));
+      expect(parsed.verified).toBe(false);
+      expect(parsed.evaluated).toBe(false);
+    });
+
+    // Giac echoes identifiers that merely contain the letters verbatim
+    // (`undefx+1` evaluates to `undefx+1`), so the marker is matched on word
+    // boundaries and these legitimate claims keep verifying.
+    it.each(['undefx = undefx', 'my_undef = my_undef'])(
+      'does not refuse identifiers containing the letters: %s',
+      async (claim) => {
+        const text = getText(await verifyHandler({ claim }));
+        expect(text).toContain('Verified: TRUE');
+      }
+    );
+  });
+
   describe('Comparison-operator claims', () => {
     it('a bracketed identity still finds its main equals', async () => {
     // trackDepth's paren/bracket bookkeeping: swapping the counters makes
