@@ -356,8 +356,11 @@ async function verifySolution(
     const numResult = Number.parseFloat(result);
 
     // No number back means the substitution did not produce something
-    // comparable to zero — nothing was checked.
-    if (Number.isNaN(numResult)) {
+    // comparable to zero — nothing was checked. An '=' in the answer is an
+    // equation OBJECT, not a number: parseFloat stops at the '=' and would
+    // certify its left side (`0.0=5.0` read as 0 ≈ 0) — unreachable behind
+    // the shape guards today, kept as the belt at this parse site.
+    if (result.includes('=') || Number.isNaN(numResult)) {
       return {
         verified: false,
         evaluated: false,
@@ -417,14 +420,80 @@ interface ParsedClaim {
 /**
  * Split an equation string at its `=` separators into the two sides the
  * solution check reads. Exactly two sides are read: anything past a second
- * top-level `=` is dropped (a chain `a=b=c` is checked as `a=b` —
- * pre-existing semantics). Shared by the reading guard, the substitution and
- * the symbolic follow-up so their notions of "the equation's sides" cannot
- * drift apart.
+ * top-level `=` is dropped — which is why countTopLevelEquals refuses chains
+ * before anything reads them. Shared by the reading guard, the substitution
+ * and the symbolic follow-up so their notions of "the equation's sides"
+ * cannot drift apart.
  */
 function splitEquation(equation: string): [lhs: string, rhs?: string] {
   const [lhs, rhs] = equation.split('=').map((s) => s.trim());
   return [lhs, rhs];
+}
+
+/** Top-level `=` shape of a string: equation separators vs comparison operators. */
+interface EquationShape {
+  /** single `=` separators */
+  singles: number;
+  /** comparison operators: `==`, `!=`, `<=`, `>=` */
+  comparisons: number;
+}
+
+/**
+ * Count the string's top-level `=` shape — at paren/bracket depth zero,
+ * mirroring findMainEquals. `==` counts as one comparison (its second `=`
+ * is consumed with it); the `=` of `!=`/`<=`/`>=` counts as one comparison
+ * too. The naive splitEquation breaks at every `=` CHARACTER: inside a
+ * comparison (`x != 2` → lhs `x !`, a FACTORIAL that evaluates), inside a
+ * chain (`a=b=c`'s tail goes unread), and inside nested parens — so any
+ * comparison, and any second `=`, is notation the two parts cannot cover.
+ */
+function countTopLevelEquals(equation: string): EquationShape {
+  let depth = 0;
+  let bracketDepth = 0;
+  const shape: EquationShape = { singles: 0, comparisons: 0 };
+  for (let i = 0; i < equation.length; i++) {
+    const ch = equation[i];
+    [depth, bracketDepth] = trackDepth(ch, depth, bracketDepth);
+    if (ch !== '=' || depth !== 0 || bracketDepth !== 0) continue;
+    if (equation[i + 1] === '=') {
+      shape.comparisons++;
+      i++;
+    } else if (isTrailingComparisonEquals(equation, i)) {
+      shape.comparisons++;
+    } else {
+      shape.singles++;
+    }
+  }
+  return shape;
+}
+
+/**
+ * Whether the string's top-level `=` shape is one the two-part split can
+ * cover: exactly one single `=` and no comparison operator. Used on
+ * equations (which may carry their one separator) and on solution-claim
+ * values and identity sides (which may carry none at all).
+ */
+function carriesUnreadEquals(text: string, allowOneSeparator: boolean): boolean {
+  const { singles, comparisons } = countTopLevelEquals(text);
+  if (comparisons > 0) return true;
+  return allowOneSeparator ? singles > 1 : singles > 0;
+}
+
+/**
+ * The UNKNOWN verdict for an equation whose shape the solution check cannot
+ * read: the substitution reads only two parts split at the first `=`
+ * CHARACTER, so chained, comparison-mixed or nested-`=` equations would be
+ * ruled on with part of the notation unread. Not FALSE — nothing was
+ * compared.
+ */
+function equationShapeRefusal(what: string, why: string): VerifyResult {
+  return {
+    verified: false,
+    evaluated: false,
+    confidence: 'low',
+    explanation: `Could not check the claim: ${what} ${why}`,
+    checks_performed: ['equation_shape'],
+  };
 }
 
 function parseClaim(claim: string): ParsedClaim {
@@ -501,9 +570,16 @@ function findMainEquals(expr: string): number {
   return -1;
 }
 
-/** Whether this `=` is the tail of `!=`, `<=`, or `>=` rather than a main equals. */
+/**
+ * Whether this `=` is the tail of `!=`, `<=`, or `>=` rather than a main
+ * equals. The lookback skips whitespace: Giac reads `x !` as a factorial
+ * just as happily as `x!`, so `x ! = 2` is a spaced comparison — treating
+ * its `=` as a separator certified the false "2 ≠ 2" TRUE (2!−2=0).
+ */
 function isTrailingComparisonEquals(expr: string, i: number): boolean {
-  return i > 0 && (expr[i - 1] === '!' || expr[i - 1] === '<' || expr[i - 1] === '>');
+  let j = i - 1;
+  while (j >= 0 && /\s/.test(expr[j])) j--;
+  return j >= 0 && (expr[j] === '!' || expr[j] === '<' || expr[j] === '>');
 }
 
 // ---------------------------------------------------------------------------
@@ -571,6 +647,20 @@ async function handleIdentityVerification(
   parsed: ParsedClaim,
   method: string
 ): Promise<VerifyResult> {
+  // A side that still carries a top-level `=` is chain residue: `1=1=2`
+  // parses as lhs='1', rhs='1=2', and the strategies ruled on the first
+  // pair only — the numeric arm once certified it TRUE because parseFloat
+  // stops at '=' (review-measured; with method=numeric `verify '1=1=2'`
+  // exited 0). The at-pattern's two structural `=` land inside subst(...)
+  // parens and never reach here. Refused before any engine call.
+  for (const side of [parsed.lhs ?? '', parsed.rhs ?? '']) {
+    if (carriesUnreadEquals(side, false)) {
+      return equationShapeRefusal(
+        `the side '${side}' of the claim`,
+        `carries '=' or a comparison — write a single equation.`
+      );
+    }
+  }
   const lhsReading = await normalizeSide(parsed.lhs ?? '');
   const rhsReading = await normalizeSide(parsed.rhs ?? '');
   // Before either strategy runs: symbolic would simplify two identical
@@ -680,6 +770,44 @@ async function handleSolutionVerification(
     };
   }
   const checks: string[] = [];
+
+  // The equation's shape must be exactly one top-level `=` and nothing
+  // else. Chains (`a=b=c`) certified notation after the first pair;
+  // comparison mixes (`a=b==c`, `a=b!=c`) and bang-only `x != 2` re-read
+  // `x !` as a FACTORIAL and ruled on it — the false "2 ≠ 2" certified
+  // TRUE, the true "1 ≠ 2" refuted. Comparison-only shapes (`a == b`) are
+  // not equations either. All refused before any engine call.
+  if (carriesUnreadEquals(equation, true)) {
+    return equationShapeRefusal(
+      equation,
+      `chains, mixes or compares with more than one top-level '=' — ` + `write a single equation.`
+    );
+  }
+  // The value carved by the claim regex may carry '=' itself — at any depth:
+  // `x=2=99 satisfies x^2=4` substituted `x=2=99`, and `x=(0=5)+1 satisfies
+  // x-1=0` substituted an equation OBJECT; both times parseFloat stopped at
+  // the '=' and certified the leftover 0 as ≈ 0 → TRUE. A value is one
+  // token; no legitimate value contains '=' anywhere.
+  if (value.includes('=')) {
+    return equationShapeRefusal(
+      `the value ${value}`,
+      `carries '=' — write one value for the variable.`
+    );
+  }
+  // An `=` nested inside the equation's own sides cannot be split apart:
+  // the split breaks at the first `=` CHARACTER — inside the nested
+  // notation (`abs(x=1) = 1` verified TRUE on the reading `abs(x) - 1`;
+  // nested-only `(x=1)+(x=1)` was refuted on `(x) - (1)+(x=1)`). Depth-aware
+  // splitting was declined — it hands piecewise notation to a substitution
+  // that answers ifte(x=2,1,0) - 1 at x=2 with -1, a wrong refutation. The
+  // identity path evaluates sides whole, so piecewise claims belong there.
+  if (findMainEquals(equation) !== equation.indexOf('=')) {
+    return equationShapeRefusal(
+      equation,
+      `nests '=' inside its sides, which the solution check cannot split ` +
+        `apart — write it as an identity (LHS = RHS) instead.`
+    );
+  }
 
   // Same refusal as the identity path, on the pieces the substitution check
   // actually reads: the asserted value and the equation's two sides

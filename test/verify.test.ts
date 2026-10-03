@@ -269,12 +269,11 @@ describe('Verify Tool', () => {
       expect(parsed.checks_performed).toContain('unreadable_side');
     });
 
-    it('does not size the equation-part walk by the number of `=` packed in', async () => {
-      // The substitution check reads only the first two `=`-separated parts,
-      // so the reading guard must not make a worker round trip per extra
-      // `=` — an 8 KB claim can carry four thousand of them, each trip under
-      // the session mutex (found by review, measured: a 67-char claim held
-      // the CAS for 50 s; the cap-of-two bound was the agreed remedy).
+    it('a chained equation is refused with zero engine calls', async () => {
+      // The contract this pins: a chained equation never reaches the engine
+      // at all — refusal happens at parse shape, before any reading. The
+      // two-part claim only proves the engine is reachable (anti-vacuous
+      // guard against 0 === 0).
       const countEvaluates = async (claim: string): Promise<number> => {
         const spy = vi.spyOn(giacEngine, 'evaluate');
         try {
@@ -285,14 +284,163 @@ describe('Verify Tool', () => {
           return n;
         }
       };
-      const few = await countEvaluates('x=1 satisfies 1=1=1');
+      const few = await countEvaluates('x=1 satisfies 1=1');
       const many = await countEvaluates('x=1 satisfies ' + '1='.repeat(40) + '1');
-      // Guard against a vacuous 0 === 0 if a future refactor stops both
-      // claims from reaching the engine at all.
       expect(few).toBeGreaterThan(0);
-      expect(many).toBe(few);
+      expect(many).toBe(0);
+    });
+  });
+
+  describe('Chained and comparison-shaped equations', () => {
+    // A chain `a=b=c` is ambiguous notation, not an equation: the
+    // substitution check reads only the first two `=`-separated parts and
+    // certified claims whose remaining notation it never looked at
+    // (measured: `x^2-4=0=(f^(+))(x)` verified TRUE with an unreadable
+    // tail). Refused before any engine call. A `==` glued to the equation's
+    // own `=` is the same hole one operator wide: the naive split still
+    // breaks at every `=` character, so the comparison tail is never read
+    // (found by review — `x^2-4=0==(f^(+))(x)` verified TRUE/high).
+    it.each([
+      'x=1 satisfies 1=1=1',
+      'x=1 satisfies 1=1=1=1=(f^(+))(x)',
+      'x=2 satisfies x^2-4=0=(f^(+))(x)',
+      'x=2 satisfies x^2-4=0==(f^(+))(x)',
+      'x=1 satisfies 1=1==tail',
+      'n=2 satisfies n^2=4 == (n mod 2 == 0)',
+      // `!=` is the same hole one operator over (found by re-review): the
+      // naive split breaks inside it, the tail goes unread, and the mangled
+      // rhs `4!` is a FACTORIAL — `24=4!=tail` certified TRUE, and the true
+      // compound claim `x^2-4=0, x != 5` was refuted with exit 2.
+      'x=2 satisfies 24=4!=(f^(+))(x)',
+      'x=2 satisfies x^2-4=0, x != 5',
+      'x=2 satisfies x^2=4!=0',
+      // Bang-only is the same factorial mangle with no equation '=' to mix
+      // with: `x != 2` splits to lhs `x !` — a FACTORIAL — so the false
+      // claim "2 ≠ 2" certified TRUE (2!−2=0) and the true "1 ≠ 2" was
+      // refuted (1!−2=−1). Unicode ≥/≤ are Giac-live operators the
+      // canonicaliser did not map, so compound clauses evaluated COMPLETE
+      // and the verdict inverted against them (found by adversarial
+      // re-review; the ASCII twins already refused).
+      'x=2 satisfies x != 2',
+      'x=1 satisfies 1 != 2',
+      // A space inside the comparison defeats a single-character lookback:
+      // Giac reads `x !` as a factorial just as happily, so `x ! = 2`
+      // certified the false "2 ≠ 2" TRUE — the spaced twin of the row
+      // above it.
+      'x=2 satisfies x ! = 2',
+      'x=1 satisfies 1 ! = 2',
+      'x=1 satisfies x^2-1=0, 2 ≥ x',
+      'x=1 satisfies x^2-1=0, 0 ≥ x',
+    ])('stays UNKNOWN for the chained or comparison-mixed equation: %s', async (claim) => {
+      const res = await verifyHandler({ claim, format: 'json' });
+      const parsed = JSON.parse(getText(res));
+      expect(parsed.verified).toBe(false);
+      expect(parsed.evaluated).toBe(false);
+      expect(parsed.checks_performed).toContain('equation_shape');
     });
 
+    // Identity-path sibling (pre-existing, found by review): `1=1=2` parses
+    // as lhs='1', rhs='1=2', and the numeric arm once certified it TRUE —
+    // parseFloat stops at '=' so '1.0=2.0' parsed as 1. Refused the same
+    // way: a side that still carries a top-level '=' is chain residue.
+    it.each(['1=1=2', '1=1=1', 'x+y=2, x-y=0', '2=3==4', '1 <= 2 = 1'])(
+      'stays UNKNOWN for the chained identity-shaped claim: %s',
+      async (claim) => {
+        const res = await verifyHandler({ claim, format: 'json' });
+        const parsed = JSON.parse(getText(res));
+        expect(parsed.verified).toBe(false);
+        expect(parsed.evaluated).toBe(false);
+        expect(parsed.checks_performed).toContain('equation_shape');
+      }
+    );
+
+    // The solution regex carves the value as ([^,\s]+) — permissive enough
+    // to carry '=' itself. `x=2=99 satisfies x^2=4` substituted
+    // `x=2=99`, Giac answered the equation object `0=9797`, and
+    // parseFloat stopped at '=' → 0 → verified TRUE (adversarial
+    // re-review). The value now faces the same shape policy.
+    it.each(['x=2=99 satisfies x^2=4', 'x=2!=3 satisfies x^2-4=0', 'x=(0=5)+1 satisfies x-1=0'])(
+      'stays UNKNOWN when the asserted value itself chains: %s',
+      async (claim) => {
+        const res = await verifyHandler({ claim, format: 'json' });
+        const parsed = JSON.parse(getText(res));
+        expect(parsed.verified).toBe(false);
+        expect(parsed.evaluated).toBe(false);
+        expect(parsed.checks_performed).toContain('equation_shape');
+      }
+    );
+
+    // A fullwidth ＝ (CJK IMEs) used to sail through as an identifier —
+    // no ASCII '=' anywhere, so the claim routed into the expression=0
+    // path and the TRUE claim `x^2-4＝0` at x=2 was REFUTED. Canonicalised
+    // to '=' like every other operator glyph, it verifies like its ASCII
+    // twin.
+    it('a fullwidth equals canonicalises and verifies: x^2-4＝0 at x=2', async () => {
+      const res = await verifyHandler({ claim: 'x=2 satisfies x^2-4＝0', format: 'json' });
+      const parsed = JSON.parse(getText(res));
+      expect(parsed.verified).toBe(true);
+      expect(parsed.evaluated).toBe(true);
+    });
+
+    // The spaced-comparison twin on the identity seam: no main equals once
+    // the lookback skips whitespace, so the claim degrades to parse-UNKNOWN
+    // instead of ruling on `2 !` (a factorial).
+    it('a spaced ! = comparison has no main equals: 2 ! = 2 stays UNKNOWN', async () => {
+      const res = await verifyHandler({ claim: '2 ! = 2', format: 'json' });
+      const parsed = JSON.parse(getText(res));
+      expect(parsed.verified).toBe(false);
+      expect(parsed.evaluated).toBe(false);
+    });
+
+    // The at-pattern's two structural `=` end up inside subst(...) parens
+    // after parsing — the shape refusal must not touch this claim form.
+    it('a point-evaluation claim with its two structural equals still verifies', async () => {
+      const res = await verifyHandler({ claim: 'x^2 at x=2 = 4', format: 'json' });
+      const parsed = JSON.parse(getText(res));
+      expect(parsed.verified).toBe(true);
+      expect(parsed.evaluated).toBe(true);
+    });
+
+    // A comparison operator is not an equation separator, alone or mixed:
+    // the naive split breaks inside every one of them (x ! re-reads as a
+    // FACTORIAL, a dangling < or > reads undef, ≥ evaluates whole and inverts
+    // the verdict). Comparison-only and comparison-mixed shapes are refused
+    // alike — the equation_shape invariant is uniform: exactly one top-level
+    // `=`, nothing else.
+    it.each([
+      'x=1 satisfies y == y',
+      'x=1 satisfies x^2-4=0, x >= 0',
+    ])('stays UNKNOWN for the comparison-bearing equation: %s', async (claim) => {
+      const res = await verifyHandler({ claim, format: 'json' });
+      const parsed = JSON.parse(getText(res));
+      expect(parsed.verified).toBe(false);
+      expect(parsed.evaluated).toBe(false);
+      expect(parsed.checks_performed).toContain('equation_shape');
+    });
+
+    // An `=` nested inside the equation's own sides cannot be split apart
+    // by the solution check: the naive split used to break INSIDE it and
+    // rule on the mangled remainder — `abs(x=1) = 1` verified TRUE on the
+    // reading `abs(x) - 1` (re-review measurement), and ifte forms errored
+    // into UNKNOWN. Refused now; the identity path evaluates piecewise
+    // sides whole and handles them correctly, so the message points there.
+    it.each([
+      'x=1 satisfies abs(x=1) = 1',
+      'x=2 satisfies ifte(x=2,1,0) = 1',
+      // Nested-only: findMainEquals answers -1, the first `=` CHARACTER is
+      // inside the parens, and the split mangled it — `x=1 satisfies
+      // (x=1)+(x=1)` was refuted on the reading `(x) - (1)+(x=1)`.
+      'x=1 satisfies (x=1)+(x=1)',
+    ])('stays UNKNOWN when the equals nests inside a side: %s', async (claim) => {
+      const res = await verifyHandler({ claim, format: 'json' });
+      const parsed = JSON.parse(getText(res));
+      expect(parsed.verified).toBe(false);
+      expect(parsed.evaluated).toBe(false);
+      expect(parsed.checks_performed).toContain('equation_shape');
+    });
+  });
+
+  describe('Undefined-marker edge forms (text mode, whole-result, identifiers)', () => {
     it('says UNKNOWN, not FALSE, in text mode for an undefined-collapse claim', async () => {
       const text = getText(await verifyHandler({ claim: 'x^(-1) sin(x) = x^(-1) cos(x)' }));
       expect(text).toContain('Verified: UNKNOWN');

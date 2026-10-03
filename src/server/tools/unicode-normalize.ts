@@ -288,6 +288,21 @@ export function unicodeToAscii(s: string): string {
       .replaceAll('×', '*')
       .replaceAll('·', '*')
       .replaceAll('÷', '/')
+      // Comparison glyphs are Giac-live operators but invisible to every
+      // guard that scans for ASCII '=' — unmapped, `2 ≥ x` evaluated WHOLE
+      // inside a mangled side and inverted compound verdicts (measured:
+      // `x^2-1=0, 2 ≥ x` refuted, `x^2-1=0, 0 ≥ x` certified). Mapped, they
+      // route into the ASCII behavior the verify shape guards already rule
+      // on; Giac answers `2>=1` exactly as it answers `2 ≥ 1`.
+      .replaceAll('≥', '>=')
+      .replaceAll('≤', '<=')
+      .replaceAll('≠', '!=')
+      // Fullwidth ＝ (CJK IMEs) is a different codepoint Giac reads as an
+      // identifier — with no ASCII '=' anywhere, `x^2-4＝0` routed into the
+      // expression=0 path and the TRUE claim was REFUTED (measured).
+      // Canonicalised to the separator every shape guard scans for.
+      .replaceAll('＝', '=')
+      .replaceAll('﹦', '=')
       // A RUN of superscripts is one exponent — see readRun. Before `**` is
       // rewritten, so a run after `**` is still recognisable as that caret's.
       .replaceAll(SUPERSCRIPT_RUN, superscriptExponent)
