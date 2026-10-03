@@ -273,9 +273,27 @@ export function superscriptRefusal(text: string): string | undefined {
 /** Characters that can only be operators: an exponent made of nothing else carries no operand. */
 const CARET_SOUP = new Set('=+-*/^<>!,:;.&|~%');
 
+/** Whitespace and the zero-width/format characters: invisible inside an exponent. */
+function isInvisible(ch: string): boolean {
+  return /\s/u.test(ch) || ch === '\u200b' || ch === '\u2060' || ch === '\ufeff';
+}
+
 /** A character that can carry meaning inside an exponent (operand material). */
 function isOperandChar(ch: string): boolean {
-  return !CARET_SOUP.has(ch) && !'()[]{}'.includes(ch) && !/\s/.test(ch);
+  return !CARET_SOUP.has(ch) && !'()[]{}'.includes(ch) && !isInvisible(ch);
+}
+
+/** How one caret's exponent read: the refused slice, or where to resume scanning. */
+interface ExponentVerdict {
+  /** The slice to refuse, or undefined when the exponent reads. */
+  refusal?: string;
+  /**
+   * The index scanning resumes from. For a passing bare run this is the
+   * char AFTER its last operand — every caret before that operand sees the
+   * same operand, so none is re-scanned, while a soup tail after it
+   * (`a^b^==`) still gets its own scan. This is what keeps the scan linear.
+   */
+  resumeAt: number;
 }
 
 /**
@@ -288,54 +306,78 @@ function isOperandChar(ch: string): boolean {
  * as `3`, `x^(==)*y` as `x*y`, while `x^(+)`, `x^()`, `x^-` collapse toward
  * undef. No answer that comes back can be trusted, so the tools refuse
  * rather than evaluate. `**` is Giac's own spelling of `^` and is scanned
- * the same way. Operators AROUND an operand (`x^(-1)`, `x^(n+1)`, `x^.5`)
- * read fine and are not refused.
+ * the same way. Operators AROUND an operand (`x^(-1)`, `x^- 1`, `x^(n+1)`,
+ * `x^.5`) read fine and are not refused; whitespace before or inside the
+ * exponent is transparent — Giac reads `x^ (==)` exactly like `x^(==)`
+ * (measured), and `x^- 1` exactly like `x^-1`.
  */
 export function caretExponentRefusal(text: string): string | undefined {
-  for (let i = 0; i < text.length; i++) {
+  let i = 0;
+  while (i < text.length) {
     const doubleStar = text[i] === '*' && text[i + 1] === '*';
-    if (text[i] !== '^' && !doubleStar) continue;
-    const slice = unreadableExponentSlice(text, i + (doubleStar ? 2 : 1), doubleStar ? '**' : '^');
-    if (slice !== undefined) {
+    if (text[i] !== '^' && !doubleStar) {
+      i++;
+      continue;
+    }
+    const start = i;
+    const after = i + (doubleStar ? 2 : 1);
+    let head = after;
+    while (head < text.length && isInvisible(text[head])) head++;
+    const verdict = exponentVerdict(text, start, head);
+    if (verdict.refusal !== undefined) {
       return (
-        `the exponent \`${slice}\` carries no operand — write it with ` +
+        `the exponent \`${verdict.refusal}\` carries no operand — write it with ` +
         `something to raise, e.g. x^2 or x^(n+1)`
       );
     }
+    i = Math.max(verdict.resumeAt, after);
   }
   return undefined;
 }
 
 /**
- * The exponent slice starting at `after` when it is operator-only, else
- * undefined. A parenthesised exponent needs its balanced close and an
- * operand inside; a bare exponent is the run of token characters after the
- * caret and is refused only when the run is non-empty and alnum-free — the
- * run scans THROUGH operators so `x^-1` and `x^.5` keep their digits.
+ * How the exponent at `head` (already past whitespace) read. A bracketed
+ * exponent — `(`, `[`, `{` are all live group spellings to Giac (`x^[1,2]`
+ * answers `[x,x^2]`) — needs its balanced close and an operand inside; the
+ * walk bails past 128 nesting levels, deeper than any hand-written
+ * exponent, so it cannot be walked quadratic. A bare exponent is the
+ * whitespace-transparent token run after the caret and is refused only when
+ * the run is non-empty and carries no operand — the run scans THROUGH
+ * operators so `x^-1` and `x^.5` keep their digits, and the verdict is
+ * settled at the first operand char.
  */
-function unreadableExponentSlice(text: string, after: number, prefix: string): string | undefined {
-  if (text[after] === '(') {
+function exponentVerdict(text: string, start: number, head: number): ExponentVerdict {
+  const opener = text[head];
+  if (opener === '(' || opener === '[' || opener === '{') {
+    const closer = opener === '(' ? ')' : opener === '[' ? ']' : '}';
     let depth = 0;
-    for (let i = after; i < text.length; i++) {
-      if (text[i] === '(') depth++;
-      else if (text[i] === ')') {
+    for (let i = head; i < text.length; i++) {
+      if (text[i] === opener) {
+        depth++;
+      } else if (text[i] === closer) {
         depth--;
         if (depth === 0) {
-          const inner = text.slice(after + 1, i);
-          if ([...inner].some(isOperandChar)) return undefined;
-          return text.slice(after - prefix.length, i + 1);
+          for (let j = head + 1; j < i; j++) {
+            if (isOperandChar(text[j])) return { resumeAt: i + 1 };
+          }
+          return { refusal: text.slice(start, i + 1), resumeAt: i + 1 };
         }
       }
+      if (depth > 128) return { resumeAt: head + 1 };
     }
-    return undefined; // unbalanced: the engine's own error answers that
+    return { resumeAt: head + 1 }; // unbalanced: the engine's own error answers
   }
-  let end = after;
-  while (end < text.length && (CARET_SOUP.has(text[end]) || /[A-Za-z0-9_]/.test(text[end]))) {
+  let end = head;
+  let lastOperand = -1;
+  while (end < text.length) {
+    const ch = text[end];
+    if (/[A-Za-z0-9_]/.test(ch)) lastOperand = end;
+    else if (!CARET_SOUP.has(ch) && !isInvisible(ch)) break;
     end++;
   }
-  const run = text.slice(after, end);
-  if (run === '' || /[A-Za-z0-9_]/.test(run)) return undefined;
-  return prefix + run;
+  if (lastOperand !== -1) return { resumeAt: lastOperand + 1 };
+  if (end === head) return { resumeAt: head + 1 }; // nothing follows: engine answers
+  return { refusal: text.slice(start, end), resumeAt: end };
 }
 
 /**

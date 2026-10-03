@@ -131,13 +131,20 @@ describe('CLI — compute', () => {
 
   // Giac silently drops an operator-only exponent (`x^(==)` answers `x`), so
   // compute would return a confident wrong value. The refusal lives beside
-  // the superscript one, in the handler both surfaces call.
-  it('refuses an operand-free caret exponent with exit 1 and clean stdout', async () => {
-    const r = await cli(['compute', '-q', 'x^(==)']);
-    expect(r.code).toBe(1);
-    expect(r.stdout).toBe('');
-    expect(r.stderr).toContain('carries no operand');
-  }, 30_000);
+  // the superscript one, in the handler both surfaces call. The glyph rows
+  // pin the canonical re-scan: the raw problem reads `≠` as operand
+  // material, but the canonicalisation that precedes the engine turns it
+  // into the `!=` soup — `simplify(x^(≠))` answered 1 (review-measured).
+  it.each(['x^(==)', 'x^ (==)', 'simplify(x^(≠))', 'simplify(x^(＝＝))'])(
+    'refuses an operand-free caret exponent with exit 1 and clean stdout: %s',
+    async (problem) => {
+      const r = await cli(['compute', '-q', problem]);
+      expect(r.code).toBe(1);
+      expect(r.stdout).toBe('');
+      expect(r.stderr).toContain('carries no operand');
+    },
+    30_000
+  );
 
   // `1` is Giac's own "from the right"; it was read as the left.
   it('takes a one-sided limit from the side it is asked for', async () => {

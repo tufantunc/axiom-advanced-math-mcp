@@ -612,6 +612,14 @@ describe('Verify Tool', () => {
       'x^(+) = x',
       'x^() = x^()',
       'x=2 satisfies x^(==) = x',
+      // One space before the exponent is the same soup to Giac — it reads
+      // `x^ (==)` exactly like `x^(==)` (found by review: the spaced form
+      // verified TRUE/high after the unspaced one was refused). A spaced
+      // MINUS over a number is the inverse case: `x^- 1` is a real exponent
+      // (Giac answers 1/x) and must not be refused.
+      'x^ (==) = x',
+      'x ^ (==) = x',
+      '2 ^ (==)+1 = 3',
     ])('stays UNKNOWN for the operand-free exponent: %s', async (claim) => {
       const res = await verifyHandler({ claim, format: 'json' });
       const parsed = JSON.parse(getText(res));
@@ -629,13 +637,17 @@ describe('Verify Tool', () => {
     });
 
     // Real exponents — operators AROUND an operand are fine; only an
-    // exponent that is nothing BUT operators is refused.
+    // exponent that is nothing BUT operators is refused. The spaced minus
+    // over a number is a real exponent (Giac answers 1/x for `x^- 1`); it
+    // was being refused before the scan learned to look past whitespace.
     it.each([
       'x^(-1) = 1/x',
       'e^(x) = exp(x)',
       'x^(n+1) = x^(n+1)',
       '2^10 = 1024',
       'x^(-x) = x^(-x)',
+      'x^- 1 = 1/x',
+      'x ^ - 1 = 1/x',
     ])('still verifies the legitimate exponent: %s', async (claim) => {
       const text = getText(await verifyHandler({ claim }));
       expect(text).toContain('Verified: TRUE');
