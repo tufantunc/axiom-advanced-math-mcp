@@ -46,7 +46,7 @@ services:
       - axiom-network
 
   proxy:
-    image: nginx:1.27-alpine
+    image: nginx:1.31-alpine
     container_name: axiom-proxy
     depends_on:
       axiom:
