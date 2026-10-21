@@ -53,6 +53,6 @@
     "dotenv": "^18.0.8",
     "openai": "^4.77.0",
     "tsx": "^4.23.15",
-    "typescript": "^5.3.3"
+    "typescript": "^7.0.2"
   }
 }
