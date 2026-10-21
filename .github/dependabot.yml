@@ -27,6 +27,8 @@ updates:
       # Security fixes are bundled into one PR, even when they cross a major.
       npm-security:
         applies-to: security-updates
+        patterns:
+          - "*"
       # Routine minor/patch bumps are bundled; majors stay as separate PRs so
       # breaking changes get individual review.
       npm-production-minor-patch:
@@ -59,6 +61,8 @@ updates:
     groups:
       benchmark-security:
         applies-to: security-updates
+        patterns:
+          - "*"
       benchmark-minor-patch:
         update-types:
           - minor
