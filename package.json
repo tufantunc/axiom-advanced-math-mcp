@@ -75,7 +75,7 @@
   "devDependencies": {
     "@modelcontextprotocol/inspector": "2.11.0",
     "@types/node": "26.6.5",
-    "@vitest/coverage-v8": "4.1.12",
+    "@vitest/coverage-v8": "5.0.5",
     "oxlint": "1.88.0",
     "prettier": "^3.2.4",
     "tsx": "^4.7.0",
