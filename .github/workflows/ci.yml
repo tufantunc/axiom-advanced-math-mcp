@@ -78,8 +78,14 @@ jobs:
       # actions/github-script v7.0.1 (node20) in its OIDC step, which GitHub
       # forces onto node24 with a deprecation annotation on every run.
       # v7.0.0's wrapper pins github-script v8.0.0 (node24).
+      #
+      # Skipped on Dependabot PRs: GitHub withholds secrets from
+      # pull_request workflows triggered by dependabot[bot], so the upload
+      # would run tokenless, fail ("Token required because branch is
+      # protected"), and paint every dependency PR red behind fail_ci_if_error.
+      # Coverage of a dep bump adds nothing; the badge tracks main pushes.
       - name: Upload coverage to Codecov
-        if: matrix.os == 'ubuntu-latest' && matrix.node == 22
+        if: matrix.os == 'ubuntu-latest' && matrix.node == 22 && github.actor != 'dependabot[bot]'
         uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
