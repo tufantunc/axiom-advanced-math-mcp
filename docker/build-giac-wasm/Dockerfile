@@ -11,7 +11,7 @@
 
 # GeoGebra/giac Gradle build does not recognize linux_aarch64.
 # WASM output is platform-independent, so we force x86_64.
-FROM --platform=linux/amd64 eclipse-temurin:17-jdk-jammy
+FROM --platform=linux/amd64 eclipse-temurin:25-jdk-jammy
 
 # Build tools for Emscripten/Gradle
 RUN apt-get update && apt-get install -y --no-install-recommends \
