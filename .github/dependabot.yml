@@ -1,0 +1,129 @@
+# Dependabot update configuration.
+# https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference
+#
+# This file controls the PRs Dependabot opens (routine version updates and
+# security-update PRs). The alerts under Security > Dependabot are governed by
+# Settings > Code security — keep "Dependabot alerts" and
+# "Dependabot security updates" enabled there; merged PRs clear the alerts.
+
+version: 2
+
+updates:
+  # Published package: src, tests, CI — the one that ships to npm as axiom-math.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      timezone: Europe/Istanbul
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore"
+      prefix-development: "chore"
+    labels:
+      - dependencies
+      - npm
+    groups:
+      # Security fixes are bundled into one PR, even when they cross a major.
+      npm-security:
+        applies-to: security-updates
+      # Routine minor/patch bumps are bundled; majors stay as separate PRs so
+      # breaking changes get individual review.
+      npm-production-minor-patch:
+        dependency-type: production
+        update-types:
+          - minor
+          - patch
+      npm-development-minor-patch:
+        dependency-type: development
+        update-types:
+          - minor
+          - patch
+
+  # Benchmark harness — not in CI, run manually (see AGENTS.md), so its bumps
+  # only need to be mergeable, not individually reviewed.
+  - package-ecosystem: npm
+    directory: /benchmark
+    schedule:
+      interval: weekly
+      day: monday
+      timezone: Europe/Istanbul
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore"
+      prefix-development: "chore"
+    labels:
+      - dependencies
+      - npm
+      - benchmark
+    groups:
+      benchmark-security:
+        applies-to: security-updates
+      benchmark-minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  # CI + release workflows (.github/workflows).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      timezone: Europe/Istanbul
+    labels:
+      - dependencies
+      - ci
+    groups:
+      actions-minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  # Runtime image: docker/Dockerfile (node:20-alpine).
+  - package-ecosystem: docker
+    directory: /docker
+    schedule:
+      interval: weekly
+      day: monday
+      timezone: Europe/Istanbul
+    labels:
+      - dependencies
+      - docker
+    groups:
+      docker-minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  # Giac WASM build container: docker/build-giac-wasm/Dockerfile
+  # (eclipse-temurin:17-jdk-jammy). Built rarely; keep the base patched.
+  - package-ecosystem: docker
+    directory: /docker/build-giac-wasm
+    schedule:
+      interval: monthly
+    labels:
+      - dependencies
+      - docker
+    groups:
+      giac-builder-minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  # Reverse proxy at the perimeter: docker/reverse-proxy/docker-compose.yml
+  # (nginx:1.27-alpine). Compose files use the docker-compose ecosystem.
+  - package-ecosystem: docker-compose
+    directory: /docker/reverse-proxy
+    schedule:
+      interval: weekly
+      day: monday
+      timezone: Europe/Istanbul
+    labels:
+      - dependencies
+      - docker
+    groups:
+      nginx-minor-patch:
+        update-types:
+          - minor
+          - patch
