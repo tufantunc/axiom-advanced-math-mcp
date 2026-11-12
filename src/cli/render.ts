@@ -1,5 +1,5 @@
 import type { OutputMode } from './parse.js';
-import type { PlotResult } from '../server/tools/plot/render.js';
+import { plotSummary, type PlotResult } from '../server/tools/plot/render.js';
 import { formatVerifyResponse, type VerifyResult } from '../server/tools/verify/index.js';
 
 /**
@@ -79,19 +79,5 @@ export function renderVerify(
 }
 
 export function renderPlotMeta(p: PlotResult, path: string | null): string {
-  return JSON.stringify(
-    {
-      ok: true,
-      path,
-      expression: p.expression,
-      variable: p.variable,
-      x_range: [p.xMin, p.xMax],
-      y_range: [p.yMin, p.yMax],
-      segments: p.segments,
-      samples: p.samples,
-      points: p.points,
-    },
-    null,
-    2
-  );
+  return JSON.stringify({ ok: true, path, ...plotSummary(p) }, null, 2);
 }

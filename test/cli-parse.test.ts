@@ -95,14 +95,8 @@ describe('parseArgs — compute', () => {
   // `compute x^2 + 1` arrives as three argv entries. The decomposition
   // copied the loop three times, so each parser's copy is pinned (dropping
   // the throw once made the CLI answer the LAST positional with exit 0).
-  it.each([
-    ['compute'],
-    ['verify'],
-    ['plot'],
-  ])('rejects a second positional in %s', (kind) => {
-    expect(() => parseArgs([kind, 'first', 'second'])).toThrow(
-      /unexpected extra argument: second/
-    );
+  it.each([['compute'], ['verify'], ['plot']])('rejects a second positional in %s', (kind) => {
+    expect(() => parseArgs([kind, 'first', 'second'])).toThrow(/unexpected extra argument: second/);
   });
 
   // The sentinel is wired per parser now; compute's two cases above cover
@@ -322,6 +316,7 @@ describe('render', () => {
           svg: '<svg/>',
           expression: 'sin(x)',
           variable: 'x',
+          title: 'f(x) = sin(x)',
           xMin: -10,
           xMax: 10,
           yMin: -1,
@@ -339,6 +334,7 @@ describe('render', () => {
       path: 'out.svg',
       expression: 'sin(x)',
       variable: 'x',
+      title: 'f(x) = sin(x)',
       x_range: [-10, 10],
       y_range: [-1, 1],
       segments: 1,

@@ -65,6 +65,8 @@ export function registerPlotTools(server: McpServer): void {
               text: `Plot of f(${result.variable}) = ${result.expression} over [${result.xMin}, ${result.xMax}]`,
             },
           ],
+          // Sent to every client, not only MCP Apps hosts: kept compact for
+          // that reason (see toPlotStructuredContent).
           structuredContent: toPlotStructuredContent(result),
           isError: false,
         };

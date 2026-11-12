@@ -11,6 +11,9 @@ export interface SvgOptions {
   segments: PlotSegment[];
 }
 
+// The interactive view (view/plot-view.js) has its own copy with the same
+// thresholds, since it runs in a browser and cannot import this. Keep the two
+// in step.
 function niceStep(range: number, targetTicks: number): number {
   const rough = range / targetTicks;
   const exp = Math.floor(Math.log10(rough));

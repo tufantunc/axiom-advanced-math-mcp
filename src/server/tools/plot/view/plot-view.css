@@ -1,0 +1,162 @@
+/*
+ * Styles for the plot view. Host variables (MCP Apps `styles.variables`) win;
+ * the fallbacks follow the page's color scheme through light-dark(), which
+ * `data-theme` pins when the host names a theme.
+ */
+:root {
+  color-scheme: light dark;
+  --ax-bg: var(--color-background-primary, light-dark(#ffffff, #1b1d21));
+  --ax-fg: var(--color-text-primary, light-dark(#1f2328, #e6e8eb));
+  --ax-muted: var(--color-text-secondary, light-dark(#59636e, #a3abb5));
+  /* At least 3:1 against both the page and the control fill (WCAG 1.4.11). */
+  --ax-border: var(--color-border-primary, light-dark(#8c959f, #6e7681));
+  --ax-grid: var(--color-border-tertiary, light-dark(#eef1f4, #2a2e34));
+  --ax-axis: var(--color-text-tertiary, light-dark(#8c959f, #6e7681));
+  --ax-curve: var(--color-text-info, light-dark(#2563eb, #7aa7ff));
+  --ax-danger: var(--color-text-danger, light-dark(#b42318, #ff8a80));
+  --ax-control: var(--color-background-secondary, light-dark(#f6f8fa, #25292e));
+}
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+:root[data-theme='dark'] {
+  color-scheme: dark;
+}
+html,
+body {
+  margin: 0;
+  background: var(--ax-bg);
+  color: var(--ax-fg);
+}
+body {
+  font-family: var(--font-sans, system-ui, -apple-system, 'Segoe UI', sans-serif);
+  font-size: var(--font-text-sm-size, 14px);
+  line-height: var(--font-text-sm-line-height, 1.45);
+}
+main {
+  padding: 12px 16px;
+}
+h1 {
+  margin: 0 0 8px;
+  font-size: var(--font-heading-sm-size, 15px);
+  font-weight: var(--font-weight-semibold, 600);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  overflow-wrap: anywhere;
+}
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin: 0 0 8px;
+}
+.controls[hidden],
+#chart.empty {
+  display: none;
+}
+label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--ax-muted);
+}
+input,
+button {
+  font: inherit;
+  color: var(--ax-fg);
+  background: var(--ax-control);
+  border: 1px solid var(--ax-border);
+  border-radius: var(--border-radius-sm, 6px);
+  min-height: 30px;
+}
+input {
+  width: 7.5em;
+  padding: 2px 6px;
+}
+input[type='range'] {
+  width: min(320px, 60vw);
+  padding: 0;
+  border: none;
+  background: none;
+  accent-color: var(--ax-curve);
+}
+input[aria-invalid='true'] {
+  border-color: var(--ax-danger);
+}
+button {
+  padding: 2px 10px;
+  cursor: pointer;
+}
+/* aria-disabled rather than disabled while a replot runs: see setBusy(). */
+button[aria-disabled='true'] {
+  opacity: 0.55;
+  cursor: default;
+}
+input:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--ax-curve);
+  outline-offset: 1px;
+}
+.group {
+  display: inline-flex;
+  gap: 4px;
+}
+svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  touch-action: pan-y;
+}
+.grid {
+  stroke: var(--ax-grid);
+  stroke-width: 1;
+}
+.axis {
+  stroke: var(--ax-axis);
+  stroke-width: 1;
+}
+.frame {
+  fill: none;
+  stroke: var(--ax-border);
+  stroke-width: 1;
+}
+.tick {
+  fill: var(--ax-muted);
+  font-size: var(--font-text-xs-size, 11px);
+}
+.curve {
+  fill: none;
+  stroke: var(--ax-curve);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.cursor {
+  stroke: var(--ax-axis);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+.dot {
+  fill: var(--ax-curve);
+  stroke: var(--ax-bg);
+  stroke-width: 2;
+}
+p {
+  margin: 6px 0 0;
+}
+#readout {
+  color: var(--ax-muted);
+  font-variant-numeric: tabular-nums;
+  min-height: 1.45em;
+}
+/*
+ * Never display:none, even when empty: a live region that leaves the
+ * accessibility tree and comes back with its new text is not reliably
+ * announced.
+ */
+#status {
+  min-height: 1.45em;
+}
+#status.error {
+  color: var(--ax-danger);
+}
