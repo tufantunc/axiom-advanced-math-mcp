@@ -98,19 +98,25 @@ jobs:
       # The registry resolves server.json's packages[].version against npm and
       # rejects a version it cannot see. npm's CDN does not serve a new version
       # the instant publish returns, so wait for it rather than racing.
+      #
+      # Up to 20 minutes. 5 was not enough: v1.1.0 stayed invisible to this
+      # runner for all 30 attempts (11:38-11:43 UTC), was visible minutes
+      # later, and the job had to be re-run by hand. Polling stops as soon as
+      # the version appears, so a long ceiling costs nothing on a fast day.
       - name: Wait for npm to serve the new version
+        timeout-minutes: 25
         run: |
           set -euo pipefail
           version="$(node -p 'require("./package.json").version')"
-          for i in $(seq 1 30); do
-            if npm view "axiom-math@$version" version > /dev/null 2>&1; then
+          for i in $(seq 1 80); do
+            if npm view "axiom-math@$version" version --prefer-online > /dev/null 2>&1; then
               echo "axiom-math@$version is visible on npm"
               exit 0
             fi
-            echo "attempt $i: not yet visible, waiting"
-            sleep 10
+            echo "attempt $i/80: not yet visible, waiting"
+            sleep 15
           done
-          echo "::error::axiom-math@$version never became visible on npm"
+          echo "::error::axiom-math@$version never became visible on npm after 20 minutes"
           exit 1
 
       - name: Publish to the registry
