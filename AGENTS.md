@@ -19,7 +19,7 @@ These five are exactly what CI runs. Passing locally means passing there.
 
 | Command | Purpose |
 |---|---|
-| `npm run build` | TypeScript → `dist/`, then copies the WASM asset |
+| `npm run build` | TypeScript → `dist/`, then copies the runtime assets (Giac WASM, plot view) |
 | `npm start` | STDIO MCP server |
 | `npm run start:http` | HTTP MCP server |
 | `npm run dev` | Hot-reload with tsx |
@@ -48,6 +48,12 @@ wrong answer, which is worse than no test. See CONTRIBUTING.md.
 - **Portability boundary:** `src/server/transports/http-app.ts` must import no
   `node:*` module, directly or transitively. `test/http-portability.test.ts`
   enforces it.
+- **Plot view (MCP Apps):** the interactive page behind `plot` is real source
+  in `src/server/tools/plot/view/` (HTML, CSS, a JSDoc-typed browser script),
+  type-checked by `tsconfig.view.json` and assembled into one self-contained
+  page by `view.ts`. It must load nothing remote and never evaluate the
+  expression: it draws the server's samples. `test/plot-view.test.ts` runs it
+  in happy-dom against a fake host.
 - **WASM engine:** Giac lives at `src/server/giac/`, in a forked child process
   recycled on timeout or crash. It keeps global state between calls, so every
   tool call runs inside a reset-and-locked session (`src/server/tools.ts`).

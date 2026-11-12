@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Axiom plot</title>
+    <link rel="stylesheet" href="plot-view.css" />
+  </head>
+  <body>
+    <main>
+      <h1 id="title">Plot</h1>
+      <div id="range" class="controls" role="group" aria-label="x range" hidden>
+        <label>x min <input id="xmin" type="number" step="any" /></label>
+        <label>x max <input id="xmax" type="number" step="any" /></label>
+        <button type="button" id="apply">Apply</button>
+        <span class="group" role="group" aria-label="Move the view">
+          <button type="button" id="pan-left" aria-label="Pan left">&larr;</button>
+          <button type="button" id="zoom-out" aria-label="Zoom out">&minus;</button>
+          <button type="button" id="zoom-in" aria-label="Zoom in">+</button>
+          <button type="button" id="pan-right" aria-label="Pan right">&rarr;</button>
+          <button type="button" id="reset">Reset</button>
+        </span>
+      </div>
+      <svg
+        id="chart"
+        class="empty"
+        role="img"
+        aria-label="Function plot"
+        xmlns="http://www.w3.org/2000/svg"
+      ></svg>
+      <div id="inspect-row" class="controls" hidden>
+        <label
+          >Inspect samples <input id="inspect" type="range" min="0" max="0" step="1" value="0"
+        /></label>
+      </div>
+      <p id="readout"></p>
+      <p id="status" role="status">Waiting for the plot&hellip;</p>
+    </main>
+    <script src="plot-view.js"></script>
+  </body>
+</html>

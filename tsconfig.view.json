@@ -1,0 +1,23 @@
+{
+  // Check-only project for the plot view's browser script
+  // (src/server/tools/plot/view/plot-view.js).
+  //
+  // The build project compiles TypeScript for Node with no DOM lib, and does
+  // not look at .js files, so without this the view's ~500 lines of protocol,
+  // drawing and state code would be checked by nothing but the tests. It stays
+  // a plain script (no bundler: it is inlined into a page that may load nothing
+  // remote), typed with JSDoc and checked here against the DOM.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": true,
+    "skipLibCheck": true,
+    // Browser globals only: Node's types would make `setTimeout` and friends
+    // resolve to the wrong signatures.
+    "types": []
+  },
+  "include": ["src/server/tools/plot/view/plot-view.js"]
+}

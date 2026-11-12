@@ -67,6 +67,13 @@ extends: core/skills/backend/SKILL.md
   `unref()`d. A CLI that returns a silently truncated number is this product's
   worst failure mode arriving through its own plumbing, so treat any new
   `process.exit()` as **Critical** until proven to be on an error-only path.
+- **`structuredContent` reaches every client.** It is a core MCP result field,
+  not part of the MCP Apps extension, and the stateless HTTP transport cannot
+  check client capabilities per request. Only MCP Apps hosts are asked (by a
+  non-normative best practice) to keep it out of the model's context; any other
+  client may forward it. A comment or README line claiming it "costs no tokens",
+  or a payload that grows without bound, is a defect. The plot result keeps it
+  compact by sending y only, on the sampler's grid (`plot/app.ts`).
 
 ## Stack-specific remedies
 

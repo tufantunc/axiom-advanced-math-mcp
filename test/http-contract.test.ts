@@ -71,7 +71,9 @@ async function waitForReadyOrExit(
       if (settled) return;
       settled = true;
       cleanup();
-      reject(new Error(`server process exited before becoming ready (code=${code}, signal=${signal})`));
+      reject(
+        new Error(`server process exited before becoming ready (code=${code}, signal=${signal})`)
+      );
     };
     child.on('error', onError);
     child.on('exit', onExit);
@@ -154,7 +156,13 @@ async function rpcWithHost(
           try {
             const contentType = res.headers['content-type'] ?? '';
             const payload = contentType.includes('text/event-stream')
-              ? JSON.parse(data.split('\n').find((l) => l.startsWith('data:'))!.slice(5).trim())
+              ? JSON.parse(
+                  data
+                    .split('\n')
+                    .find((l) => l.startsWith('data:'))!
+                    .slice(5)
+                    .trim()
+                )
               : JSON.parse(data);
             resolve({ status: res.statusCode ?? 0, json: payload });
           } catch (e) {
@@ -189,7 +197,13 @@ async function rpc(
   const text = await res.text();
   // Streamable HTTP may answer either as plain JSON or as a single SSE event.
   const payload = contentType.includes('text/event-stream')
-    ? JSON.parse(text.split('\n').find((l) => l.startsWith('data:'))!.slice(5).trim())
+    ? JSON.parse(
+        text
+          .split('\n')
+          .find((l) => l.startsWith('data:'))!
+          .slice(5)
+          .trim()
+      )
     : JSON.parse(text);
   return { status: res.status, contentType, sessionId: responseSessionId, json: payload };
 }
@@ -250,6 +264,47 @@ describe('HTTP transport contract (subprocess, real HTTP)', () => {
     const { json } = await rpc(base, { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
     const names = json.result.tools.map((t: { name: string }) => t.name).sort();
     expect(names).toEqual(['compute', 'plot', 'verify']);
+  });
+
+  it('declares the plot view (MCP Apps) and serves it with the required MIME type', async () => {
+    // Over the real stateless HTTP transport: every request below builds a
+    // fresh server, so the resource must be registered on each, not once.
+    await rpc(base, INIT);
+    const { json: list } = await rpc(base, {
+      jsonrpc: '2.0',
+      id: 5,
+      method: 'tools/list',
+      params: {},
+    });
+    const plot = list.result.tools.find((t: { name: string }) => t.name === 'plot');
+    const uri = plot._meta.ui.resourceUri;
+    expect(uri).toBe('ui://axiom-math/plot.html');
+
+    const { json: read } = await rpc(base, {
+      jsonrpc: '2.0',
+      id: 6,
+      method: 'resources/read',
+      params: { uri },
+    });
+    expect(read.result.contents[0].mimeType).toBe('text/html;profile=mcp-app');
+    expect(read.result.contents[0].text).toContain("'ui/initialize'");
+
+    const { json: call } = await rpc(base, {
+      jsonrpc: '2.0',
+      id: 7,
+      method: 'tools/call',
+      params: { name: 'plot', arguments: { expression: 'x^2', x_min: -2, x_max: 2 } },
+    });
+    expect(call.result.isError).toBe(false);
+    const sc = call.result.structuredContent;
+    expect(sc.x_range).toEqual([-2, 2]);
+    expect(sc.samples).toBe(200);
+    expect(sc.points).toBe(200);
+    expect(sc.curves).toHaveLength(1);
+    const ys: number[] = sc.curves[0].y;
+    expect(ys).toHaveLength(sc.points);
+    const step = 4 / (sc.samples - 1);
+    ys.forEach((y, i) => expect(y).toBeCloseTo((-2 + i * step) ** 2, 12));
   });
 
   it('computes a symbolic integral end to end', async () => {
