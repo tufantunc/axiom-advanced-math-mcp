@@ -361,6 +361,17 @@ Render a 2D function as an SVG image.
 
 Returns a base64-encoded SVG image (axes, grid, labels, asymptote detection) plus a text caption.
 
+**Interactive view (MCP Apps).** In hosts that implement the
+[MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) extension
+(Claude, VS Code Copilot, Goose and others), `plot` also opens an interactive
+graph next to the result. Hover to read the computed sample nearest the
+pointer. Zoom, pan or type an x range to re-run `plot` on the server with that
+range, without a round trip through the model. The view only draws the samples
+the server sent, so it never shows a value the server did not compute. Other
+hosts ignore the extension and show the SVG image as before. The view is the
+`ui://axiom-math/plot.html` resource, and the samples travel in the result's
+`structuredContent`, which the spec keeps out of the model's context.
+
 ### Prompts
 
 The server also registers guided MCP **prompts** that chain `compute`/`verify` for multi-step workflows: `solve-step-by-step`, `analyze-function`, `verify-identity`, `convert-units`, `analyze-dataset`, `solve-ode-system`, and `regression-workflow`.

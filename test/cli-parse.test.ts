@@ -329,6 +329,7 @@ describe('render', () => {
           segments: 1,
           samples: 200,
           points: 187,
+          curve: [],
         },
         'out.svg'
       )

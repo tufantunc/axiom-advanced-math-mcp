@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { MAX_EXPRESSION_LENGTH } from '../limits.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { plotToSvg } from './render.js';
+import { PLOT_TOOL_META, registerPlotApp, toPlotStructuredContent } from './app.js';
 
 const plotFunctionSchema = {
   expression: z
@@ -19,6 +20,8 @@ const plotFunctionSchema = {
 };
 
 export function registerPlotTools(server: McpServer): void {
+  registerPlotApp(server);
+
   server.registerTool(
     'plot',
     {
@@ -34,6 +37,9 @@ export function registerPlotTools(server: McpServer): void {
         'simplify it. Use `compute` for the mathematics and `plot` to show it. Points where the function ' +
         'is undefined are dropped rather than interpolated.',
       inputSchema: plotFunctionSchema,
+      // MCP Apps: hosts that implement the extension render an interactive
+      // view from structuredContent; the rest ignore this and show the image.
+      _meta: PLOT_TOOL_META,
     },
     async (args) => {
       try {
@@ -59,6 +65,7 @@ export function registerPlotTools(server: McpServer): void {
               text: `Plot of f(${result.variable}) = ${result.expression} over [${result.xMin}, ${result.xMax}]`,
             },
           ],
+          structuredContent: toPlotStructuredContent(result),
           isError: false,
         };
       } catch (error) {

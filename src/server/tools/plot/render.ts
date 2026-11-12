@@ -1,4 +1,5 @@
 import { evaluateFunction, DEFAULT_PLOT_POINTS } from './evaluator.js';
+import type { PlotSegment } from './evaluator.js';
 import { renderSvg } from './svg-renderer.js';
 
 export interface PlotArgs {
@@ -26,6 +27,13 @@ export interface PlotResult {
   samples: number;
   /** Of those samples, how many produced a finite y and were drawn. */
   points: number;
+  /**
+   * The drawn samples themselves, one run per segment. The interactive view
+   * (`app.ts`) redraws from these rather than re-evaluating the expression in
+   * the browser: a second evaluator there could disagree with this one and
+   * draw a curve the server never computed.
+   */
+  curve: PlotSegment[];
 }
 
 /**
@@ -82,5 +90,6 @@ export async function plotToSvg(args: PlotArgs): Promise<PlotResult> {
     // fewer points than it samples, and reporting the sample count as `points`
     // would describe a denser curve than was actually rendered.
     points: evalResult.segments.reduce((n, s) => n + s.points.length, 0),
+    curve: evalResult.segments,
   };
 }

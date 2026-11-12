@@ -252,6 +252,36 @@ describe('HTTP transport contract (subprocess, real HTTP)', () => {
     expect(names).toEqual(['compute', 'plot', 'verify']);
   });
 
+  it('declares the plot view (MCP Apps) and serves it with the required MIME type', async () => {
+    // Over the real stateless HTTP transport: every request below builds a
+    // fresh server, so the resource must be registered on each, not once.
+    await rpc(base, INIT);
+    const { json: list } = await rpc(base, { jsonrpc: '2.0', id: 5, method: 'tools/list', params: {} });
+    const plot = list.result.tools.find((t: { name: string }) => t.name === 'plot');
+    const uri = plot._meta.ui.resourceUri;
+    expect(uri).toBe('ui://axiom-math/plot.html');
+
+    const { json: read } = await rpc(base, {
+      jsonrpc: '2.0',
+      id: 6,
+      method: 'resources/read',
+      params: { uri },
+    });
+    expect(read.result.contents[0].mimeType).toBe('text/html;profile=mcp-app');
+    expect(read.result.contents[0].text).toContain("'ui/initialize'");
+
+    const { json: call } = await rpc(base, {
+      jsonrpc: '2.0',
+      id: 7,
+      method: 'tools/call',
+      params: { name: 'plot', arguments: { expression: 'x^2', x_min: -2, x_max: 2 } },
+    });
+    const sc = call.result.structuredContent;
+    expect(sc.x_range).toEqual([-2, 2]);
+    const line: number[] = sc.polylines[0];
+    for (let i = 0; i < line.length; i += 2) expect(line[i + 1]).toBeCloseTo(line[i] ** 2, 12);
+  });
+
   it('computes a symbolic integral end to end', async () => {
     await rpc(base, INIT);
     const { json } = await rpc(base, {
