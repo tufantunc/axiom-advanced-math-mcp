@@ -66,9 +66,9 @@
   },
   "homepage": "https://github.com/tufantunc/axiom-advanced-math-mcp#readme",
   "dependencies": {
-    "@hono/node-server": "2.1.6",
+    "@hono/node-server": "2.1.8",
     "@modelcontextprotocol/sdk": "^1.25.3",
-    "hono": "4.13.16",
+    "hono": "4.13.18",
     "mathjs": "15.2.0",
     "zod": "^4.0.0"
   },
