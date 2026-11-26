@@ -83,6 +83,13 @@ describe('handlers refuse non-finite numbers before analyzeNumberCore', () => {
     }
   });
 
+  it.each(['isprime', 'euler'])('number_theory %s names the missing argument', async (operation) => {
+    const { numberTheoryHandler } = await import('../src/server/tools/number-theory.js');
+    const r = await numberTheoryHandler({ operation });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain(`'number' is required for ${operation}`);
+  });
+
   it('number_theory prime_factorize refuses NaN (ifactor(foo))', async () => {
     const { numberTheoryHandler } = await import('../src/server/tools/number-theory.js');
     for (const number of [Number.NaN, 3.5, 1e21]) {
