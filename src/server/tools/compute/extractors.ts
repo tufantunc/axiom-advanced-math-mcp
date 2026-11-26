@@ -874,8 +874,10 @@ export function extractNumberTheory(problem: string): RouteResult {
   if (whole.indexOf('(') === -1 || whole.slice(callEnd).trim() !== ')') {
     return extractGiacRaw(problem);
   }
-  const operation =
-    trimmed.startsWith('isprime') || trimmed.startsWith('euler') ? 'analyze' : 'prime_factorize';
+  // isprime and euler answer with their own value; ifactor with the factorization.
+  let operation = 'prime_factorize';
+  if (trimmed.startsWith('isprime')) operation = 'isprime';
+  else if (trimmed.startsWith('euler')) operation = 'euler';
   return { handler: 'number_theory', args: { operation, expression } };
 }
 
