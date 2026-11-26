@@ -2,6 +2,7 @@ import { giacEngine } from '../giac/index.js';
 import { MAX_ENGINE_DEPTH } from './giac-eval.js';
 import { escapeForRegExp, nestingDepth, isPrintedZero, splitTopLevel } from './output-cleanup.js';
 import { stripEnclosingBrackets } from './compute/arg-parsing.js';
+import { unicodeToAscii } from './unicode-normalize.js';
 
 /** Largest answer this will substitute back; a huge one is its own hazard. */
 const MAX_VERIFIABLE_RESULT = 4_000;
@@ -65,6 +66,17 @@ async function simplifiesToZero(expr: string): Promise<boolean> {
   }
 }
 
+/*
+ * Every verifier below that takes the CALLER's text normalises it first, as
+ * the answer it checks was normalised on its way to the engine (evalWithLatex
+ * runs unicodeToAscii). Unnormalised, the check and the answer read different
+ * expressions: `integrate(x², x)` answered `x^3/3` and verified ✗ against an
+ * integrand `x²` that Giac reads as one identifier, as did `integrate(x⁻¹, x)`
+ * and `factor(x²-4)` — a correct answer reported as disproved.
+ * verifyOdeSolution is normalised by its caller, which needs the ASCII form
+ * for its cache key too.
+ */
+
 export async function verifySolveSet(
   equation: string,
   variable: string,
@@ -74,7 +86,7 @@ export async function verifySolveSet(
   if (solutions.length === 0) {
     return { verified: false, method, detail: 'no solutions to verify' };
   }
-  const zero = toZeroForm(equation);
+  const zero = toZeroForm(unicodeToAscii(equation));
   let ok = 0;
   for (const sol of solutions) {
     if (await isZeroAfterSubst(zero, `${variable}=${sol}`)) ok++;
@@ -98,7 +110,7 @@ export async function verifySystem(
   const substs = variables.map((v, i) => `${v}=${tuple[i]}`).join(',');
   let ok = 0;
   for (const eq of equations) {
-    if (await isZeroAfterSubst(toZeroForm(eq), substs)) ok++;
+    if (await isZeroAfterSubst(toZeroForm(unicodeToAscii(eq)), substs)) ok++;
   }
   return {
     verified: ok === equations.length,
@@ -111,7 +123,7 @@ export async function verifyFactor(
   original: string,
   factored: string
 ): Promise<VerificationResult> {
-  const ok = await simplifiesToZero(`expand(${factored})-(${original})`);
+  const ok = await simplifiesToZero(`expand(${factored})-(${unicodeToAscii(original)})`);
   return {
     verified: ok,
     method: 'expand',
@@ -126,7 +138,7 @@ export async function verifyIntegrate(
   variable: string,
   result: string
 ): Promise<VerificationResult> {
-  const ok = await simplifiesToZero(`diff(${result},${variable})-(${integrand})`);
+  const ok = await simplifiesToZero(`diff(${result},${variable})-(${unicodeToAscii(integrand)})`);
   return {
     verified: ok,
     method: 'differentiation',
