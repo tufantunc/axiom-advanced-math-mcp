@@ -8,6 +8,26 @@ import type {
 } from './types.js';
 import { BASELINE_SYSTEM_PROMPT, getToolPromptForProblem } from './prompts.js';
 
+/**
+ * Claude API version 2026-10-21, which @anthropic-ai/sdk 1.x sends, refuses
+ * `temperature`, `top_p` and `top_k` on every model with a 400, so this provider
+ * sends none and Claude samples at its defaults. Runs before the 1.x upgrade
+ * sent `temperature: 0` and are not directly comparable with later ones.
+ *
+ * A caller-chosen temperature (self-consistency's, by default 0.7) is therefore
+ * ignored here, and said so once on stderr rather than silently: the run's
+ * provenance still records the value that was asked for.
+ */
+let warnedAboutTemperature = false;
+function noteIgnoredTemperature(temperature: number | undefined): void {
+  if (temperature === undefined || warnedAboutTemperature) return;
+  warnedAboutTemperature = true;
+  console.error(
+    `[anthropic] temperature=${temperature} ignored: the Claude API no longer accepts ` +
+      'sampling parameters, so Claude samples at its defaults'
+  );
+}
+
 export class AnthropicProvider implements LLMProvider {
   readonly name = 'anthropic';
   readonly model: string;
@@ -23,12 +43,12 @@ export class AnthropicProvider implements LLMProvider {
     maxTokens: number,
     temperature?: number
   ): Promise<BaselineResult> {
+    noteIgnoredTemperature(temperature);
     const start = Date.now();
 
     const response = await this.client.messages.create({
       model: this.model,
       max_tokens: maxTokens,
-      temperature: temperature ?? 0,
       system: BASELINE_SYSTEM_PROMPT,
       messages: [{ role: 'user', content: problem }],
     });
@@ -54,6 +74,7 @@ export class AnthropicProvider implements LLMProvider {
     maxTurns: number,
     temperature?: number
   ): Promise<ToolAugmentedResult> {
+    noteIgnoredTemperature(temperature);
     const start = Date.now();
 
     const anthropicTools: Anthropic.Tool[] = tools.map((t) => ({
@@ -74,7 +95,6 @@ export class AnthropicProvider implements LLMProvider {
       const response = await this.client.messages.create({
         model: this.model,
         max_tokens: maxTokens,
-        temperature: temperature ?? 0,
         system: getToolPromptForProblem(problem),
         tools: anthropicTools,
         messages,
@@ -133,7 +153,6 @@ export class AnthropicProvider implements LLMProvider {
         const finalResponse = await this.client.messages.create({
           model: this.model,
           max_tokens: maxTokens,
-          temperature: temperature ?? 0,
           system: getToolPromptForProblem(problem),
           messages,
           // No tools — force a text-only response with the final answer

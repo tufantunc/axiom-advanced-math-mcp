@@ -18,8 +18,9 @@
     // the same specifier works under Node's native loader.
     "allowImportingTsExtensions": true,
     // vitest.config.ts sets globals: true, so beforeAll/describe/it are ambient
-    // at runtime; without this they are unresolved names at check time.
-    "types": ["vitest/globals"]
+    // at runtime; without this they are unresolved names at check time. Node's
+    // are restated because this list replaces the base config's.
+    "types": ["node", "vitest/globals"]
   },
   // MUST restate exclude: the base config excludes "test", extends inherits it,
   // and exclude filters what include matched — so inheriting it silently cancels
