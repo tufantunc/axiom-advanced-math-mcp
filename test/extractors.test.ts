@@ -35,7 +35,7 @@ describe('Extractors', () => {
 
     it('should extract higher order', () => {
       const result = extractDiff('diff(x^5, x, 3)');
-      expect(result.args.order).toBe(3);
+      expect(result.args.order).toBe('3');
     });
 
     it('should guess variable if not provided', () => {
@@ -78,14 +78,14 @@ describe('Extractors', () => {
       expect(result.args.expression).toBe('exp(x)');
       expect(result.args.variable).toBe('x');
       expect(result.args.point).toBe('0');
-      expect(result.args.order).toBe(5);
+      expect(result.args.order).toBe('5');
     });
 
     it('should extract with separate point arg', () => {
       const result = extractTaylor('taylor(sin(t), t, 0, 4)');
       expect(result.args.variable).toBe('t');
       expect(result.args.point).toBe('0');
-      expect(result.args.order).toBe(4);
+      expect(result.args.order).toBe('4');
     });
   });
 

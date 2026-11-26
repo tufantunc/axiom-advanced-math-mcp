@@ -67,6 +67,15 @@ const NAME_CHAR = String.raw`(?:(?![${SUPERSCRIPT_GLYPHS}])[\p{L}\p{N}_])`;
  * are a number. Wrapped as NAME_CHAR is.
  */
 const NAME_START = String.raw`(?:(?![${SUPERSCRIPT_GLYPHS}])[\p{L}_])`;
+/**
+ * A whole name, as regex source for a `u`-flagged pattern: what Giac reads as
+ * an identifier, `θ` included. Exported so a check on a variable agrees with
+ * this file on what a name is — the calculus validator was ASCII-only and
+ * refused `diff(sin(θ), θ)`, which Giac answers.
+ */
+export const NAME_PATTERN = `${NAME_START}${NAME_CHAR}*`;
+/** One name character, as regex source — for a lookaround that ends a name. */
+export const NAME_CHAR_PATTERN = NAME_CHAR;
 const NAME_CHAR_ONE = new RegExp(`^${NAME_CHAR}$`, 'u');
 const NAME_START_ONE = new RegExp(`^${NAME_START}$`, 'u');
 const NAME_CALL_AFTER = new RegExp(`^\\s*${NAME_START}${NAME_CHAR}*\\s*\\(`, 'u');

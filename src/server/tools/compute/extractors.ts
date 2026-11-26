@@ -22,7 +22,9 @@ import {
   stripEnclosingBrackets,
 } from './arg-parsing.js';
 import { isNumberList } from '../value-guards.js';
-import { escapeForRegExp } from '../output-cleanup.js';
+import { escapeForRegExp, excerpt } from '../output-cleanup.js';
+import { validateExpression } from '../expression-validator.js';
+import { NAME_PATTERN, NAME_CHAR_PATTERN } from '../unicode-normalize.js';
 import { rewriteCombinatorics } from '../combinatorics-rewrite.js';
 
 // ---------------------------------------------------------------------------
@@ -30,15 +32,34 @@ import { rewriteCombinatorics } from '../combinatorics-rewrite.js';
 // ---------------------------------------------------------------------------
 
 /**
- * Guess the primary variable from an expression by finding single-letter
- * identifiers that aren't common constants (e, i) or function names.
+ * A one-letter name standing alone, in any script: not part of a longer name,
+ * so `sin` and `x1` contribute nothing. A superscript ends a name (`x²`), as in
+ * unicode-normalize.
+ */
+const SINGLE_LETTER = new RegExp(
+  `(?<!${NAME_CHAR_PATTERN})(?:(?!\\p{N})${NAME_CHAR_PATTERN})(?!${NAME_CHAR_PATTERN})`,
+  'gu'
+);
+
+const GUESS_CONSTANTS = new Set(['e', 'i', 'E', 'I', 'π']);
+
+/**
+ * Guess the primary variable from an expression: a single-letter identifier
+ * that is not a common constant (e, i, π) or part of a function name.
+ *
+ * Two passes. An ASCII letter first, by the rule this always used, so a Greek
+ * PARAMETER written before the variable does not take its place:
+ * `diff(sin(ω*t))` is ω*cos(ω*t), and a single any-script pass answered
+ * t*cos(ω*t); `solve(α*x=2)` answered 2/x. Only when there is no ASCII letter
+ * does a letter of another script count — `diff(sin(θ))` guessed x there and
+ * answered 0.
  */
 function guessVariable(expr: string): string {
-  const varMatch = expr.match(/\b([a-zA-Z])\b/g);
-  if (!varMatch) return 'x';
-  const constants = new Set(['e', 'i', 'E', 'I']);
-  for (const v of varMatch) {
-    if (!constants.has(v)) return v;
+  for (const [v] of expr.matchAll(/\b[a-zA-Z]\b/g)) {
+    if (!GUESS_CONSTANTS.has(v)) return v;
+  }
+  for (const [v] of expr.matchAll(SINGLE_LETTER)) {
+    if (v !== '_' && !GUESS_CONSTANTS.has(v)) return v;
   }
   return 'x';
 }
@@ -166,30 +187,141 @@ export function extractSolveEquation(problem: string, domain?: string): RouteRes
 
 // --- Calculus ---
 
+/**
+ * A calculus call read argument by argument, or the reason it cannot be.
+ *
+ * `refusal` is carried to calculus.ts as `argument_refusal` and refused there,
+ * before the engine, rather than thrown here: every other refusal of a
+ * calculus call is worded and returned by that file.
+ */
+interface CalculusCall {
+  /** The function name as the caller spelled it — `int`, `integrate`, `series`. */
+  name: string;
+  parts: string[];
+  refusal?: string;
+}
+
+/**
+ * Split a calculus call into its arguments, refusing a call whose text is not
+ * exactly one call.
+ *
+ * extractFnArgs is lenient by design: it reads to the end of the input when
+ * the call never closes, and stops at the call's own `)` when text follows it.
+ * Both were silent answers to something else. `diff(f(, x)` read `f(, x)` as
+ * the expression and answered `[undef,f]`; `diff(x^2, x) + 1` dropped the
+ * `+ 1` and answered `2*x`. An empty argument — `diff(, x)`, `integrate(x, x,
+ * , 1)` — fell back to a guessed default for that slot.
+ */
+function readCalculusCall(problem: string): CalculusCall {
+  // One trailing `;` is a statement end, not text after the call: Giac reads
+  // `diff(x^2,x);` as the call itself.
+  const text = problem.trim().replace(/;$/, '').trimEnd();
+  const open = text.indexOf('(');
+  const name = open === -1 ? text : text.slice(0, open).trim();
+  const inner = extractFnArgs(text);
+  const parts = splitArgs(inner).map((p) => p.trim());
+  const unbalanced = validateExpression(text);
+  if (unbalanced) {
+    return { name, parts, refusal: `${name} cannot read this call — ${unbalanced.message}` };
+  }
+  if (open === -1 || text.slice(open + 1, -1) !== inner || !text.endsWith(')')) {
+    return {
+      name,
+      parts,
+      refusal:
+        `${name} cannot read this call — it must be a single ${name}(...) with ` +
+        'nothing after the closing parenthesis',
+    };
+  }
+  // splitArgs drops a final empty slot, so `diff(x^2, x, )` reads as two
+  // arguments and the order falls back to its default; the comma says otherwise.
+  if (/,\s*$/.test(inner)) {
+    return {
+      name,
+      parts,
+      refusal: `${name} cannot read this call — argument ${parts.length + 1} is empty`,
+    };
+  }
+  const empty = parts.findIndex((p) => p === '');
+  if (empty !== -1) {
+    return {
+      name,
+      parts,
+      refusal: `${name} cannot read this call — argument ${empty + 1} is empty`,
+    };
+  }
+  return { name, parts };
+}
+
 export function extractDiff(problem: string): RouteResult {
-  const inner = extractFnArgs(problem);
-  const parts = splitArgs(inner);
+  const call = readCalculusCall(problem);
+  const { name, parts } = call;
   const expression = parts[0] || '';
-  const variable = parts[1] || guessVariable(expression);
-  const order = parts[2] ? Number.parseInt(parts[2], 10) : undefined;
+  let variable = parts[1] || guessVariable(expression);
+  // Passed through as typed, not parseInt'd: calculus.ts refuses anything that
+  // is not a positive integer. parseInt read `-1` as an order it then ignored,
+  // and `y` — a mixed partial, `diff(f, x, y)` — as no order at all, so both
+  // answered the first derivative.
+  let order: string | undefined = parts[2];
+  let refusal = call.refusal;
+  // Giac's own `x$2` spelling of an order, split so the order is bounded with
+  // the third-argument one rather than reaching the engine unchecked.
+  const dollar = new RegExp(`^(${NAME_PATTERN})\\s*\\$\\s*(.+)$`, 'u').exec(variable);
+  if (dollar) {
+    if (order !== undefined) {
+      refusal ??= `${name} is given the order twice — write ${name}(f, x, 2) or ${name}(f, x$2)`;
+    }
+    variable = dollar[1];
+    order = dollar[2].trim();
+  }
+  if (parts.length > 3) {
+    refusal ??=
+      `${name} takes an expression, a variable and an optional order, as in ` +
+      `${name}(sin(x), x, 2) — got ${parts.length} arguments`;
+  }
   return {
     handler: 'calculus',
     args: {
       operation: 'differentiate',
       expression,
       variable,
-      ...(order ? { order } : {}),
+      ...(order !== undefined ? { order } : {}),
+      ...(refusal !== undefined ? { argument_refusal: refusal } : {}),
     },
   };
 }
 
 export function extractIntegrate(problem: string): RouteResult {
-  const inner = extractFnArgs(problem);
-  const parts = splitArgs(inner);
+  const call = readCalculusCall(problem);
+  const { name, parts } = call;
   const expression = parts[0] || '';
-  const variable = parts[1] || guessVariable(expression);
-  const lower_bound = parts[2];
-  const upper_bound = parts[3];
+  let variable = parts[1] || guessVariable(expression);
+  let lower_bound: string | undefined = parts[2];
+  let upper_bound: string | undefined = parts[3];
+  let refusal = call.refusal;
+  // Giac's range spelling, `int(x, x=0..1)`, split into the two bounds so the
+  // variable is a name like every other spelling's.
+  const range = new RegExp(`^(${NAME_PATTERN})\\s*=(.+?)\\.\\.(.+)$`, 'u').exec(variable);
+  if (range) {
+    if (lower_bound !== undefined) {
+      refusal ??= `${name} is given its bounds twice — write ${name}(x, x, 0, 1) or ${name}(x, x=0..1)`;
+    }
+    variable = range[1];
+    lower_bound = range[2].trim();
+    upper_bound = range[3].trim();
+  }
+  // One bound was read as an indefinite integral: `integrate(x, y, z)` dropped
+  // the `z` and answered `x*y`.
+  if (parts.length === 3 && !range) {
+    refusal ??=
+      `${name} takes a lower and an upper bound — got only "${excerpt(parts[2], 60)}"; ` +
+      `give both, as in ${name}(x, x, 0, 1), or neither for the antiderivative`;
+  }
+  if (parts.length > 4) {
+    refusal ??=
+      `${name} takes an expression, a variable and optionally a lower and an upper ` +
+      `bound, as in ${name}(x, x, 0, 1) — got ${parts.length} arguments`;
+  }
   return {
     handler: 'calculus',
     args: {
@@ -198,6 +330,7 @@ export function extractIntegrate(problem: string): RouteResult {
       variable,
       ...(lower_bound !== undefined ? { lower_bound } : {}),
       ...(upper_bound !== undefined ? { upper_bound } : {}),
+      ...(refusal !== undefined ? { argument_refusal: refusal } : {}),
     },
   };
 }
@@ -224,23 +357,36 @@ export function extractLimit(problem: string): RouteResult {
 }
 
 export function extractTaylor(problem: string): RouteResult {
-  const inner = extractFnArgs(problem);
-  const parts = splitArgs(inner);
+  const call = readCalculusCall(problem);
+  const { name, parts } = call;
   const expression = parts[0] || '';
   // taylor(expr, var=point, order) or taylor(expr, var, point, order)
   let variable = parts[1] || guessVariable(expression);
   // No initialiser: both branches below assign it, so '0' was never read.
   let point: string;
-  let order: number | undefined;
+  // Passed through as typed: calculus.ts refuses anything that is not a
+  // positive integer. parseInt read a symbolic order `n` as no order, and the
+  // default of 5 answered in its place.
+  let order: string | undefined;
+  let refusal = call.refusal;
+  let arity: number;
 
   if (variable.includes('=')) {
     const [v, p] = variable.split('=');
     variable = v.trim();
     point = p.trim();
-    order = parts[2] ? Number.parseInt(parts[2], 10) : undefined;
+    order = parts[2];
+    arity = 3;
   } else {
     point = parts[2] || '0';
-    order = parts[3] ? Number.parseInt(parts[3], 10) : undefined;
+    order = parts[3];
+    arity = 4;
+  }
+  if (point === '') refusal ??= `${name} cannot read this call — the point is empty`;
+  if (parts.length > arity) {
+    refusal ??=
+      `${name} takes an expression, a variable, a point and an optional order, as in ` +
+      `${name}(sin(x), x, 0, 5) — got ${parts.length} arguments`;
   }
 
   return {
@@ -250,7 +396,8 @@ export function extractTaylor(problem: string): RouteResult {
       expression,
       variable,
       point,
-      ...(order ? { order } : {}),
+      ...(order !== undefined ? { order } : {}),
+      ...(refusal !== undefined ? { argument_refusal: refusal } : {}),
     },
   };
 }

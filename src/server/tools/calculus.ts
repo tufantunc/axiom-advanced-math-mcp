@@ -5,7 +5,7 @@ import type { VerificationResult } from './self-verify.js';
 import { detectFailure } from './compute/silent-failure.js';
 import { excerpt, splitTopLevel } from './output-cleanup.js';
 import { stripEnclosingBrackets } from './compute/arg-parsing.js';
-import { unicodeToAscii } from './unicode-normalize.js';
+import { unicodeToAscii, NAME_PATTERN } from './unicode-normalize.js';
 import { giacEngine } from '../giac/index.js';
 import { verifyIntegrate, verifyOdeSystem, verifyOdeSolution } from './self-verify.js';
 import {
@@ -43,8 +43,8 @@ function buildSimpleCommand(operation: string, args: Record<string, unknown>): s
     case 'differentiate': {
       const expr = args.expression as string;
       const v = args.variable as string;
-      const ord = args.order as number | undefined;
-      if (ord && ord > 1) return `diff(${expr},${v},${ord})`;
+      const ord = args.order === undefined ? 1 : Number(args.order);
+      if (ord > 1) return `diff(${expr},${v},${ord})`;
       return `diff(${expr},${v})`;
     }
     case 'integrate': {
@@ -76,7 +76,7 @@ function buildSimpleCommand(operation: string, args: Record<string, unknown>): s
       const expr = args.expression as string;
       const v = args.variable as string;
       const pt = (args.point as string) ?? '0';
-      const n = (args.order as number) ?? 5;
+      const n = args.order === undefined ? 5 : Number(args.order);
       return `taylor(${expr},${v}=${pt},${n})`;
     }
     case 'solve_ode': {
@@ -146,16 +146,127 @@ async function buildGiacExpression(
   return { expr: buildSimpleCommand(operation, args) };
 }
 
-function validateDifferentiate(args: Record<string, unknown>): string | null {
-  if (!args.expression) return "'expression' is required for differentiate";
-  if (!args.variable) return "'variable' is required for differentiate";
+/**
+ * The highest order differentiate and taylor accept.
+ *
+ * Measured on the engine, not chosen for taste: `taylor(exp(sin(x)), x, 0, 200)`
+ * traps the shared Giac worker ("RuntimeError: unreachable") and 150 times out,
+ * where 100 answers in about 3 s; `taylor(sin(x)/x, x, 0, 5000)` traps too.
+ * `diff(1/x, x, 100000)` shipped "GIAC_ERROR: Polynomial exponent overflow" as
+ * its Result. No ceiling makes every expression safe — the cost depends on the
+ * expression as much as the order — but 100 keeps the worst shape measured
+ * inside the timeout and is far past any series a caller reads.
+ */
+export const MAX_CALCULUS_ORDER = 100;
+
+/**
+ * The most entries a derivative with respect to a list may have: k variables
+ * to order n is a k^n tensor. Measured: `diff(exp(sin(x*y)), [x, y], 10)`
+ * (1024 entries) traps the shared worker, and so do 3^7 and 4^6 of the same
+ * shape, where 2^9 answers in 0.8 s. Even `diff(x*y, [x, y], 20)` traps, on
+ * size alone. 256 keeps a fourfold margin under the smallest trap measured.
+ */
+const MAX_DERIVATIVE_ENTRIES = 256;
+
+/**
+ * Names Giac reads as constants: differentiating with respect to one is 0.
+ * A pattern, not a Set literal — test/operation-coverage.test.ts reads every
+ * `new Set([...])` in a handler as operation names it dispatches on. `π` is a
+ * letter, so it passes the name check and is caught here; `∞` is not one.
+ */
+const CONSTANT_NAME = /^(?:e|i|pi|π|infinity|inf|euler_gamma)$/u;
+
+/**
+ * Names Giac reads as values rather than symbols: `diff(x^2, NULL)` answered
+ * 2*x, `diff(x^2, undef)` 0, `diff(x^2, true)` stayed unevaluated.
+ */
+const VALUE_NAME = /^(?:NULL|true|false|undef)$/u;
+
+/** A name as Giac reads one, `θ` included — the same rule as unicode-normalize. */
+const VARIABLE_NAME = new RegExp(`^${NAME_PATTERN}$`, 'u');
+
+function nameRefusal(operation: string, text: string): string | null {
+  if (!VARIABLE_NAME.test(text)) {
+    return `${operation} needs a variable that is a name, such as x — got "${excerpt(text, 60)}"`;
+  }
+  if (VALUE_NAME.test(text)) {
+    return `${operation} needs a variable, and "${text}" is a value — name the variable, such as x`;
+  }
+  if (CONSTANT_NAME.test(text)) {
+    return `${operation} needs a variable, and "${text}" is a constant — name the variable, such as x`;
+  }
   return null;
 }
 
-function validateIntegrate(args: Record<string, unknown>): string | null {
-  if (!args.expression) return "'expression' is required for integrate";
-  if (!args.variable) return "'variable' is required for integrate";
+/**
+ * The variable must be a name. `diff(x, 2)` answered the unevaluated
+ * `diff(x,2)`, `integrate(x, 2)` a GIAC_ERROR, `taylor(sin(x), 2, 0, 3)` the
+ * value 2/3, and `diff(x^2, pi)` the number 0 — each with isError:false.
+ *
+ * differentiate also takes a bracketed list of names, Giac's gradient:
+ * `diff(x^2*y^3, [x, y])`, and with an order the Hessian or higher tensor:
+ * `diff(x^2*y^3, [x, y], 2)`. Each name is checked as a single variable is,
+ * and the tensor's size is bounded — see MAX_DERIVATIVE_ENTRIES.
+ */
+function variableRefusal(
+  operation: string,
+  variable: unknown,
+  order: unknown = undefined
+): string | null {
+  const text = String(variable).trim();
+  if (operation === 'differentiate' && text.startsWith('[') && text.endsWith(']')) {
+    const names = splitTopLevel(text.slice(1, -1), ',').map((n) => n.trim());
+    for (const name of names) {
+      const refusal = nameRefusal(operation, name);
+      if (refusal) return refusal;
+    }
+    const n = order === undefined ? 1 : Number(String(order).trim());
+    if (/^\d+$/.test(String(order ?? '1').trim()) && names.length ** n > MAX_DERIVATIVE_ENTRIES) {
+      return (
+        `differentiate with ${names.length} variables to order ${n} gives ` +
+        `${names.length}^${n} entries, more than the ${MAX_DERIVATIVE_ENTRIES} this computes — ` +
+        'lower the order or list fewer variables'
+      );
+    }
+    return null;
+  }
+  return nameRefusal(operation, text);
+}
+
+/**
+ * The order must be a positive integer, bounded before the engine sees it.
+ * Accepts the extractor's text or a number.
+ */
+function orderRefusal(operation: string, order: unknown): string | null {
+  if (order === undefined) return null;
+  const text = String(order).trim();
+  const n = /^\d+$/.test(text) ? Number(text) : Number.NaN;
+  if (!(n >= 1 && n <= MAX_CALCULUS_ORDER)) {
+    return (
+      `${operation}'s order must be a positive integer up to ${MAX_CALCULUS_ORDER} — ` +
+      `got "${excerpt(text, 60)}"`
+    );
+  }
   return null;
+}
+
+/**
+ * Shared by differentiate, integrate and taylor: the extractor's verdict on the
+ * call's shape first (arity, balance, an empty argument), then the variable.
+ */
+function calculusArgsRefusal(operation: string, args: Record<string, unknown>): string | null {
+  if (typeof args.argument_refusal === 'string') return args.argument_refusal;
+  if (!args.expression) return `'expression' is required for ${operation}`;
+  if (!args.variable) return `'variable' is required for ${operation}`;
+  return variableRefusal(operation, args.variable, args.order);
+}
+
+function validateDifferentiate(args: Record<string, unknown>): string | null {
+  return calculusArgsRefusal('differentiate', args) ?? orderRefusal('differentiate', args.order);
+}
+
+function validateIntegrate(args: Record<string, unknown>): string | null {
+  return calculusArgsRefusal('integrate', args);
 }
 
 function validateLimit(args: Record<string, unknown>): string | null {
@@ -166,9 +277,7 @@ function validateLimit(args: Record<string, unknown>): string | null {
 }
 
 function validateTaylor(args: Record<string, unknown>): string | null {
-  if (!args.expression) return "'expression' is required for taylor";
-  if (!args.variable) return "'variable' is required for taylor";
-  return null;
+  return calculusArgsRefusal('taylor', args) ?? orderRefusal('taylor', args.order);
 }
 
 function validateSolveOde(args: Record<string, unknown>): string | null {
@@ -411,6 +520,27 @@ function solutionVectorGuard(
     );
   }
   return undefined;
+}
+
+/**
+ * A differentiate, integrate or taylor answer that carries the engine's failure
+ * markers is refused rather than shipped.
+ *
+ * Giac does not reject a malformed expression inside a call, it answers it:
+ * `diff(x+, x)` is `[undef,x]`. The input checks catch the shapes measured, and
+ * this catches the marker whatever input puts it there — on the typed result,
+ * not the rendered block, whose `Command:` line echoes the caller's text.
+ */
+function unfinishedAnswerGuard(
+  operation: string,
+  result: string
+): ReturnType<typeof formatErrorResponse> | undefined {
+  const failure = detectFailure(`Result: ${result.trim()}`);
+  if (failure === null) return undefined;
+  return formatErrorResponse(
+    `${operation} cannot answer this — the CAS returned ${excerpt(result.trim(), 60)} ` +
+      `(${failure}); check the expression for a missing operand or argument`
+  );
 }
 
 async function singleEquationGuard(
@@ -679,6 +809,9 @@ export async function calculusHandler(input: Record<string, unknown>) {
       if (refusal) return refusal;
     } else if (operation === 'solve_ode') {
       const refusal = await singleEquationGuard(response, args);
+      if (refusal) return refusal;
+    } else if (operation !== 'limit' && !response.isError) {
+      const refusal = unfinishedAnswerGuard(operation, response.result);
       if (refusal) return refusal;
     }
     return response;

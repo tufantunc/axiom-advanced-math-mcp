@@ -60,13 +60,18 @@ function stubStdin(stream: { isTTY?: boolean } & NodeJS.ReadableStream): () => v
 function withStdoutTTY(isTTY: boolean): () => void {
   const original = process.stdout.isTTY;
   Object.defineProperty(process.stdout, 'isTTY', { value: isTTY, configurable: true });
-  return () => Object.defineProperty(process.stdout, 'isTTY', { value: original, configurable: true });
+  return () =>
+    Object.defineProperty(process.stdout, 'isTTY', { value: original, configurable: true });
 }
 
 describe('runCommand — compute', () => {
   it('prints the value and exits 0 in quiet mode', async () => {
     capture();
-    const code = await runCommand({ kind: 'compute', expression: 'solve(x^2-4=0,x)', output: 'quiet' });
+    const code = await runCommand({
+      kind: 'compute',
+      expression: 'solve(x^2-4=0,x)',
+      output: 'quiet',
+    });
     expect(code).toBe(0);
     expect(out.join('\n').trim()).toBe('{-2, 2}');
   }, 30_000);
@@ -95,26 +100,52 @@ describe('runCommand — compute', () => {
     expect(out).toEqual([]);
     expect(err.length).toBeGreaterThan(0);
   }, 30_000);
+
+  // The same argument checks as over MCP: a dropped bound used to print `x*y`
+  // to stdout with exit 0, where a script capturing it could not tell.
+  it('refuses a misread calculus call on stderr, with nothing on stdout', async () => {
+    capture();
+    const code = await runCommand({
+      kind: 'compute',
+      expression: 'integrate(x, y, z)',
+      output: 'text',
+    });
+    expect(code).toBe(1);
+    expect(out).toEqual([]);
+    expect(err.join('\n')).toContain('integrate takes a lower and an upper bound — got only "z"');
+  }, 30_000);
 });
 
 describe('runCommand — verify', () => {
   it('exits 0 for a true claim', async () => {
     capture();
-    const code = await runCommand({ kind: 'verify', claim: 'sin(x)^2+cos(x)^2 = 1', output: 'quiet' });
+    const code = await runCommand({
+      kind: 'verify',
+      claim: 'sin(x)^2+cos(x)^2 = 1',
+      output: 'quiet',
+    });
     expect(code).toBe(0);
     expect(out.join('').trim()).toBe('true');
   }, 30_000);
 
   it('exits 2 for a false claim', async () => {
     capture();
-    const code = await runCommand({ kind: 'verify', claim: 'sin(x)^2+cos(x)^2 = 2', output: 'quiet' });
+    const code = await runCommand({
+      kind: 'verify',
+      claim: 'sin(x)^2+cos(x)^2 = 2',
+      output: 'quiet',
+    });
     expect(code).toBe(2);
     expect(out.join('').trim()).toBe('false');
   }, 30_000);
 
   it('text mode still reports the verdict through the exit code', async () => {
     capture();
-    const code = await runCommand({ kind: 'verify', claim: 'sin(x)^2+cos(x)^2 = 2', output: 'text' });
+    const code = await runCommand({
+      kind: 'verify',
+      claim: 'sin(x)^2+cos(x)^2 = 2',
+      output: 'text',
+    });
     expect(code).toBe(2);
     expect(out.join('\n')).toContain('Verified: FALSE');
   }, 30_000);
@@ -124,7 +155,12 @@ describe('runCommand — plot', () => {
   it('writes the file and prints its path in quiet mode', async () => {
     capture();
     const target = join(workdir, 'p.svg');
-    const code = await runCommand({ kind: 'plot', expression: 'sin(x)', out: target, output: 'quiet' });
+    const code = await runCommand({
+      kind: 'plot',
+      expression: 'sin(x)',
+      out: target,
+      output: 'quiet',
+    });
     expect(code).toBe(0);
     expect(out.join('').trim()).toBe(target);
     expect(readFileSync(target, 'utf8').startsWith('<svg')).toBe(true);
@@ -180,9 +216,9 @@ describe('runCommand — stdin input', () => {
     const fakeStdin = Object.assign(new Readable({ read() {} }), { isTTY: true });
     const restore = stubStdin(fakeStdin);
     try {
-      await expect(
-        runCommand({ kind: 'compute', output: 'quiet' })
-      ).rejects.toThrow(/no expression given — pass it as an argument or pipe it on stdin/);
+      await expect(runCommand({ kind: 'compute', output: 'quiet' })).rejects.toThrow(
+        /no expression given — pass it as an argument or pipe it on stdin/
+      );
     } finally {
       restore();
       fakeStdin.destroy();
