@@ -147,3 +147,39 @@ describe('well-formed equations still solve', () => {
     expect(allText(r)).toMatch(resultLine(answer));
   });
 });
+
+/**
+ * The solve handlers send the equation to Giac themselves (the escalation
+ * candidates, the substitution check), and only evalWithLatex normalised. On
+ * main 193da1c `solve(x²=4, x)` printed `Result: {-2, 2}` beside
+ * `Verified: ✗ (substitution: no solutions to verify)`: every candidate had
+ * solved for an identifier named `x²` and found nothing.
+ */
+describe('a superscript equation is solved and verified as written', () => {
+  it.each([
+    ['solve(x²=4, x)', '{-2, 2}', 'Verified: ✓ (substitution: 2/2 roots satisfy the equation)'],
+    ['solve(x⁻¹=2)', '1/2', 'Verified: ✓ (substitution: 1/1 roots satisfy the equation)'],
+    [
+      'solve_system(x²+y=5, x-y=1)',
+      '{(2, 1), (-3, -4)}',
+      'Verified: ✓ (substitution: 2 solution(s) satisfy all equations)',
+    ],
+  ])('%s', async (problem, answer, verdict) => {
+    const r = await computeHandler({ problem });
+    expect(r.isError).toBe(false);
+    expect(allText(r)).toMatch(resultLine(answer));
+    expect(allText(r)).toContain(verdict);
+  });
+
+  it('solveEquationHandler normalises an equation it is handed directly', async () => {
+    const r = await solveEquationHandler({ equation: 'x²=9', variable: 'x', domain: 'real' });
+    expect(allText(r)).toMatch(resultLine('{-3, 3}'));
+    expect(allText(r)).toContain('Verified: ✓ (substitution: 2/2 roots satisfy the equation)');
+  });
+
+  it('solveSystemHandler normalises equations it is handed directly', async () => {
+    const r = await solveSystemHandler({ equations: ['x²=y', 'y=4'], variables: ['x', 'y'] });
+    expect(allText(r)).toMatch(resultLine('{(2, 4), (-2, 4)}'));
+    expect(allText(r)).toContain('Verified: ✓ (substitution: 2 solution(s) satisfy all equations)');
+  });
+});

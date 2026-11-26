@@ -1,6 +1,7 @@
 import { giacEngine } from '../giac/index.js';
 import { formatErrorResponse } from './response-formatter.js';
 import { validateEquation } from './expression-validator.js';
+import { unicodeToAscii } from './unicode-normalize.js';
 import { evalWithLatex } from './giac-eval.js';
 import { listToSet, splitTopLevel } from './output-cleanup.js';
 import { verifySolveSet, verifySystem, type VerificationResult } from './self-verify.js';
@@ -88,8 +89,13 @@ interface Attempt {
 
 export async function solveEquationHandler(args: Record<string, unknown>) {
   try {
-    const equation = args.equation as string;
-    const variable = args.variable as string;
+    // Normalised once, here, because everything below sends the equation to
+    // Giac itself — the escalation candidates, the parse probe and the
+    // substitution check. Only evalWithLatex normalised, so `x²=4` was
+    // displayed as {-2, 2} while every candidate had solved for an identifier
+    // `x²` and the answer came back "Verified: ✗ (no solutions to verify)".
+    const equation = unicodeToAscii((args.equation as string | undefined) ?? '');
+    const variable = unicodeToAscii((args.variable as string | undefined) ?? '');
     const domain = args.domain as string | undefined;
 
     if (!equation) return formatErrorResponse("'equation' is required");
@@ -146,15 +152,19 @@ export async function solveEquationHandler(args: Record<string, unknown>) {
 
 export async function solveSystemHandler(args: Record<string, unknown>) {
   try {
-    const equations = args.equations as string[];
-    const variables = args.variables as string[];
+    const rawEquations = args.equations as string[];
+    const rawVariables = args.variables as string[];
 
-    if (!equations || !Array.isArray(equations) || equations.length === 0) {
+    if (!rawEquations || !Array.isArray(rawEquations) || rawEquations.length === 0) {
       return formatErrorResponse("'equations' must be a non-empty array");
     }
-    if (!variables || !Array.isArray(variables) || variables.length === 0) {
+    if (!rawVariables || !Array.isArray(rawVariables) || rawVariables.length === 0) {
       return formatErrorResponse("'variables' must be a non-empty array");
     }
+    // As in solveEquationHandler: the substitution check below reads these
+    // directly, so they must be what the engine is asked to solve.
+    const equations = rawEquations.map(unicodeToAscii);
+    const variables = rawVariables.map(unicodeToAscii);
 
     for (const eq of equations) {
       const malformed = await malformedEquation(eq);
