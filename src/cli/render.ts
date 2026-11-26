@@ -53,6 +53,19 @@ export function renderCompute(r: ToolResult, mode: OutputMode): string {
 }
 
 /**
+ * The envelope's `warnings`, for quiet mode to send to stderr.
+ *
+ * Quiet prints `display` alone, so a qualified answer reached a script with the
+ * qualification nowhere: `compute -q 'isprime(2^61-1)'` printed a bare `true`
+ * for what is only a probable prime. stdout stays the single value; the caveat
+ * goes where hints go.
+ */
+export function computeWarnings(r: ToolResult): string[] {
+  const { warnings } = parseEnvelope<{ warnings?: unknown }>(resultText(r));
+  return Array.isArray(warnings) ? warnings.map(String) : [];
+}
+
+/**
  * The CLI always asks `verify` for `format: 'json'`, so the verdict is read from
  * a typed field in every mode — including text mode, whose human-readable layout
  * is produced by calling the tool's own formatter rather than reconstructing it

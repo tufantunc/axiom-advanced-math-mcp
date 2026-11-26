@@ -120,11 +120,18 @@ async function runPrimeFactorize(args: Record<string, unknown>) {
  * "Prime: Yes" where Giac says false, and `euler(-12)` showed φ(12) for a
  * totient that has no value.
  *
- * The answer comes from Giac on the exact integer, up to 2^53. Past it Giac
- * still answers, but not certainly: isprime(10^999+7) says true in well under a
- * second, which is a probable-prime test, not a proof, and euler rests on the
- * same test for its factors. The report beside the answer is about |n|, so it
- * is attached only for n ≥ 1, where it describes the same number.
+ * The answer comes from Giac on the exact integer. Up to 2^53 it is proven.
+ * Past it Giac's isprime is a probable-prime test, not a proof: isprime(10^999+7)
+ * says true in a fifth of a second. A `false` there is still certain (a witness
+ * of compositeness was found), so only a `true` carries probablePrimeNote,
+ * whose `Warning:` prefix puts it in the JSON envelope's `warnings`: that is how
+ * a structured caller tells a probable true from a proven one. euler rests on
+ * the same test for its factors and has no such hedge to give, so it stays
+ * refused past 2^53.
+ *
+ * The report beside the answer is about |n|, so it is attached only for n ≥ 1,
+ * where it describes the same number, and only up to 2^53, past which a JS
+ * number is no longer that number.
  */
 async function runIntegerFunction(name: 'isprime' | 'euler', args: Record<string, unknown>) {
   if (args.expression === undefined && args.number === undefined) {
@@ -141,24 +148,65 @@ async function runIntegerFunction(name: 'isprime' | 'euler', args: Record<string
     );
   }
   const n = Number(value);
-  if (!Number.isSafeInteger(n)) {
+  const proven = Number.isSafeInteger(n);
+  if (name === 'euler' && !proven) {
     return formatErrorResponse(
       `${excerpt(value, 20)} is too large to answer exactly — the limit is ` +
         `${Number.MAX_SAFE_INTEGER}`
     );
   }
-  const answer = (await giacEngine.evaluate(`${name}(${value})`)).trim();
+  // Giac's isprime of a negative number is false while |n| fits a 32-bit int,
+  // and the primality of |n| past it: isprime(-7) is false, isprime(-4294967291)
+  // is true. A prime is at least 2, so below that the answer needs no engine.
+  const answer =
+    name === 'isprime' && BigInt(value) < 2n ? 'false' : await engineAnswer(`${name}(${value})`);
   const answered =
     name === 'isprime' ? answer === 'true' || answer === 'false' : INTEGER.test(answer);
   if (!answered) {
     return formatErrorResponse(`${name}(${shown}) gave no answer: ${excerpt(answer, 60)}`);
   }
-  const statement =
-    name === 'isprime'
-      ? `${shown} is ${answer === 'true' ? '' : 'not '}prime.`
-      : `Euler totient φ(${shown}) = ${answer}`;
-  const report = n >= 1 ? await analyzeNumberCore(n) : [];
+  if (name === 'euler') {
+    const report = n >= 1 ? await analyzeNumberCore(n) : [];
+    return formatToolResponse({
+      result: answer,
+      notes: [`Euler totient φ(${shown}) = ${answer}`, ...report],
+    });
+  }
+  if (answer === 'true' && !proven) {
+    return formatToolResponse({ result: answer, notes: [probablePrimeNote(shown)] });
+  }
+  const statement = `${shown} is ${answer === 'true' ? '' : 'not '}prime.`;
+  const report = proven && n >= 1 ? await analyzeNumberCore(n) : [];
   return formatToolResponse({ result: answer, notes: [statement, ...report] });
+}
+
+/**
+ * Giac's reply to a call, or the reason it gave none, for the caller's
+ * "gave no answer" check to refuse. A prime literal of a few thousand digits
+ * outlasts the evaluation timeout: 2^19937-1 typed out (6002 digits) does,
+ * where 2^11213-1 (3376 digits) answers in about 4 s.
+ */
+async function engineAnswer(call: string): Promise<string> {
+  try {
+    return (await giacEngine.evaluate(call)).trim();
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
+
+/**
+ * The note on an isprime `true` past 2^53.
+ *
+ * It does not claim that no counterexample is known. The engine is GeoGebra's
+ * Giac on its bundled GMP, whose version is not pinned here, and whether that
+ * test is BPSW or Miller–Rabin on fixed-seed bases decides the claim: composites
+ * that pass fixed-base Miller–Rabin have been constructed and published.
+ */
+function probablePrimeNote(shown: string): string {
+  return (
+    `Warning: ${shown} is a probable prime — above 2^53 the primality test is ` +
+    'probabilistic, not a proof.'
+  );
 }
 
 async function runSequenceIdentify(args: Record<string, unknown>) {

@@ -71,6 +71,23 @@ describe('runCommand — compute', () => {
     expect(out.join('\n').trim()).toBe('{-2, 2}');
   }, 30_000);
 
+  // Quiet prints display alone, so a qualified answer reached a script with the
+  // qualification nowhere. stdout stays the one value; every envelope warning,
+  // whichever handler raised it, is stderr's.
+  it.each([
+    ['isprime(2^61-1)', 'true', ['Warning: 2305843009213693951 is a probable prime']],
+    ['1/0', 'Infinity', ['Warning: the result is infinite.']],
+    ['isprime(2^53-111)', 'true', []],
+    ['isprime(2^53+1)', 'false', []],
+  ])('quiet %s prints %s, with its warnings on stderr', async (expression, value, warnings) => {
+    capture();
+    const code = await runCommand({ kind: 'compute', expression, output: 'quiet' });
+    expect(code).toBe(0);
+    expect(out).toEqual([value]);
+    expect(err).toHaveLength(warnings.length);
+    warnings.forEach((w, i) => expect(err[i]).toContain(w));
+  }, 30_000);
+
   it('exits 1 on a bad expression and writes nothing to stdout', async () => {
     capture();
     const code = await runCommand({ kind: 'compute', expression: 'integrate(', output: 'text' });
