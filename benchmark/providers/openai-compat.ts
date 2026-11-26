@@ -117,6 +117,16 @@ export class OpenAICompatProvider implements LLMProvider {
 
       // Execute each tool and append results
       for (const tc of choice.message.tool_calls) {
+        // openai 5+ types a tool call as function OR custom. Only function tools
+        // are offered here, but every call id still needs a tool message back.
+        if (tc.type !== 'function') {
+          messages.push({
+            role: 'tool',
+            tool_call_id: tc.id,
+            content: `Error: unsupported tool call type ${tc.type}`,
+          });
+          continue;
+        }
         let result: string;
         let success = true;
         let args: Record<string, unknown> = {};
