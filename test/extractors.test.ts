@@ -302,8 +302,12 @@ describe('Extractors', () => {
         expression: '2^8+1',
       });
       expect(extractNumberTheory('euler(3*4)').args).toEqual({
-        operation: 'analyze',
+        operation: 'euler',
         expression: '3*4',
+      });
+      expect(extractNumberTheory('isprime(97)').args).toEqual({
+        operation: 'isprime',
+        expression: '97',
       });
     });
   });

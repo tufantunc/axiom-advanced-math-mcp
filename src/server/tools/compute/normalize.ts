@@ -27,6 +27,8 @@ const RESULT_TYPE_MAP: Record<string, ResultType> = {
   'matrix:norm_inf': 'scalar',
   'matrix:condition_number': 'scalar',
   number_theory: 'scalar',
+  // Giac answers isprime with true/false: as text, "false" is a truthy string.
+  'number_theory:isprime': 'boolean',
   combinatorics: 'scalar',
   probability: 'distribution',
   hypothesis_testing: 'test_result',
