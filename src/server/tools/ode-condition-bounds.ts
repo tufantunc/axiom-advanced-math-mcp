@@ -1280,3 +1280,57 @@ function factorialOperands(inner: string, tokens: MagnitudeToken[]): string[] {
   }
   return operands;
 }
+
+/**
+ * implausibleMagnitude for an ODE's EQUATION, where powers of the unknowns are
+ * ordinary.
+ *
+ * The reader was written for conditions, whose every value is a number: it
+ * refuses any exponent over 1,000 whatever its base, and counts a power of a
+ * function call as a number too large to count. On an equation that refused
+ * `y''+y=sin(x)^2`, `y'=tan(x)^2` and `y'=x^4000*y`, which Giac solves. A power
+ * whose base names a free symbol is no magnitude — measured, `x^100000`,
+ * `sin(x)^100000` and `x^(10^9)` come back as Giac's "Polynomial exponent
+ * overflow" with the worker alive, while `y*10^100000` traps it.
+ *
+ * So each `^` whose base names a free symbol is read as a product: the base and
+ * the exponent are each still charged, and `x^(10^100000)` is refused for the
+ * number inside it. A base made only of numbers and function calls on numbers
+ * (`10`, `sqrt(2)`, `1000!`) is a magnitude and keeps its power.
+ */
+export function implausibleEquationMagnitude(raw: string): string | undefined {
+  const text = unicodeToAscii(raw);
+  let out = text;
+  for (let caret = out.indexOf('^'); caret !== -1; caret = out.indexOf('^', caret + 1)) {
+    if (FREE_SYMBOL.test(powerBase(out, caret))) {
+      out = `${out.slice(0, caret)}*${out.slice(caret + 1)}`;
+    }
+  }
+  return implausibleMagnitude(out);
+}
+
+/** A name that is not called: `x`, `y'`, `e`, but not the `sin` of `sin(2)`. */
+const FREE_SYMBOL = /\b[A-Za-z_]\w*\b(?!\s*\()/;
+
+/**
+ * The operand a `^` raises: a bracketed group with the name it calls, if any
+ * (`sin(x)`, `(x+1)`), or the run of name, digit, prime, point and `!`
+ * characters before it (`x`, `y'`, `10`, `1000!`).
+ */
+function powerBase(text: string, caret: number): string {
+  let i = caret - 1;
+  while (i >= 0 && /\s/.test(text[i])) i -= 1;
+  const end = i + 1;
+  const close = text[i];
+  if (close === ')' || close === ']') {
+    const open = close === ')' ? '(' : '[';
+    let depth = 0;
+    for (; i >= 0; i -= 1) {
+      if (text[i] === close) depth += 1;
+      else if (text[i] === open && --depth === 0) break;
+    }
+    i -= 1;
+  }
+  while (i >= 0 && /[\w'.!]/.test(text[i])) i -= 1;
+  return text.slice(i + 1, end);
+}

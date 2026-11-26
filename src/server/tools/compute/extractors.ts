@@ -683,28 +683,16 @@ export function extractOde(problem: string): RouteResult {
     // conditionBoundError, so the verdict no longer depends on whether the
     // caller typed the verb or the brackets.
     //
-    // Two sibling channels are NOT closed, and both are measured rather than
-    // assumed. Both kill the shared worker on ed5917e and still do:
-    //
-    //   - a condition hidden inside a BOOLEAN rather than written as a member:
-    //     `desolve(y'=y and y(0)=50000!, x, y)`, and the same text without the
-    //     verb. `odeMembers` splits on top-level commas, so an ` and ` join is
-    //     one member whose left side is a derivative — an equation, not a
-    //     condition — and nothing here parses inside it.
-    //   - the equation's own RIGHT-HAND SIDE, which is not a condition at all:
-    //     `desolve(y'=50000!*y, y(0)=1, x, y)`. The system path bounds its
-    //     right-hand sides in validateSystemShape; the single-equation path has
-    //     no equivalent, and adding one is a bound on the whole equation
-    //     argument rather than on a condition.
-    //
-    // They are left because bounding either means bounding text that is not a
-    // condition, which is a different measurement with a real false-refusal
-    // surface: the system path needed its own MAX_COMMAND_CHARS (800) for its own
-    // command shape, and the length that traps this one is not the length that
-    // traps that one. What bounds them today is compute/schema.ts's
-    // MAX_EXPRESSION_LENGTH on the whole `problem` — 8192, above both the
-    // ~1,415-character flat-condition trap and the six characters of `50000!` —
-    // so those channels are bounded, not closed.
+    // Two sibling channels were open here, and calculus.ts's validateSolveOde
+    // now bounds both through implausibleEquationMagnitude, before any engine
+    // call: the equation's own RIGHT-HAND SIDE (`desolve(y'=50000!*y, y(0)=1,
+    // x, y)`), which the system path bounded in validateSystemShape and the
+    // single-equation path did not, and a condition hidden inside a BOOLEAN
+    // (`desolve(y'=y and y(0)=50000!, x, y)`), which `odeMembers` keeps as one
+    // equation member, so its number is read there. Both killed the shared
+    // worker. That bound is on magnitude only: their length and depth are
+    // bounded by compute/schema.ts's MAX_EXPRESSION_LENGTH on the whole
+    // `problem` (8192), not by the conditions' 280 and 100.
     // An empty equation is refused by validateParams, and folding onto it built a
     // non-empty string that slipped past that check — `desolve(, y(0)=1)` reached
     // the worker and came back blaming the CAS.
