@@ -10,11 +10,13 @@ import { giacEngine } from '../giac/index.js';
 import { verifyIntegrate, verifyOdeSystem, verifyOdeSolution } from './self-verify.js';
 import {
   leibnizQuotients,
+  odeEquationMembers,
   parseOdeSystem,
   replaceLeibnizQuotients,
   type LeibnizQuotient,
 } from './ode-system-shape.js';
 import { translateOdeSystem } from './ode-system.js';
+import { implausibleEquationMagnitude } from './ode-condition-bounds.js';
 
 /** Giac's spelling of a limit's direction: from the right, from the left, both sides. */
 type GiacLimitDirection = '1' | '-1' | '0';
@@ -185,6 +187,27 @@ function validateSolveOde(args: Record<string, unknown>): string | null {
   // Worded for one equation. The system path reaches the identical rule
   // through validateSystemShape and words it "cannot solve this system", so
   // the two prefixes are the only difference between them.
+  // The equation itself, bounded as validateSystemShape bounds a system's
+  // right-hand sides. Only conditions were: `desolve(y'=y*10^100000, x, y)` is
+  // twenty-six characters and trapped the shared worker ("memory access out of
+  // bounds"), where the same right-hand side in a system is refused. First,
+  // because the equation is argument zero. A system is left to its own check,
+  // which words the refusal for a system.
+  const equationText =
+    typeof args.original_equation === 'string' ? args.original_equation : String(args.equation);
+  if (parseOdeSystem(equationText) === null) {
+    for (const member of odeEquationMembers(equationText)) {
+      // `d^2y/dx^2` is an order, not a power: a quotient's order is bounded by
+      // rewriteLeibniz, which names it, so it is not read as a magnitude here.
+      const oversized = implausibleEquationMagnitude(replaceLeibnizQuotients(member, (q) => q.fn));
+      if (oversized !== undefined) {
+        return (
+          `solve_ode cannot solve this equation — it has a term of implausible magnitude ` +
+          `(${oversized}) — coefficients and forcing terms are ordinary numbers`
+        );
+      }
+    }
+  }
   const conditionRefusal = args.condition_refusal;
   if (typeof conditionRefusal === 'string') {
     return `solve_ode cannot solve this equation — it ${conditionRefusal}`;

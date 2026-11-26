@@ -334,7 +334,59 @@ function odeMembers(equation: string): Member[] {
 export function odeMemberConditions(equation: string): string[] {
   return odeMembers(equation)
     .filter((m): m is Extract<Member, { kind: 'condition' }> => m.kind === 'condition')
-    .map((m) => m.text);
+    .map((m) => m.text)
+    .filter((text) => !takesUnappliedDerivative(text));
+}
+
+/**
+ * The members of a single-equation ODE argument that are the EQUATION, not one
+ * of its initial conditions: everything odeMemberConditions leaves out.
+ *
+ * The single-equation path bounds these with implausibleEquationMagnitude, as
+ * validateSystemShape bounds a system's right-hand sides. Nothing did:
+ * `desolve(y'=y*10^100000, x, y)` trapped the shared Giac worker ("memory
+ * access out of bounds"), where the same text inside a system is refused.
+ */
+export function odeEquationMembers(equation: string): string[] {
+  return (
+    odeMembers(equation)
+      .filter((m) => m.kind === 'equation' || takesUnappliedDerivative(m.text))
+      // A bare derivative on the left carries no number; its right side does.
+      .map((m) => (m.kind === 'equation' ? m.rhs : m.text))
+  );
+}
+
+/**
+ * Whether a member classify called a condition is in fact the equation: it
+ * takes a derivative that is not applied at a point.
+ *
+ * classify calls every member whose left side is not a bare derivative a
+ * condition, which is right for a system and wrong for the one equation of a
+ * single ODE: `y''+y=sin(x)+…` was charged as an initial condition, so past 280
+ * characters it was refused as "an initial condition of 316 characters", where
+ * `y''=-y+sin(x)+…` was solved.
+ *
+ * A derivative AT a point stays a condition, so every condition shape keeps the
+ * condition bounds: `y'(0)=0`, `diff(y(x),x)(0)=0`, `2*y(0)=1` and the Robin
+ * form `y(0)+y'(0)=1`. So does `y'(x)=y(x)`, which reads like one, as before.
+ * Members arrive normalised (odeMembers), so `y′` is already `y'`.
+ */
+function takesUnappliedDerivative(text: string): boolean {
+  // Every prime of the run, then not a bracket: `y''(0)` must not match as
+  // `y'` followed by a second prime.
+  if (/[A-Za-z_]\w*'+(?!')(?!\s*\()/.test(text)) return true;
+  if (leibnizQuotients(text).length > 0) return true;
+  for (const call of text.matchAll(/\b(?:diff|derive|deriver)\s*\(/g)) {
+    let depth = 0;
+    for (let i = call.index + call[0].length - 1; i < text.length; i++) {
+      if (text[i] === '(') depth++;
+      else if (text[i] === ')' && --depth === 0) {
+        if (!/^\s*\(/.test(text.slice(i + 1))) return true;
+        break;
+      }
+    }
+  }
+  return false;
 }
 
 /**
