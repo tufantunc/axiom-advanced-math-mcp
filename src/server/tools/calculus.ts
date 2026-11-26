@@ -10,7 +10,9 @@ import { giacEngine } from '../giac/index.js';
 import { verifyIntegrate, verifyOdeSystem, verifyOdeSolution } from './self-verify.js';
 import {
   leibnizQuotients,
+  misreadPrintedOde,
   odeEquationMembers,
+  odeMembersToQuote,
   parseOdeSystem,
   replaceLeibnizQuotients,
   type LeibnizQuotient,
@@ -770,6 +772,69 @@ function rewriteLeibniz(
   };
 }
 
+/**
+ * A refusal for a single ODE Giac would MISREAD, decided on the form Giac
+ * prints for it, or undefined.
+ *
+ * `quote(member)` asks Giac's own parser what the text is, without evaluating
+ * it, and misreadPrintedOde reads that. Four rounds of rules over the caller's
+ * text tried to predict the parser instead, and each missed in one direction
+ * or the other: `y(1-y)` and `y(ln(y))` are products to Giac, `y(f(y))`,
+ * `(y/2)(2-y)` and `2y(x-1)` applications, and the difference is not a
+ * function of the text anyone wrote down. The logistic equation was refused
+ * as a delay equation, and `(y/2)(2-y)` answered c_0*exp(-x/2)+2.
+ *
+ * Run after every synchronous check — the magnitude, length and condition
+ * bounds keep their promise that oversized text never reaches the engine —
+ * and before the solve. Of the command text, `args.equation`, so the
+ * conditions folded into it are read too. A system has its own path.
+ *
+ * A quote that fails adds no refusal: the solve goes ahead exactly as it
+ * would have, and reports whatever the CAS says. Text Giac cannot parse
+ * prints as `undef`, which names no function, so it adds none either.
+ */
+async function odeMisreadRefusal(args: Record<string, unknown>): Promise<string | undefined> {
+  const equation = args.equation as string;
+  const fn = (args.function_name as string) ?? 'y';
+  const variable = (args.variable as string) ?? 'x';
+  if (parseOdeSystem(equation) !== null) return undefined;
+  const members = odeMembersToQuote(equation);
+  if (members === null) return undefined;
+  const printed: string[] = [];
+  for (const member of members) {
+    try {
+      printed.push(String(await giacEngine.evaluate(`quote(${member})`)));
+    } catch {
+      return undefined;
+    }
+  }
+  const misread = misreadPrintedOde(printed, fn, variable);
+  if (misread === undefined) return undefined;
+  if (misread.kind === 'argument') {
+    return (
+      `solve_ode cannot solve this equation — it applies ${fn} at ` +
+      `${excerpt(misread.argument, 60)} rather than at the variable ${variable}, ` +
+      'a delay or functional equation, which this does not solve'
+    );
+  }
+  if (misread.kind === 'derivative call') {
+    // Giac drops a condition written this way: `[y''=-y, y(0)=1,
+    // diff(y(x),x)(0)=0]` answered cos(x)+c_1*sin(x). The primed spelling
+    // answers cos(x).
+    return (
+      `solve_ode cannot solve this equation — it writes a derivative at a point as ` +
+      `${excerpt(misread.call, 60)}, which the CAS drops — write it ${misread.primed}`
+    );
+  }
+  return misread.inCondition
+    ? `solve_ode cannot solve this equation — it gives a condition that applies ${fn} ` +
+        `through ${excerpt(misread.expression, 60)} — write a condition at a point, ` +
+        `as ${fn}(0)=1 or ${fn}'(0)=0`
+    : `solve_ode cannot solve this equation — the CAS reads ${excerpt(misread.expression, 60)} ` +
+        `as an expression built from ${fn} applied as a function, which this does not solve ` +
+        `— write a product with *, and ${fn} only at the variable ${variable}`;
+}
+
 export async function calculusHandler(input: Record<string, unknown>) {
   try {
     const operation = input.operation as string;
@@ -785,6 +850,11 @@ export async function calculusHandler(input: Record<string, unknown>) {
       operation === 'solve_ode' ? (args.equation as string) : (args.expression as string);
     const validationError = validateExpression(exprToValidate);
     if (validationError) return formatErrorResponse(validationError.message);
+
+    if (operation === 'solve_ode') {
+      const misread = await odeMisreadRefusal(args);
+      if (misread !== undefined) return formatErrorResponse(misread);
+    }
 
     const { expr: giacExpr, functions, system } = await buildGiacExpression(operation, args);
     // From the translation, not a second parse of the caller's text. Re-running

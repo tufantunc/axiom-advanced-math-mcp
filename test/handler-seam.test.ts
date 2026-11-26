@@ -2087,7 +2087,9 @@ describe('spellings the router has to tell apart', () => {
       // The mark on a fold spelling — conditions inside the equation, one of
       // them on the DERIVATIVE — because `and(...)`/`and (...)` are Giac's own
       // syntax and every spelling of a certified IVP deserves the same mark.
-      const r = await computeHandler({ problem: "desolve(y''=-y and(y(0)=1) and (y'(0)=0), x, y)" });
+      const r = await computeHandler({
+        problem: "desolve(y''=-y and(y(0)=1) and (y'(0)=0), x, y)",
+      });
       expect(r.isError, text(r)).toBe(false);
       expect(text(r)).toMatch(/^Result: cos\(x\)$/m);
       expect(text(r)).toMatch(/Verified: ✓ .*and meets the conditions/);
@@ -2332,7 +2334,10 @@ describe('spellings the router has to tell apart', () => {
       ["desolve([y'=2*x, y(0)=1], x, y)", /1\+x\^2/],
       ["desolve([y'=y, y(0)=1], x, y)", /exp\(x\)/],
       ["desolve([y''=-y, y(0)=1, y'(0)=0], x, y)", /cos\(x\)/],
-      ['desolve([diff(y(x),x,2)=-y, y(0)=1, diff(y(x),x)(0)=0], x, y)', /cos\(x\)/],
+      // The condition primed: Giac drops `diff(y(x),x)(0)=0` and answered
+      // cos(x)+c_1*sin(x), which this row matched. That spelling is refused now
+      // (ode-misapplied-function.test.ts).
+      ["desolve([diff(y(x),x,2)=-y, y(0)=1, y'(0)=0], x, y)", /^Result: cos\(x\)$/m],
       ['desolve([diff(y(x),x)=y, y(0)=1], x, y)', /exp\(x\)/],
       ["desolve(y'=x*y, x, y)", /exp\(x\^2\/2\)/],
     ])('still solves the single equation %s', async (problem, expected) => {
