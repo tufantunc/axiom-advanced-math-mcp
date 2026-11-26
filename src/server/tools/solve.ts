@@ -1,6 +1,7 @@
 import { giacEngine } from '../giac/index.js';
 import { formatErrorResponse } from './response-formatter.js';
-import { validateExpression } from './expression-validator.js';
+import { validateEquation } from './expression-validator.js';
+import { unicodeToAscii } from './unicode-normalize.js';
 import { evalWithLatex } from './giac-eval.js';
 import { listToSet, splitTopLevel } from './output-cleanup.js';
 import { verifySolveSet, verifySystem, type VerificationResult } from './self-verify.js';
@@ -45,6 +46,36 @@ export function parseTuples(result: string): string[][] {
   return [];
 }
 
+/**
+ * A Giac answer that is no answer. Giac resolves with `GIAC_ERROR: ...` rather
+ * than throwing, and answers a malformed input with `undef` INSIDE well-formed
+ * output (`√(undef_+4)`), so testing for an exact `'undef'` misses both — and
+ * either one, passed on, is printed as the solution set with exit status 0.
+ */
+function isEngineFailure(raw: string): boolean {
+  return raw.includes('GIAC_ERROR') || /\bundef/.test(raw);
+}
+
+/**
+ * Refuses an equation Giac cannot parse, by asking how it reads it without
+ * evaluating it.
+ *
+ * {@link validateEquation} catches the shapes a pattern can name. What it cannot
+ * see is a syntax error Giac swallows: `x^2=4 4`, `x^2=4;` and `sin(x)=x y z`
+ * all quote as `undef`, and `solve` answers each with `[]` — "no solutions",
+ * exit status 0. The undefined marker in the quoted form is the only trace.
+ */
+async function engineParseError(equation: string): Promise<string | null> {
+  const parsed = await giacEngine.evaluate(`quote(${equation})`);
+  if (!isEngineFailure(parsed)) return null;
+  return 'Malformed equation: Giac cannot parse part of it — check for a missing operator or a stray character';
+}
+
+/** Both pre-flight checks, the pattern one first: it names the problem more precisely. */
+async function malformedEquation(equation: string): Promise<string | null> {
+  return validateEquation(equation)?.message ?? (await engineParseError(equation));
+}
+
 interface Candidate {
   fn: string;
   note?: string;
@@ -58,15 +89,20 @@ interface Attempt {
 
 export async function solveEquationHandler(args: Record<string, unknown>) {
   try {
-    const equation = args.equation as string;
-    const variable = args.variable as string;
+    // Normalised once, here, because everything below sends the equation to
+    // Giac itself — the escalation candidates, the parse probe and the
+    // substitution check. Only evalWithLatex normalised, so `x²=4` was
+    // displayed as {-2, 2} while every candidate had solved for an identifier
+    // `x²` and the answer came back "Verified: ✗ (no solutions to verify)".
+    const equation = unicodeToAscii((args.equation as string | undefined) ?? '');
+    const variable = unicodeToAscii((args.variable as string | undefined) ?? '');
     const domain = args.domain as string | undefined;
 
     if (!equation) return formatErrorResponse("'equation' is required");
     if (!variable) return formatErrorResponse("'variable' is required");
 
-    const validationError = validateExpression(equation);
-    if (validationError) return formatErrorResponse(validationError.message);
+    const malformed = await malformedEquation(equation);
+    if (malformed) return formatErrorResponse(malformed);
 
     // Escalation ladder. In practice Giac's solve already returns numeric roots
     // for many transcendental equations, so the fsolve fallback rarely fires.
@@ -90,7 +126,7 @@ export async function solveEquationHandler(args: Record<string, unknown>) {
       } catch {
         continue;
       }
-      if (!raw || raw === 'undef') continue;
+      if (!raw || isEngineFailure(raw)) continue;
       const verification = await verifySolveSet(equation, variable, parseSolutions(raw));
       primary ??= { giacExpr, verification, note: undefined };
       if (verification.verified) {
@@ -116,19 +152,23 @@ export async function solveEquationHandler(args: Record<string, unknown>) {
 
 export async function solveSystemHandler(args: Record<string, unknown>) {
   try {
-    const equations = args.equations as string[];
-    const variables = args.variables as string[];
+    const rawEquations = args.equations as string[];
+    const rawVariables = args.variables as string[];
 
-    if (!equations || !Array.isArray(equations) || equations.length === 0) {
+    if (!rawEquations || !Array.isArray(rawEquations) || rawEquations.length === 0) {
       return formatErrorResponse("'equations' must be a non-empty array");
     }
-    if (!variables || !Array.isArray(variables) || variables.length === 0) {
+    if (!rawVariables || !Array.isArray(rawVariables) || rawVariables.length === 0) {
       return formatErrorResponse("'variables' must be a non-empty array");
     }
+    // As in solveEquationHandler: the substitution check below reads these
+    // directly, so they must be what the engine is asked to solve.
+    const equations = rawEquations.map(unicodeToAscii);
+    const variables = rawVariables.map(unicodeToAscii);
 
     for (const eq of equations) {
-      const validationError = validateExpression(eq);
-      if (validationError) return formatErrorResponse(validationError.message);
+      const malformed = await malformedEquation(eq);
+      if (malformed) return formatErrorResponse(malformed);
     }
 
     const giacExpr = `solve([${equations.join(',')}],[${variables.join(',')}])`;
