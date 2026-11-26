@@ -1501,6 +1501,27 @@ describe('a condition is bounded by what it denotes, not by one operator at a ti
     expect(text(r)).not.toMatch(/memory access|worker exited|RuntimeError|table index/);
   });
 
+  // The row above used to be the only one reaching a bare `a^b^c` tower in the
+  // magnitude reader, and only by accident: it pinned `^9^9` while the
+  // normaliser mapped each superscript digit separately. Once the run became
+  // one exponent the tower went unexercised. It did not discriminate even then
+  // — `(1000!^9)^9` is 207,977 digits and refused either way. `10^2^12` does:
+  // Giac reads `^` right-associatively (`2^3^2` answers 512), so this is
+  // 10^(2^12) = 10^4096, 4,097 digits, over the bound; read left-to-right it
+  // would be (10^2)^12 = 10^24 and admitted. Every exponent run is at most 12,
+  // so the per-`^` clauses pass it and only the reader's grammar refuses it.
+  it('reads a bare `a^b^c` tower right-associatively, as Giac does', async () => {
+    const r = await computeHandler({ problem: "desolve(y'=y, y(0)=10^2^12, x, y)" });
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/a value denoting 4097 digits \(10\^2\^12\)/);
+    expect(text(r)).not.toMatch(/memory access|worker exited|RuntimeError|table index/);
+    // The control: the same tower one step down is 10^(2^2), an ordinary number
+    // the reader must still admit, and Giac answers it as 10000.
+    const small = await computeHandler({ problem: "desolve(y'=y, y(0)=10^2^2, x, y)" });
+    expect(small.isError, text(small)).toBe(false);
+    expect(text(small)).toMatch(/^Result: 10000\*exp\(x\)$/m);
+  });
+
   // An exponent too large to hold exactly reports the other message arm, which
   // nothing else reaches.
   it('refuses an exponent past the exact-integer window without a digit count', async () => {
