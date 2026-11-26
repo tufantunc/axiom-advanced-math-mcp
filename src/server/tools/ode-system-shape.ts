@@ -1,5 +1,5 @@
 import { stripEnclosingBrackets } from './compute/arg-parsing.js';
-import { excerpt, splitTopLevel } from './output-cleanup.js';
+import { escapeForRegExp, excerpt, splitTopLevel } from './output-cleanup.js';
 import { unicodeToAscii } from './unicode-normalize.js';
 import {
   conditionBoundError,
@@ -368,7 +368,9 @@ export function odeEquationMembers(equation: string): string[] {
  *
  * A derivative AT a point stays a condition, so every condition shape keeps the
  * condition bounds: `y'(0)=0`, `diff(y(x),x)(0)=0`, `2*y(0)=1` and the Robin
- * form `y(0)+y'(0)=1`. So does `y'(x)=y(x)`, which reads like one, as before.
+ * form `y(0)+y'(0)=1`. `y'(x)` applied at the independent VARIABLE is the
+ * derivative itself, but this reads no variable: the extractor rewrites it to
+ * `y'` first (primesAtVariableUnapplied), so it reaches here as an equation.
  * Members arrive normalised (odeMembers), so `y′` is already `y'`.
  */
 function takesUnappliedDerivative(text: string): boolean {
@@ -387,6 +389,79 @@ function takesUnappliedDerivative(text: string): boolean {
     }
   }
   return false;
+}
+
+/**
+ * `text` with every derivative of `fn` applied at exactly `variable` — `y'(x)`,
+ * `y''( x )` — written as the bare derivative `y'`, `y''`.
+ *
+ * Giac leaves the applied spelling unevaluated: `desolve(y'(x)=y(x),x,y)`
+ * answers `[(function_diff(y))(x)]`, where `desolve(y'=y(x),x,y)` answers
+ * `c_0*exp(x)`. And classify reads `y'(x)=y(x)` as a function at a point — a
+ * condition, charged against the 280-character condition bound — although at
+ * the variable it is the derivative as a function, which is the equation.
+ *
+ * Only at the variable, and only of the function being solved for. `y'(0)`,
+ * `y'(L)` and `y'(x+0)` are points and stay conditions, with their bounds;
+ * which of them is a point is the caller's variable to decide, so this cannot
+ * be a rule inside classify, which has none.
+ *
+ * Returns `text` unchanged when there is nothing to rewrite, so every other
+ * spelling reaches the engine exactly as written.
+ */
+export function primesAtVariableUnapplied(text: string, fn: string, variable: string): string {
+  const applied = new RegExp(
+    String.raw`(?<![\w'])(${escapeForRegExp(fn)}'+)\s*\(\s*${escapeForRegExp(variable)}\s*\)`,
+    'g'
+  );
+  const ascii = unicodeToAscii(text);
+  const rewritten = ascii.replaceAll(applied, '$1');
+  return rewritten === ascii ? text : rewritten;
+}
+
+/**
+ * A single equation's member list in the order Giac reads: `[equation,
+ * condition, …]`, or `text` unchanged when it is not such a list.
+ *
+ * Giac takes the FIRST member as the equation. `desolve([y(0)=1, y'=y],x,y)`
+ * answers `[]` and the unbracketed `desolve(y(0)=1, y'=y,x,y)` is a Giac
+ * error, so `y(0)=1, y'=y` — the same initial-value problem as `[y'=y,
+ * y(0)=1]` — was refused. Unbracketed, even the equation-first `y'=y, y(0)=1`
+ * reaches desolve as separate ARGUMENTS and answers `[]`; the brackets make it
+ * the one list argument.
+ *
+ * The equation is the one member odeEquationMembers would read as one, so the
+ * order cannot disagree with the bounds: what moves to the front is what the
+ * magnitude bound reads, and everything after it is what the condition bounds
+ * read. A list with no such member, or with several (that is a system, or
+ * nothing this can order), is left exactly as written. So is text whose
+ * brackets do not balance: rebracketing `y'=y, y(0)=factorial(10000` moved its
+ * `]` into the operand, and the condition bound — which names the literal
+ * `factorial(10000` — no longer read it.
+ */
+export function equationFirst(text: string): string {
+  if (!bracketsBalance(text)) return text;
+  const members = splitTopLevel(stripEnclosingBrackets(unicodeToAscii(text)), ',').map((m) =>
+    m.trim()
+  );
+  if (members.length < 2 || parseOdeSystem(text) !== null) return text;
+  const equations = members.filter(
+    (m) => classify(m).kind === 'equation' || takesUnappliedDerivative(m)
+  );
+  if (equations.length !== 1) return text;
+  const [equation] = equations;
+  if (members[0] === equation && text.trim().startsWith('[')) return text;
+  return `[${[equation, ...members.filter((m) => m !== equation)].join(', ')}]`;
+}
+
+/** Whether every `(` and `[` in `text` closes, in order, and nothing else does. */
+function bracketsBalance(text: string): boolean {
+  const open: string[] = [];
+  for (const ch of text) {
+    if (ch === '(' || ch === '[') open.push(ch === '(' ? ')' : ']');
+    else if ((ch === ')' || ch === ']') && open.pop() !== ch) return false;
+  }
+  return open.length === 0;
 }
 
 /**

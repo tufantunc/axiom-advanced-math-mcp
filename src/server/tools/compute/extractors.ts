@@ -5,6 +5,8 @@ import {
   leibnizQuotients,
   isDerivativeEquation,
   odeMemberConditions,
+  equationFirst,
+  primesAtVariableUnapplied,
 } from '../ode-system-shape.js';
 import { conditionBoundError, conditionsTogetherError } from '../ode-condition-bounds.js';
 import { coerceTestData } from '../hypothesis-testing.js';
@@ -378,7 +380,10 @@ export function extractOde(problem: string): RouteResult {
     // system — and inserted inside the outer bracket of `[[y'=z, z'=-y]]`, one
     // level above the members. Both then parsed as non-systems downstream and
     // were refused, where main answered and verified them.
-    const strippedEquation = stripEnclosingBrackets(trimmedEquation);
+    //
+    // Folded onto the equation as it will be SOLVED (solvedEquation below), not
+    // as typed: only that text is known to put the equation first.
+    //
     // A member LIST takes conditions as further members; a lone equation joins
     // them with `and`. This is the syntax question asked correctly — a top-level
     // comma after stripping, rather than the punctuation that happened to be
@@ -397,11 +402,12 @@ export function extractOde(problem: string): RouteResult {
     // and then that `and` cannot hold a comma; both were measured false. The one
     // spelling Giac really does drop is `diff(y(x),x)(0)=0`, and this never folds
     // it because SINGLE_ODE_CONDITION rejects its inner comma.
-    const isMemberList = splitArgs(strippedEquation).length > 1;
-    const fold = (members: string[]): string =>
-      isMemberList
+    const fold = (base: string, members: string[]): string => {
+      const strippedEquation = stripEnclosingBrackets(base);
+      return splitArgs(strippedEquation).length > 1
         ? `[${strippedEquation}, ${members.join(', ')}]`
         : `(${strippedEquation}) and (${members.join(') and (')})`;
+    };
     // `y(x)` names the FUNCTION — it cannot be an independent variable — so that
     // fact is carried rather than re-derived below.
     // The system parser's reader, not a second one. Two readers that knew
@@ -497,6 +503,19 @@ export function extractOde(problem: string): RouteResult {
         ? independentVariable(equation, function_name)
         : (only ?? independentVariable(equation, function_name));
     }
+
+    // The equation as it will be solved, once the variable is known: a
+    // derivative applied at the variable, `y'(x)`, is the derivative `y'` (Giac
+    // leaves the applied spelling unevaluated, and the members' classifier
+    // would charge it as a condition), and a single equation's member list puts
+    // the equation first, the one order Giac reads. Both texts — the command
+    // and original_equation — are this one, as rewriteLeibniz rewrites both, so
+    // the residual check substitutes into the first member and that member is
+    // the equation. A system is left as written: its own path reads it.
+    const solvedEquation = isSystem
+      ? trimmedEquation
+      : equationFirst(primesAtVariableUnapplied(trimmedEquation, function_name, variable));
+    const solvedText = solvedEquation === trimmedEquation ? equation : solvedEquation;
 
     // A condition's POINT must not mention the independent variable. That is a
     // syntactic proxy for what Giac will read as an equation, not a proof of it —
@@ -614,7 +633,7 @@ export function extractOde(problem: string): RouteResult {
     //
     // The equation is argument ZERO, so this outranks anything found in `rest`
     // and keeps the caller's own order.
-    const memberConditions = isSystem ? [] : odeMemberConditions(trimmedEquation);
+    const memberConditions = isSystem ? [] : odeMemberConditions(solvedEquation);
     const memberRefusal = memberConditions
       .map((member) => conditionBoundError(member))
       .find((reason) => reason !== undefined);
@@ -701,7 +720,9 @@ export function extractOde(problem: string): RouteResult {
     // caller's own order. It used to be rejected in a loop here and appended after
     // every positional entry, which broke that guarantee by construction.
     const withConditions =
-      conditions.length === 0 || trimmedEquation.length === 0 ? equation : fold(conditions);
+      conditions.length === 0 || trimmedEquation.length === 0
+        ? solvedText
+        : fold(solvedEquation, conditions);
 
     return {
       handler: 'calculus',
@@ -711,7 +732,7 @@ export function extractOde(problem: string): RouteResult {
         // The caller's equation before any condition was folded in, so the
         // residual check substitutes into what they actually wrote rather than
         // into the command this built. Extractor-written; not caller-settable.
-        original_equation: equation,
+        original_equation: solvedText,
         variable,
         function_name,
         ...(unsupported.length > 0 ? { unsupported_argument: unsupported[0] } : {}),
@@ -748,30 +769,46 @@ export function extractOde(problem: string): RouteResult {
   // with the verb got "cannot solve this system". A system's conditions are
   // members of the list either way, so validateSystemShape re-checks them under
   // the identical rule before its first engine call and nothing is lost.
-  const implicitEquation = problem.trim();
+  const typedEquation = problem.trim();
   // Leibniz notation names the function and its variable, wherever in the text it
   // stands: `[dy/dt=y, y(0)=1]` and `y(0)=1, dy/dt=y` are a function y of t too.
   // Read through the shared readers, so this route and the verb route agree.
   const implicitFunction =
-    leibnizQuotients(implicitEquation).length > 0
-      ? (differentiatedFunction(implicitEquation) ?? 'y')
+    leibnizQuotients(typedEquation).length > 0
+      ? (differentiatedFunction(typedEquation) ?? 'y')
       : undefined;
-  const implicitRefusal =
-    parseOdeSystem(implicitEquation) !== null
-      ? undefined
-      : odeMemberConditions(implicitEquation)
-          .map((member) => conditionBoundError(member))
-          .find((reason) => reason !== undefined);
+  // `y` and its variable unless the equation says otherwise in Leibniz form:
+  // `dz/dt=z` is a function z of t, and calculus.ts refuses a quotient taken
+  // with respect to anything but the variable it is handed.
+  const implicitVariable = implicitFunction
+    ? independentVariable(typedEquation, implicitFunction)
+    : 'x';
+  const isImplicitSystem = parseOdeSystem(typedEquation) !== null;
+  // The same rewrite the verb route makes, for the same reasons: `y(0)=1, y'=y`
+  // reached desolve with the condition first, as separate arguments, and was a
+  // Giac error where `[y'=y, y(0)=1]` answers exp(x).
+  const implicitEquation = isImplicitSystem
+    ? typedEquation
+    : equationFirst(
+        primesAtVariableUnapplied(typedEquation, implicitFunction ?? 'y', implicitVariable)
+      );
+  // Each condition, then the conditions TOGETHER, in the verb route's order and
+  // through the same two functions. Only the first was here, so
+  // `[y''=-y, y(0)=1142!, diff(y(x),x)(0)=1142!]` was refused with the verb and
+  // reached the engine without it.
+  const implicitConditions = isImplicitSystem ? [] : odeMemberConditions(implicitEquation);
+  const implicitRefusal = isImplicitSystem
+    ? undefined
+    : (implicitConditions
+        .map((member) => conditionBoundError(member))
+        .find((reason) => reason !== undefined) ?? conditionsTogetherError(implicitConditions));
   return {
     handler: 'calculus',
     args: {
       operation: 'solve_ode',
       equation: implicitEquation,
       original_equation: implicitEquation,
-      // `y` and its variable unless the equation says otherwise in Leibniz form:
-      // `dz/dt=z` is a function z of t, and calculus.ts refuses a quotient taken
-      // with respect to anything but the variable it is handed.
-      variable: implicitFunction ? independentVariable(implicitEquation, implicitFunction) : 'x',
+      variable: implicitVariable,
       function_name: implicitFunction ?? 'y',
       ...(implicitRefusal !== undefined ? { condition_refusal: implicitRefusal } : {}),
     },
