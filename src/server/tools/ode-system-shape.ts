@@ -516,6 +516,98 @@ function booleanOperands(member: string): string[] {
 }
 
 /**
+ * `fn` read out of redundant brackets, `(y)(x-1)` as `y(x-1)` and `((y'))` as
+ * `y'`: Giac applies a bracketed name exactly as a bare one, so `y'=(y)(x-1)`
+ * answered `(2*c_0+x^2-2*x)/2` as `y'=y(x-1)` did. A bracket that is a call's
+ * argument list — `f(y)`, `y'(y)`, `g(x) (y)` — is not one and stays.
+ */
+function unwrapName(text: string, fn: string): string {
+  const wrapped = new RegExp(String.raw`(?<![\w')\]]\s*)\(\s*(${escapeForRegExp(fn)}'*)\s*\)`, 'g');
+  let read = text;
+  for (let before = ''; before !== read;) {
+    before = read;
+    read = read.replaceAll(wrapped, '$1');
+  }
+  return read;
+}
+
+/**
+ * `diff(fn(v),v)` or `diff(fn,v)`, optionally with an order — a derivative of
+ * `fn` taken with respect to the variable — as the whole body of a call.
+ * Group 1 is the order.
+ */
+function derivativeCallBody(fn: string, variable: string): RegExp {
+  const f = escapeForRegExp(fn);
+  const v = escapeForRegExp(variable);
+  return new RegExp(String.raw`^\s*${f}\s*(?:\(\s*${v}\s*\))?\s*,\s*${v}\s*(?:,\s*(\d+)\s*)?$`);
+}
+
+/** One `diff(y(x),x)(p)`: where it stands, its order and its point. */
+interface DerivativeCallAtPoint {
+  start: number;
+  end: number;
+  order: number;
+  point: string;
+}
+
+/** Every derivative call of `fn` with respect to `variable` applied at one point. */
+function derivativeCallsAtPoints(
+  text: string,
+  fn: string,
+  variable: string
+): DerivativeCallAtPoint[] {
+  const body = derivativeCallBody(fn, variable);
+  const found: DerivativeCallAtPoint[] = [];
+  for (const call of text.matchAll(/\b(?:diff|derive|deriver)\s*\(/g)) {
+    const open = call.index + call[0].length - 1;
+    const close = closingParen(text, open);
+    if (close < 0) continue;
+    const order = body.exec(text.slice(open + 1, close));
+    const at = /^\s*\(/.exec(text.slice(close + 1));
+    if (order === null || at === null) continue;
+    const pointOpen = close + at[0].length;
+    const pointClose = closingParen(text, pointOpen);
+    if (pointClose < 0) continue;
+    found.push({
+      start: call.index,
+      end: pointClose + 1,
+      order: order[1] === undefined ? 1 : Number(order[1]),
+      point: text.slice(pointOpen + 1, pointClose).trim(),
+    });
+  }
+  return found;
+}
+
+/** `fn` with `order` primes applied at `point`: `y''(0)`. */
+function primedAt(fn: string, order: number, point: string): string {
+  return `${fn}${"'".repeat(order)}(${point})`;
+}
+
+/**
+ * The first derivative of `fn` written as a CALL applied at a point —
+ * `diff(y(x),x)(0)` — and the primed spelling of the same thing, `y'(0)`.
+ *
+ * Giac drops a condition written this way: `[y''=-y, y(0)=1,
+ * diff(y(x),x)(0)=0]` answers `cos(x)+c_1*sin(x)`, and the Robin condition
+ * `diff(y(x),x)(1)+y(1)=1` answers `1/sin(1)*sin(x)`, where `y'(1)+y(1)=1`
+ * answers `1/(cos(1)+sin(1))*sin(x)`. So the single-equation path refuses it
+ * and names the spelling that works.
+ */
+export function derivativeCallAtPoint(
+  text: string,
+  fn: string,
+  variable: string
+): { call: string; primed: string } | undefined {
+  const ascii = unwrapName(unicodeToAscii(text), fn);
+  const [first] = derivativeCallsAtPoints(ascii, fn, variable);
+  if (first === undefined) return undefined;
+  return {
+    call: ascii.slice(first.start, first.end),
+    primed: primedAt(fn, first.order, first.point),
+  };
+}
+
+/**
  * The argument at which a single ODE's EQUATION applies `fn` other than at
  * exactly `variable` — `x-1` for `y'=y(x-1)`, `x/2` for `y'=y(x/2)`, `0` for
  * `y'=y(0)`, `x` for `y'=y(x)` solved in `t` — or undefined when it applies
@@ -527,17 +619,27 @@ function booleanOperands(member: string): string[] {
  * or nonlocal equation has no closed form this solves, so the only right
  * answer is a refusal.
  *
- * Read on every comma member and every operand of a top-level `and`, `or`,
- * `xor`, `&&` or `||`, since a condition can be joined to the equation either
- * way. An operand is the EQUATION when it holds `fn` bare or at the variable,
- * or takes a derivative not applied at a point; every other operand —
- * `y(0)=1`, `y'(0)=0`, `2*y(0)=1`, `y(0)+y'(0)=1`, `diff(y(x),x)(0)=0` — is a
- * condition, where `fn` at a point is what a condition is, and is not read.
- * A chained `y(x-1)(0)` in the equation is reported as written; Giac answered
- * it `c_0-x`.
+ * Read on every member — split at top-level `,` and `;` — and every operand of
+ * a top-level boolean join, since a condition can be joined to the equation
+ * either way. Before that, a bracketed name is read as the name (unwrapName)
+ * and a derivative call at a point as its primed spelling, `diff(y(x),x)(1)`
+ * as `y'(1)`, so that `y(x)` inside it is not taken for the function at the
+ * variable. An operand is the EQUATION when it holds `fn` bare or at the
+ * variable, or takes a derivative not applied at a point; every other
+ * operand — `y(0)=1`, `y'(0)=0`, `2*y(0)=1`, `y(0)+y'(0)=1`, and
+ * `diff(y(x),x)(1)+y(1)=1` read as `y'(1)+y(1)=1` — is a condition, where `fn`
+ * at a point is what a condition is, and is not read here. A derivative call at
+ * a point is refused on its own (derivativeCallAtPoint). A chained
+ * `y(x-1)(0)` in the equation is reported as written; Giac answered it `c_0-x`.
  */
 export function misappliedArgument(text: string, fn: string, variable: string): string | undefined {
-  const members = splitTopLevel(stripEnclosingBrackets(unicodeToAscii(text)), ',');
+  let read = unwrapName(unicodeToAscii(text), fn);
+  for (const call of derivativeCallsAtPoints(read, fn, variable).reverse()) {
+    read = read.slice(0, call.start) + primedAt(fn, call.order, call.point) + read.slice(call.end);
+  }
+  const members = splitTopLevel(stripEnclosingBrackets(read), ',').flatMap((m) =>
+    splitTopLevel(m, ';')
+  );
   for (const operand of members.flatMap(booleanOperands)) {
     const occurrences = readOccurrences(operand, fn, variable);
     const isEquation =
@@ -557,9 +659,7 @@ export function misappliedArgument(text: string, fn: string, variable: string): 
  * name, or applied, `diff(y(x),x)(0)` — is nothing this reader can classify.
  */
 function derivativeCallsAreOfFn(member: string, fn: string, variable: string): boolean {
-  const f = escapeForRegExp(fn);
-  const v = escapeForRegExp(variable);
-  const body = new RegExp(String.raw`^\s*${f}\s*(?:\(\s*${v}\s*\))?\s*,\s*${v}\s*(?:,\s*\d+\s*)?$`);
+  const body = derivativeCallBody(fn, variable);
   for (const call of member.matchAll(/\b(?:diff|derive|deriver)\s*\(/g)) {
     const open = call.index + call[0].length - 1;
     const close = closingParen(member, open);

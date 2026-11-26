@@ -10,6 +10,7 @@ import { giacEngine } from '../giac/index.js';
 import { verifyIntegrate, verifyOdeSystem, verifyOdeSolution } from './self-verify.js';
 import {
   leibnizQuotients,
+  derivativeCallAtPoint,
   misappliedArgument,
   odeEquationMembers,
   parseOdeSystem,
@@ -305,6 +306,8 @@ function validateSolveOde(args: Record<string, unknown>): string | null {
   // which words the refusal for a system.
   const equationText =
     typeof args.original_equation === 'string' ? args.original_equation : String(args.equation);
+  const fn = args.function_name;
+  const variable = args.variable;
   if (parseOdeSystem(equationText) === null) {
     for (const member of odeEquationMembers(equationText)) {
       // `d^2y/dx^2` is an order, not a power: a quotient's order is bounded by
@@ -321,8 +324,6 @@ function validateSolveOde(args: Record<string, unknown>): string | null {
     // y(x-1) as some other function, `(2*c_0+x^2-2*x)/2` with isError:false.
     // So does `y'=y(x/2)`, `y'=y(0)`, and `y'=y(x)` solved in t. The equation
     // is argument zero, so this outranks every condition and argument refusal.
-    const fn = args.function_name;
-    const variable = args.variable;
     if (typeof fn === 'string' && typeof variable === 'string') {
       const misapplied = misappliedArgument(equationText, fn, variable);
       if (misapplied !== undefined) {
@@ -350,6 +351,25 @@ function validateSolveOde(args: Record<string, unknown>): string | null {
       'give the equation, then any conditions as y(0)=1, then the variable ' +
       "and the function, as in desolve(y'=y, y(0)=1, x, y)"
     );
+  }
+  // Last, because the conditions' bounds and the argument guard each name a
+  // more specific fault in the same text: Giac drops a derivative CALL applied
+  // at a point, `diff(y(x),x)(0)=0`, and answers as if it were not there —
+  // `[y''=-y, y(0)=1, diff(y(x),x)(0)=0]` gave `cos(x)+c_1*sin(x)`. The primed
+  // spelling it names, `y'(0)=0`, answers cos(x). A system is left to its own
+  // path.
+  if (
+    typeof fn === 'string' &&
+    typeof variable === 'string' &&
+    parseOdeSystem(equationText) === null
+  ) {
+    const applied = derivativeCallAtPoint(equationText, fn, variable);
+    if (applied !== undefined) {
+      return (
+        `solve_ode cannot solve this equation — it writes a derivative at a point as ` +
+        `${excerpt(applied.call, 60)}, which the CAS drops — write it ${applied.primed}`
+      );
+    }
   }
   return null;
 }
