@@ -5,8 +5,7 @@ import {
   leibnizQuotients,
   isDerivativeEquation,
   odeMemberConditions,
-  equationFirst,
-  primesAtVariableUnapplied,
+  singleOdeText,
 } from '../ode-system-shape.js';
 import { conditionBoundError, conditionsTogetherError } from '../ode-condition-bounds.js';
 import { coerceTestData } from '../hypothesis-testing.js';
@@ -504,17 +503,19 @@ export function extractOde(problem: string): RouteResult {
         : (only ?? independentVariable(equation, function_name));
     }
 
-    // The equation as it will be solved, once the variable is known: a
-    // derivative applied at the variable, `y'(x)`, is the derivative `y'` (Giac
-    // leaves the applied spelling unevaluated, and the members' classifier
-    // would charge it as a condition), and a single equation's member list puts
-    // the equation first, the one order Giac reads. Both texts — the command
-    // and original_equation — are this one, as rewriteLeibniz rewrites both, so
-    // the residual check substitutes into the first member and that member is
-    // the equation. A system is left as written: its own path reads it.
-    const solvedEquation = isSystem
-      ? trimmedEquation
-      : equationFirst(primesAtVariableUnapplied(trimmedEquation, function_name, variable));
+    // The equation as it will be solved, once the variable is known — read by
+    // readSingleOde, which accepts only a shape whose one equation it can name
+    // and otherwise leaves the text exactly as typed. When it reads one, the
+    // equation goes first (the one order Giac reads) with `y'(x)` written `y'`
+    // (Giac leaves the applied spelling unevaluated), and the conditions stay
+    // as typed. Both texts — the command and original_equation — are this one,
+    // as rewriteLeibniz rewrites both, so the residual check substitutes into
+    // the first member and that member is the equation. A system is left as
+    // written: its own path reads it.
+    const single = isSystem
+      ? { text: trimmedEquation, rewritten: false }
+      : singleOdeText(trimmedEquation, function_name, variable);
+    const solvedEquation = single.text;
     const solvedText = solvedEquation === trimmedEquation ? equation : solvedEquation;
 
     // A condition's POINT must not mention the independent variable. That is a
@@ -743,6 +744,10 @@ export function extractOde(problem: string): RouteResult {
         // told the caller to rewrite a shape that was already correct.
         // Extractor-written; not caller-settable.
         ...(refusalReason !== undefined ? { condition_refusal: refusalReason } : {}),
+        // Set when readSingleOde changed the caller's text: calculus.ts then
+        // ships an answer only with a verified substitution. Extractor-written;
+        // not caller-settable.
+        ...(single.rewritten ? { single_ode_rewritten: true } : {}),
       },
     };
   }
@@ -787,11 +792,10 @@ export function extractOde(problem: string): RouteResult {
   // The same rewrite the verb route makes, for the same reasons: `y(0)=1, y'=y`
   // reached desolve with the condition first, as separate arguments, and was a
   // Giac error where `[y'=y, y(0)=1]` answers exp(x).
-  const implicitEquation = isImplicitSystem
-    ? typedEquation
-    : equationFirst(
-        primesAtVariableUnapplied(typedEquation, implicitFunction ?? 'y', implicitVariable)
-      );
+  const implicitSingle = isImplicitSystem
+    ? { text: typedEquation, rewritten: false }
+    : singleOdeText(typedEquation, implicitFunction ?? 'y', implicitVariable);
+  const implicitEquation = implicitSingle.text;
   // Each condition, then the conditions TOGETHER, in the verb route's order and
   // through the same two functions. Only the first was here, so
   // `[y''=-y, y(0)=1142!, diff(y(x),x)(0)=1142!]` was refused with the verb and
@@ -811,6 +815,7 @@ export function extractOde(problem: string): RouteResult {
       variable: implicitVariable,
       function_name: implicitFunction ?? 'y',
       ...(implicitRefusal !== undefined ? { condition_refusal: implicitRefusal } : {}),
+      ...(implicitSingle.rewritten ? { single_ode_rewritten: true } : {}),
     },
   };
 }

@@ -529,6 +529,21 @@ async function singleEquationGuard(
       return formatErrorResponse(`solve_ode cannot solve this equation — ${verdict.detail}`);
     }
   }
+  // Fail-closed where the extractor changed the caller's text (readSingleOde
+  // reordered the members or rewrote `y'(x)`): the answer ships only with a
+  // verified substitution. Everywhere else this path refuses on a DISPROOF
+  // only, and that is how eleven answers to rewritten text shipped wrong —
+  // each with no Verified line at all, because the residual check proved the
+  // member Giac solved and had no verdict on the rest. The cost is stated:
+  // `y(0)=y'(0), y'=y` is answered correctly but cannot be verified, so it is
+  // refused.
+  if (args.single_ode_rewritten === true && response.verification?.verified !== true) {
+    return formatErrorResponse(
+      'solve_ode cannot solve this equation — its answer could not be verified by ' +
+        'substitution, and an equation whose members were reordered or rewritten is ' +
+        'answered only when it is'
+    );
+  }
   return undefined;
 }
 

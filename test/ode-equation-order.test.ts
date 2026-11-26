@@ -1,11 +1,13 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { giacEngine } from '../src/server/giac/index.js';
 import { computeHandler } from '../src/server/tools/compute/index.js';
+import { calculusHandler } from '../src/server/tools/calculus.js';
 import {
-  equationFirst,
+  functionOccurrences,
   odeEquationMembers,
   odeMemberConditions,
-  primesAtVariableUnapplied,
+  readSingleOde,
+  singleOdeText,
 } from '../src/server/tools/ode-system-shape.js';
 import { allText } from './helpers/all-text.js';
 import { resultLine } from './helpers/result-line.js';
@@ -37,6 +39,9 @@ describe('single-equation ODE spellings', () => {
     ['y(0)=1, dy/dt=y', 'exp(t)', "desolve([y'=y, y(0)=1],t,y)"],
     ["[y(0)=1, y'=y]", 'exp(x)', "desolve([y'=y, y(0)=1],x,y)"],
     ["y(0)=1, y'(0)=0, y''=-y", 'cos(x)', "desolve([y''=-y, y(0)=1, y'(0)=0],x,y)"],
+    ["y'(0)=1, y''=-y, y(0)=0", 'sin(x)', "desolve([y''=-y, y'(0)=1, y(0)=0],x,y)"],
+    ["y(0)=1, y'(x)=y", 'exp(x)', "desolve([y'=y, y(0)=1],x,y)"],
+    ['y(0)=1, dy/dx=y', 'exp(x)', "desolve([y'=y, y(0)=1],x,y)"],
     // Unbracketed, the equation-first order reached desolve as separate
     // arguments too, and answered `[]`.
     ["y'=y, y(0)=1", 'exp(x)', "desolve([y'=y, y(0)=1],x,y)"],
@@ -73,6 +78,7 @@ describe('single-equation ODE spellings', () => {
     ["desolve(y'(x)=y(x), y(0)=1, x, y)", 'exp(x)'],
     ["[y'(x)=y(x), y(0)=1]", 'exp(x)'],
     ["y(0)=1, y'(x)=y(x)", 'exp(x)'],
+    ["desolve([y'(x)=y(x), y(0)=1], x, y)", 'exp(x)'],
   ])('%s meets its condition', async (problem, expected) => {
     const r = await computeHandler({ problem });
     const text = allText(r);
@@ -147,29 +153,63 @@ describe('conditions keep their bounds', () => {
 });
 
 /**
- * `y'(x)` in a CONDITION is not the derivative the equation takes. Rewriting
- * the whole list made `[y'=y, y(0)+y'(x)=3]` a two-equation list whose second
- * member Giac never read, and `3*exp(x)` shipped — wrong under every reading.
- * Only the one equation member is rewritten; every other member stays as typed
- * and is refused, or bounded, exactly as before.
+ * Inputs main refuses and that earlier versions of this change answered
+ * WRONGLY, every one with no Verified line: a condition mentioning `y'(x)`
+ * read as a second equation (`3*exp(x)`), a member joined with `&&` or `∧`
+ * read as one equation, a condition with a bare prime promoted to the
+ * equation (`-3*x+3+3*x`), and a delay `y(x-1)` read as the function. Each
+ * must stay a refusal: readSingleOde declines, and the text is solved — or
+ * refused — exactly as typed.
  */
-describe('a condition that mentions the derivative at the variable', () => {
+describe('spellings readSingleOde must not accept', () => {
   it.each([
-    ["[y'=y, y(0)+y'(x)=3]", 'the CAS returned no solution'],
-    ["desolve([y'=y, y(0)+y'(x)=3], x, y)", 'the CAS returned no solution'],
-    ["[y'=y, y'(x)-y(0)=5]", "the CAS returned an answer that does not satisfy y'=y"],
-    ["y'=y and y(0)+y'(x)=3", 'the CAS returned no solution'],
-    ["y'(x)=y(x) and y(0)+y'(x)=3", 'the CAS returned unevaluated derivative'],
-    ["[y'(x)=y(x), y(0)+y'(x)=3]", 'the CAS returned unevaluated derivative'],
-    [
-      `[y'=y, y(0)+0*y'(x)=${LONG_VALUE}]`,
-      'it gives an initial condition of 314 characters, above the 280',
-    ],
-  ])('%s is refused, not answered', async (problem, reason) => {
+    // A condition that mentions the derivative at the variable.
+    "[y'=y, y(0)+y'(x)=3]",
+    "desolve([y'=y, y(0)+y'(x)=3], x, y)",
+    "[y'=y, y'(x)-y(0)=5]",
+    "[y'(x)=y(x), y(0)+y'(x)=3]",
+    // Conjunctions, in every spelling.
+    "y'=y and y(0)+y'(x)=3",
+    "y'(x)=y(x) and y(0)+y'(x)=3",
+    "y'(x)=y(x) or y(0)+y'(x)=3",
+    "y'=y && y(0)+y'(x)=3",
+    "[y'=y && y(0)+y'(x)=3]",
+    "y'(x)=y(x) && y(0)+y'(x)=3",
+    "desolve(y'(x)=y(x) && y(0)+y'(x)=3, x, y)",
+    "y'(x)=y(x) || y(0)+y'(x)=3",
+    "y'(x)=y(x) ∧ y(0)+y'(x)=3",
+    "y'(x)=y(x) ∨ y(0)+y'(x)=3",
+    "y'(x)=y(x); y(0)+y'(x)=3",
+    // A condition with a bare prime is no condition, and no equation either.
+    "[y'(x)=y(x), y(0)+y'=3]",
+    "desolve([y'(x)=y(x), y(0)+y'=3], x, y)",
+    "y'(x)=y(x), y(0)+y'=3",
+    "[y'(x)=y(x), y'+y(0)=1]",
+    // A delay, a scaled argument, or another variable is not the function.
+    "desolve(y'(x)=y(x-1), x, y)",
+    "y'(x)=y(x-1)",
+    "desolve(y'(x)=y(x/2), x, y)",
+    "desolve(y'(t)=y(x), t, y)",
+    "y(0)=1, y'=y(x-1)",
+    // Shapes main refuses that must stay refused.
+    "[y'(x)=y(x), y'=1]",
+    "[y'(x)=y(x), y(x)=5]",
+    "y(x)=5, y'=y",
+    "y(0)=x^2, y'=y",
+    "[y'(x)=y(x), y'(x)(0)=1]",
+    "y(0)=1, y'=y=2",
+    "y(0)=1, y'=y, y(0)=2",
+    "y(0)=1, y'=y+y(1)",
+    "z(0)=1, y'=y",
+    "y(0)=1, z'=z",
+    "y(0)=1, y'=y'(0)*y",
+    // Unbalanced: bounded as the literal it is.
+    "y'=y, y(0)=factorial(10000",
+    `[y'=y, y(0)+0*y'(x)=${LONG_VALUE}]`,
+  ])('%s is refused, not answered', async (problem) => {
     const r = await computeHandler({ problem });
     const text = allText(r);
     expect(r.isError, text).toBe(true);
-    expect(text).toContain(`solve_ode cannot solve this equation — ${reason}`);
     expect(text).not.toMatch(/^Result:/m);
   });
 
@@ -185,61 +225,196 @@ describe('a condition that mentions the derivative at the variable', () => {
       expect(text).not.toContain('system');
     }
   );
+
+  // Text the reader leaves alone reaches the engine exactly as on main.
+  it.each([
+    ["desolve(y'=y, y(0)=1, x, y)", 'exp(x)', "desolve((y'=y) and (y(0)=1),x,y)"],
+    ["[y'=y, y(0)=1]", 'exp(x)', "desolve([y'=y, y(0)=1],x,y)"],
+    ["[y'=z, z'=-y, y(0)=1, z(0)=0]", '[[cos(x),-sin(x)]]', undefined],
+  ])('%s is unchanged', async (problem, expected, command) => {
+    const r = await computeHandler({ problem });
+    const text = allText(r);
+    expect(r.isError, text).toBe(false);
+    expect(text).toMatch(resultLine(expected));
+    if (command !== undefined) expect(text).toContain(`Command: ${command}`);
+    expect(text).toMatch(/^Verified: ✓/m);
+  });
 });
 
-describe('primesAtVariableUnapplied', () => {
+/**
+ * The fail-closed gate: an answer to text the extractor CHANGED ships only
+ * with a verified substitution. Everywhere else the single-equation path
+ * refuses on a disproof only, which is how every wrong answer above shipped.
+ */
+describe('verification gate on rewritten text', () => {
+  // The verifier has no verdict on a condition relating two derivatives at a
+  // point, so this answer is correct but unverified: the stated cost.
+  const unverifiable = {
+    operation: 'solve_ode',
+    equation: "[y'=y, y(0)=y'(0)]",
+    original_equation: "[y'=y, y(0)=y'(0)]",
+    variable: 'x',
+    function_name: 'y',
+  };
+
+  it('answers the unverified text when the extractor did not change it', async () => {
+    const r = await calculusHandler(unverifiable);
+    const text = allText(r);
+    expect(r.isError, text).toBe(false);
+    expect(text).toMatch(/^Result: /m);
+    expect(text).not.toMatch(/^Verified: ✓/m);
+  });
+
+  it('refuses the same answer when the extractor changed the text', async () => {
+    const r = await calculusHandler({ ...unverifiable, single_ode_rewritten: true });
+    const text = allText(r);
+    expect(r.isError, text).toBe(true);
+    expect(text).toContain('its answer could not be verified by substitution');
+  });
+
+  it('ships a verified answer to changed text', async () => {
+    const r = await calculusHandler({
+      ...unverifiable,
+      equation: "[y'=y, y(0)=1]",
+      original_equation: "[y'=y, y(0)=1]",
+      single_ode_rewritten: true,
+    });
+    const text = allText(r);
+    expect(r.isError, text).toBe(false);
+    expect(text).toMatch(resultLine('exp(x)'));
+  });
+
+  it.each(["y(0)=y'(0), y'=y", "desolve([y(0)=y'(0), y'=y], x, y)"])(
+    'reaches the gate from %s',
+    async (problem) => {
+      const r = await computeHandler({ problem });
+      const text = allText(r);
+      expect(r.isError, text).toBe(true);
+      expect(text).toContain('its answer could not be verified by substitution');
+    }
+  );
+});
+
+describe('functionOccurrences', () => {
   it.each([
-    ["y'(x)=y(x)", "y'=y(x)"],
-    ["y''( x )+y=0", "y''+y=0"],
-    ["[y'(x)=y(x), y'(0)=1]", "[y'=y(x), y'(0)=1]"],
-    // Points, other functions and other variables are left as written.
-    ["y'(0)=1", "y'(0)=1"],
-    ["y'(L)=1", "y'(L)=1"],
-    ["y'(x+0)=5", "y'(x+0)=5"],
-    ["y'(xx)=5", "y'(xx)=5"],
-    ["z'(x)=y", "z'(x)=y"],
-    ["yy'(x)=1", "yy'(x)=1"],
-    ['y(x)=1', 'y(x)=1'],
-    // Only the one equation member: a condition that mentions y'(x), a second
-    // equation, or a conjunction leaves the whole text as typed.
-    ["[y'=y, y(0)+y'(x)=3]", "[y'=y, y(0)+y'(x)=3]"],
-    ["[y'(x)=y(x), y(0)+y'(x)=3]", "[y'(x)=y(x), y(0)+y'(x)=3]"],
-    ["[y'=y, y'(x)=1]", "[y'=y, y'(x)=1]"],
-    ["y'(x)=y(x) and y(0)=1", "y'(x)=y(x) and y(0)=1"],
-    ["y'(x)=y(x) or y(0)=1", "y'(x)=y(x) or y(0)=1"],
-    ["[y'(x)=y(x), y(0)=1", "[y'(x)=y(x), y(0)=1"],
+    [
+      "y'=y(x)",
+      [
+        { primes: 1, at: 'bare' },
+        { primes: 0, at: 'variable' },
+      ],
+    ],
+    [
+      "y''( x )+y(0)",
+      [
+        { primes: 2, at: 'variable' },
+        { primes: 0, at: 'point' },
+      ],
+    ],
+    ["y'(L)", [{ primes: 1, at: 'point' }]],
+    ['y(x-1)', [{ primes: 0, at: 'other' }]],
+    ['y(x/2)', [{ primes: 0, at: 'other' }]],
+    ['y(x+0)', [{ primes: 0, at: 'other' }]],
+    ["y'(x)(0)", [{ primes: 1, at: 'other' }]],
+    ['y(0,1)', [{ primes: 0, at: 'other' }]],
+    ['y(', [{ primes: 0, at: 'other' }]],
+    // The inner application is read too: the outer one names the function.
+    [
+      'y(y(0))',
+      [
+        { primes: 0, at: 'other' },
+        { primes: 0, at: 'point' },
+      ],
+    ],
+    // Other identifiers, and a Leibniz numerator, are not the function.
+    ["yy'(x)+z(x)+dy/dx", []],
   ])('%s', (text, expected) => {
-    expect(primesAtVariableUnapplied(text, 'y', 'x')).toBe(expected);
+    expect(functionOccurrences(text, 'y', 'x')).toEqual(expected);
+  });
+});
+
+describe('readSingleOde', () => {
+  it.each([
+    ["y(0)=1, y'=y", { equation: "y'=y", conditions: ['y(0)=1'] }],
+    [
+      "[y'(x)=y(x), y'(0)=1, 2*y(0)=1]",
+      { equation: "y'=y(x)", conditions: ["y'(0)=1", '2*y(0)=1'] },
+    ],
+    ["y(0)+y'(0)=1, y''+y=0", { equation: "y''+y=0", conditions: ["y(0)+y'(0)=1"] }],
+    ['y(0)=1, dy/dx=y', { equation: 'dy/dx=y', conditions: ['y(0)=1'] }],
+    ['y(0)=1, diff(y(x),x)=y', { equation: 'diff(y(x),x)=y', conditions: ['y(0)=1'] }],
+    ["y'(x)=y(x)", { equation: "y'=y(x)", conditions: [] }],
+    ["y(L)=0, y''=-y", { equation: "y''=-y", conditions: ['y(L)=0'] }],
+  ])('reads %s', (text, expected) => {
+    expect(readSingleOde(text, 'y', 'x')).toEqual(expected);
+  });
+
+  it.each([
+    // 1. balance, and not a system
+    ["y'=y, y(0)=factorial(10000"],
+    ["[y'=z, z'=-y]"],
+    // 2. nothing non-ASCII after normalisation
+    ["y(0)=1, y'=y*ω"],
+    // 3. no conjunction or relation
+    ["y(0)=1, y'=y && 1"],
+    ["y(0)=1, y'=y || 1"],
+    ["y(0)=1; y'=y"],
+    ["y(0)=1, y'=y<2"],
+    ["y(0)=1, y'=y>2"],
+    ["y(0)=50000!, y'=y"],
+    ["y(0)=1, y'=y and 1"],
+    ["y(0)=1, y'=y or 1"],
+    ["y(0)=1, y'=y xor 1"],
+    ["y(0)=1, y'=not(y)"],
+    // 4. exactly one top-level `=`
+    ["y(0)=1, y'=y=2"],
+    ["y(0)=1, y'"],
+    // 5. every appearance bare, at the variable, or at a point
+    ["y(0)=1, y'=y(x-1)"],
+    ["y(y(0))=1, y'=y"],
+    // 6. no other primed function, quotient or derivative call
+    ["y(0)=1, y'=y+z'"],
+    ["y(0)=1, y'=dz/dx"],
+    ['y(0)=1, dy/dt=y'],
+    ["y(0)=1, y'=diff(z(x),x)"],
+    ["y(0)=1, diff(y(x),x)(0)=1, y'=y"],
+    // 7. exactly one equation
+    ["[y'(x)=y(x), y'=1]"],
+    ['y(0)=1, y=2'],
+    ['y(0)=1, y(x)=2'],
+    ["[y(0)=1, y'(0)=0]"],
+    // 8. every other member a condition
+    ["y(0)=x^2, y'=y"],
+    ["y(0)+y'=3, y'(x)=y(x)"],
+    ["z(0)=1, y'=y"],
+    ["y(x)=5, y'=y"],
+  ])('declines %s', (text) => {
+    expect(readSingleOde(text, 'y', 'x')).toBeNull();
   });
 
   // After the rewrite the classifier reads the applied derivative as the
   // equation, and a derivative at a point as a condition.
   it('feeds the classifier the equation and keeps the point a condition', () => {
-    const rewritten = primesAtVariableUnapplied("[y'(x)=y(x), y'(0)=1, 2*y(0)=1]", 'y', 'x');
-    expect(odeEquationMembers(rewritten)).toEqual(['y(x)']);
-    expect(odeMemberConditions(rewritten)).toEqual(["y'(0)=1", '2*y(0)=1']);
+    const { text } = singleOdeText("[y'(x)=y(x), y'(0)=1, 2*y(0)=1]", 'y', 'x');
+    expect(text).toBe("[y'=y(x), y'(0)=1, 2*y(0)=1]");
+    expect(odeEquationMembers(text)).toEqual(['y(x)']);
+    expect(odeMemberConditions(text)).toEqual(["y'(0)=1", '2*y(0)=1']);
   });
 });
 
-describe('equationFirst', () => {
+describe('singleOdeText', () => {
   it.each([
-    ["y(0)=1, y'=y", "[y'=y, y(0)=1]"],
-    ["y'=y, y(0)=1", "[y'=y, y(0)=1]"],
-    ["[y(0)=1, y''+y=0, y'(0)=0]", "[y''+y=0, y(0)=1, y'(0)=0]"],
-    ['(y(0)=1, dy/dt=y)', '[dy/dt=y, y(0)=1]'],
-    // Already in Giac's order, a lone equation, a system, no equation at all
-    // and two equation-like members are all left exactly as written.
-    ["[y'=y, y(0)=1]", "[y'=y, y(0)=1]"],
-    ["y'=y", "y'=y"],
-    ["[y'=z, z'=-y]", "[y'=z, z'=-y]"],
-    ["[y(0)=1, y'(0)=0]", "[y(0)=1, y'(0)=0]"],
-    ["[y''+y=0, y'+y=0]", "[y''+y=0, y'+y=0]"],
-    ["[y(0)=1, y''+y=0, y'+y=0]", "[y(0)=1, y''+y=0, y'+y=0]"],
-    // Unbalanced text is not rebracketed: its tail stays the literal the
-    // condition bound reads.
-    ["y'=y, y(0)=factorial(10000", "y'=y, y(0)=factorial(10000"],
-    ["y(0)=1], y'=y", "y(0)=1], y'=y"],
-  ])('%s', (text, expected) => {
-    expect(equationFirst(text)).toBe(expected);
+    ["y(0)=1, y'=y", "[y'=y, y(0)=1]", true],
+    ["y'=y, y(0)=1", "[y'=y, y(0)=1]", true],
+    ['(y(0)=1, dy/dx=y)', '[dy/dx=y, y(0)=1]', true],
+    ["y'(x)=y(x)", "y'=y(x)", true],
+    // Already in Giac's order, or declined: exactly as typed, and not flagged.
+    ["[y'=y, y(0)=1]", "[y'=y, y(0)=1]", false],
+    ["y'=y", "y'=y", false],
+    ["[y'=z, z'=-y]", "[y'=z, z'=-y]", false],
+    ["y'=y, y(0)=factorial(10000", "y'=y, y(0)=factorial(10000", false],
+    ["[y(0)=1, y''+y=0, y'+y=0]", "[y(0)=1, y''+y=0, y'+y=0]", false],
+  ])('%s', (text, expected, rewritten) => {
+    expect(singleOdeText(text, 'y', 'x')).toEqual({ text: expected, rewritten });
   });
 });

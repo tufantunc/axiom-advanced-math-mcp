@@ -370,7 +370,7 @@ export function odeEquationMembers(equation: string): string[] {
  * condition bounds: `y'(0)=0`, `diff(y(x),x)(0)=0`, `2*y(0)=1` and the Robin
  * form `y(0)+y'(0)=1`. `y'(x)` applied at the independent VARIABLE is the
  * derivative itself, but this reads no variable: the extractor rewrites it to
- * `y'` first (primesAtVariableUnapplied), so it reaches here as an equation.
+ * `y'` first (readSingleOde), so it reaches here as an equation.
  * Members arrive normalised (odeMembers), so `y′` is already `y'`.
  */
 function takesUnappliedDerivative(text: string): boolean {
@@ -391,89 +391,201 @@ function takesUnappliedDerivative(text: string): boolean {
   return false;
 }
 
+/** Where one appearance of the solved-for function stands. */
+export interface FunctionOccurrence {
+  /** The primes written after the name: 0 for `y`, 2 for `y''`. */
+  primes: number;
+  /**
+   * `bare` — `y`, `y'`, not applied; `variable` — applied at exactly the
+   * independent variable, `y(x)`, `y''( x )`; `point` — applied at one argument
+   * that mentions neither the variable nor the function, `y(0)`, `y'(L)`;
+   * `other` — anything else: `y(x-1)`, `y(x/2)`, `y(x+0)`, `y(y(0))`,
+   * `y'(x)(0)`, `y(0,1)`, an unclosed bracket.
+   */
+  at: 'bare' | 'variable' | 'point' | 'other';
+}
+
+/** Whether `name` appears in `text` as a whole identifier. */
+function mentions(text: string, name: string): boolean {
+  return new RegExp(String.raw`(?<![\w'])${escapeForRegExp(name)}(?!\w)`).test(text);
+}
+
+/** The index of the `)` closing the `(` at `open`, or -1. */
+function closingParen(text: string, open: number): number {
+  let depth = 0;
+  for (let i = open; i < text.length; i++) {
+    if (text[i] === '(') depth++;
+    else if (text[i] === ')' && --depth === 0) return i;
+  }
+  return -1;
+}
+
 /**
- * `text` with every derivative of `fn` applied at exactly `variable` — `y'(x)`,
- * `y''( x )` — written as the bare derivative `y'`, `y''`.
+ * Every appearance of `fn` in `text`, with its primes and where it is applied
+ * relative to `variable`. Read on ASCII text.
  *
- * Giac leaves the applied spelling unevaluated: `desolve(y'(x)=y(x),x,y)`
- * answers `[(function_diff(y))(x)]`, where `desolve(y'=y(x),x,y)` answers
- * `c_0*exp(x)`. And classify reads `y'(x)=y(x)` as a function at a point — a
- * condition, charged against the 280-character condition bound — although at
- * the variable it is the derivative as a function, which is the equation.
- *
- * Only at the variable, and only of the function being solved for. `y'(0)`,
- * `y'(L)` and `y'(x+0)` are points and stay conditions, with their bounds;
- * which of them is a point is the caller's variable to decide, so this cannot
- * be a rule inside classify, which has none.
- *
- * Only in the ONE member that is the equation, and only when there is one.
- * Rewriting the whole list turned a condition that mentions `y'(x)` into a
- * second equation: `[y'=y, y(0)+y'(x)=3]` left odeMemberConditions (and the
- * 280-character and depth bounds with it), Giac solved the first member only,
- * and `3*exp(x)` shipped — wrong under every reading — where the list as typed
- * is refused. So the rewrite is kept only when, after it, exactly one member
- * reads as the equation and every member it changed is that one; otherwise the
- * text is left as typed and fails, or is bounded, exactly as it did before.
- * A member that joins a condition with `and` or `or` is never rewritten.
- *
- * Returns `text` unchanged when there is nothing to rewrite, so every other
- * spelling reaches the engine exactly as written.
+ * Exported for reuse: whether `y(x-1)` is a function of the variable or a
+ * delayed argument is the same question wherever an ODE's text is read.
  */
-export function primesAtVariableUnapplied(text: string, fn: string, variable: string): string {
+export function functionOccurrences(
+  text: string,
+  fn: string,
+  variable: string
+): FunctionOccurrence[] {
+  const name = new RegExp(String.raw`(?<![\w'])${escapeForRegExp(fn)}(?!\w)('*)`, 'g');
+  return [...text.matchAll(name)].map((m): FunctionOccurrence => {
+    const primes = m[1].length;
+    const rest = text.slice(m.index + m[0].length);
+    const open = /^\s*\(/.exec(rest);
+    if (!open) return { primes, at: 'bare' };
+    const start = m.index + m[0].length + open[0].length - 1;
+    const close = closingParen(text, start);
+    if (close < 0 || /^\s*\(/.test(text.slice(close + 1))) return { primes, at: 'other' };
+    const arg = text.slice(start + 1, close).trim();
+    if (arg === variable) return { primes, at: 'variable' };
+    const isPoint =
+      arg.length > 0 &&
+      splitTopLevel(arg, ',').length === 1 &&
+      !mentions(arg, variable) &&
+      !mentions(arg, fn);
+    return { primes, at: isPoint ? 'point' : 'other' };
+  });
+}
+
+/**
+ * Whether every derivative CALL in `member` is `diff(fn(v),v)` or `diff(fn,v)`,
+ * optionally with an order, taken with respect to the variable and not applied
+ * at a point. Any other call — of another function, with respect to another
+ * name, or applied, `diff(y(x),x)(0)` — is nothing this reader can classify.
+ */
+function derivativeCallsAreOfFn(member: string, fn: string, variable: string): boolean {
+  const f = escapeForRegExp(fn);
+  const v = escapeForRegExp(variable);
+  const body = new RegExp(String.raw`^\s*${f}\s*(?:\(\s*${v}\s*\))?\s*,\s*${v}\s*(?:,\s*\d+\s*)?$`);
+  for (const call of member.matchAll(/\b(?:diff|derive|deriver)\s*\(/g)) {
+    const open = call.index + call[0].length - 1;
+    const close = closingParen(member, open);
+    if (close < 0 || /^\s*\(/.test(member.slice(close + 1))) return false;
+    if (!body.test(member.slice(open + 1, close))) return false;
+  }
+  return true;
+}
+
+/** A single ODE read into its one equation and its conditions. */
+export interface SingleOde {
+  /** The equation, with `y'(x)` written `y'`. */
+  equation: string;
+  /** Every other member, exactly as typed, in the caller's order. */
+  conditions: string[];
+}
+
+/**
+ * A single ODE's text read into `{ equation, conditions }`, or null when this
+ * cannot say with certainty which member is the equation — and null means the
+ * caller passes the text through exactly as typed, which is main's behaviour.
+ *
+ * Two spellings came back as errors, and the first two attempts to accept them
+ * shipped wrong answers. `y(0)=1, y'=y` reached desolve condition-first, and
+ * Giac reads the FIRST member as the equation; `y'(x)=y(x)` Giac leaves
+ * unevaluated. Rewriting `y'(x)` across the whole list turned the condition
+ * `y(0)+y'(x)=3` into a second equation and shipped `3*exp(x)`; restricting
+ * that to the one "equation-like" member still read a member joined with `&&`
+ * as one, promoted `y(0)+y'=3` to the equation when the rewrite declined, and
+ * read `y(x-1)` — a delay — as the function. Each was a test that ACCEPTED too
+ * much. So this accepts only a shape it can name in full, and declines the rest:
+ *
+ *   1. brackets balance (a system needs two equation members, so rule 7
+ *      declines one without asking parseOdeSystem);
+ *   2. nothing non-ASCII survives normalisation;
+ *   3. no member holds `&`, `|`, `;`, `<`, `>`, `!`, or and/or/xor/not;
+ *   4. every member has exactly one top-level `=`;
+ *   5. every appearance of `fn` is bare, at exactly the variable, or at a point
+ *      that mentions neither the variable nor `fn` (functionOccurrences) —
+ *      enforced by 7 and 8, since an `other` appearance makes a member
+ *      neither an equation nor a condition;
+ *   6. no other identifier is primed, every Leibniz quotient is of `fn` with
+ *      respect to the variable, and every derivative call is of `fn`;
+ *   7. exactly one member is the EQUATION: `fn` only bare or at the variable,
+ *      and at least one derivative of it;
+ *   8. every other member is a CONDITION: `fn` at a point at least once and
+ *      nowhere else, no derivative call or quotient, and no mention of the
+ *      variable.
+ *
+ * Every condition is returned exactly as typed, so the condition bounds read
+ * what the caller wrote. Only the equation is rewritten.
+ */
+export function readSingleOde(text: string, fn: string, variable: string): SingleOde | null {
+  const ascii = unicodeToAscii(text);
+  if (!bracketsBalance(ascii)) return null;
+  if (/[^\x20-\x7E]/.test(ascii.replaceAll(/\s/g, ' '))) return null;
+  const members = splitTopLevel(stripEnclosingBrackets(ascii), ',').map((m) => m.trim());
+  let equation: string | undefined;
+  const conditions: string[] = [];
+  for (const member of members) {
+    if (/[&|;<>!]/.test(member) || /\b(?:and|or|xor|not)\b/i.test(member)) return null;
+    if (splitTopLevel(member, '=').length !== 2) return null;
+    const occurrences = functionOccurrences(member, fn, variable);
+    for (const primed of member.matchAll(/(?<![\w'])([A-Za-z_]\w*)'/g)) {
+      if (primed[1] !== fn) return null;
+    }
+    const quotients = leibnizQuotients(member);
+    if (quotients.some((q) => q.fn !== fn || q.wrt !== variable)) return null;
+    if (!derivativeCallsAreOfFn(member, fn, variable)) return null;
+    const hasDerivativeCall = /\b(?:diff|derive|deriver)\s*\(/.test(member);
+    const isEquation =
+      occurrences.every((o) => o.at === 'bare' || o.at === 'variable') &&
+      (occurrences.some((o) => o.primes > 0) || quotients.length > 0 || hasDerivativeCall);
+    const isCondition =
+      occurrences.length > 0 &&
+      occurrences.every((o) => o.at === 'point') &&
+      quotients.length === 0 &&
+      !hasDerivativeCall &&
+      !mentions(member, variable);
+    if (isEquation) {
+      if (equation !== undefined) return null;
+      equation = member;
+    } else if (isCondition) {
+      conditions.push(member);
+    } else {
+      return null;
+    }
+  }
+  if (equation === undefined) return null;
   const applied = new RegExp(
     String.raw`(?<![\w'])(${escapeForRegExp(fn)}'+)\s*\(\s*${escapeForRegExp(variable)}\s*\)`,
     'g'
   );
-  const ascii = unicodeToAscii(text);
-  const rewritten = ascii.replaceAll(applied, '$1');
-  if (rewritten === ascii || !bracketsBalance(ascii)) return text;
-  const members = splitTopLevel(stripEnclosingBrackets(ascii), ',').map((m) => m.trim());
-  const after = members.map((m) => m.replaceAll(applied, '$1'));
-  const equations = after.filter(isEquationMember);
-  // A member joined with `and`/`or` holds a condition too, and the rewrite
-  // would reach it: `y'=y and y(0)+y'(x)=3` answered `3*exp(x)` the same way.
-  const onlyTheEquationChanged = after.every(
-    (m, i) => m === members[i] || (isEquationMember(m) && !/\b(?:and|or)\b/.test(m))
-  );
-  return equations.length === 1 && onlyTheEquationChanged ? rewritten : text;
-}
-
-/** The test odeEquationMembers applies: a derivative not applied at a point. */
-function isEquationMember(member: string): boolean {
-  return classify(member).kind === 'equation' || takesUnappliedDerivative(member);
+  return { equation: equation.replaceAll(applied, '$1'), conditions };
 }
 
 /**
- * A single equation's member list in the order Giac reads: `[equation,
- * condition, …]`, or `text` unchanged when it is not such a list.
+ * The text a single ODE is solved as, and whether it differs from what the
+ * caller typed: `[equation, condition, …]` when readSingleOde reads it and the
+ * typed text is not already that, otherwise `text` exactly.
  *
- * Giac takes the FIRST member as the equation. `desolve([y(0)=1, y'=y],x,y)`
- * answers `[]` and the unbracketed `desolve(y(0)=1, y'=y,x,y)` is a Giac
- * error, so `y(0)=1, y'=y` — the same initial-value problem as `[y'=y,
- * y(0)=1]` — was refused. Unbracketed, even the equation-first `y'=y, y(0)=1`
- * reaches desolve as separate ARGUMENTS and answers `[]`; the brackets make it
- * the one list argument.
- *
- * The equation is the one member odeEquationMembers would read as one, so the
- * order cannot disagree with the bounds: what moves to the front is what the
- * magnitude bound reads, and everything after it is what the condition bounds
- * read. A list with no such member, or with several (that is a system, or
- * nothing this can order), is left exactly as written. So is text whose
- * brackets do not balance: rebracketing `y'=y, y(0)=factorial(10000` moved its
- * `]` into the operand, and the condition bound — which names the literal
- * `factorial(10000` — no longer read it.
+ * `rewritten` is what calculus.ts's fail-closed gate keys on: an answer to a
+ * text this changed ships only with a verified substitution.
  */
-export function equationFirst(text: string): string {
-  if (!bracketsBalance(text)) return text;
+export function singleOdeText(
+  text: string,
+  fn: string,
+  variable: string
+): { text: string; rewritten: boolean } {
+  const read = readSingleOde(text, fn, variable);
+  if (read === null) return { text, rewritten: false };
   const members = splitTopLevel(stripEnclosingBrackets(unicodeToAscii(text)), ',').map((m) =>
     m.trim()
   );
-  if (members.length < 2 || parseOdeSystem(text) !== null) return text;
-  const equations = members.filter(isEquationMember);
-  if (equations.length !== 1) return text;
-  const [equation] = equations;
-  if (members[0] === equation && text.trim().startsWith('[')) return text;
-  return `[${[equation, ...members.filter((m) => m !== equation)].join(', ')}]`;
+  const unchanged =
+    members[0] === read.equation &&
+    (members.length === 1 || text.trim().startsWith('[')) &&
+    members.slice(1).every((m, i) => m === read.conditions[i]);
+  if (unchanged) return { text, rewritten: false };
+  const solved =
+    read.conditions.length === 0
+      ? read.equation
+      : `[${[read.equation, ...read.conditions].join(', ')}]`;
+  return { text: solved, rewritten: true };
 }
 
 /** Whether every `(` and `[` in `text` closes, in order, and nothing else does. */
