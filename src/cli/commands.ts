@@ -4,7 +4,13 @@ import { plotToSvg } from '../server/tools/plot/render.js';
 import { giacEngine } from '../server/giac/index.js';
 import { MAX_EXPRESSION_LENGTH } from '../server/tools/limits.js';
 import type { ComputeCommand, VerifyCommand, PlotCommand } from './parse.js';
-import { renderCompute, renderVerify, renderPlotMeta, resultText } from './render.js';
+import {
+  computeWarnings,
+  renderCompute,
+  renderVerify,
+  renderPlotMeta,
+  resultText,
+} from './render.js';
 
 /**
  * Byte ceiling on piped input.
@@ -92,7 +98,9 @@ async function runCompute(cmd: ComputeCommand): Promise<number> {
     return 1;
   }
 
-  console.log(renderCompute(result, cmd.output));
+  const out = renderCompute(result, cmd.output);
+  if (cmd.output === 'quiet') for (const warning of computeWarnings(result)) console.error(warning);
+  console.log(out);
   return 0;
 }
 
