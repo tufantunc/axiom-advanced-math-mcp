@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { validateEquation } from '../src/server/tools/expression-validator.js';
-import { solveEquationHandler, solveSystemHandler } from '../src/server/tools/solve.js';
+import {
+  isEngineFailure,
+  solveEquationHandler,
+  solveSystemHandler,
+} from '../src/server/tools/solve.js';
 import { computeHandler } from '../src/server/tools/compute/index.js';
 import { allText } from './helpers/all-text.js';
 import { resultLine } from './helpers/result-line.js';
@@ -181,5 +185,65 @@ describe('a superscript equation is solved and verified as written', () => {
     const r = await solveSystemHandler({ equations: ['x²=y', 'y=4'], variables: ['x', 'y'] });
     expect(allText(r)).toMatch(resultLine('{(2, 4), (-2, 4)}'));
     expect(allText(r)).toContain('Verified: ✓ (substitution: 2 solution(s) satisfy all equations)');
+  });
+});
+
+/**
+ * Giac's undefined marker is a whole token, not a prefix. Measured on main
+ * b795f92, Giac prints it as `undef` (`quote(x^2=4 4)`, `fsolve(x@=1,x)`,
+ * `quote(x^2=)` → `x^2=undef`) or as `undef_` inside a symbolic answer
+ * (`solve(x^2=4=,x)` → `list[√(undef_+4),-√(undef_+4)]`), and never with a
+ * digit after the underscore. Matching `/\bundef/` instead refused every
+ * equation with a symbol whose NAME starts with the word, because the parse
+ * probe runs on the caller's own text: `quote(undefined_k*x=2)` echoes it.
+ */
+describe('the undefined marker is matched as a token', () => {
+  it.each([
+    ['undef', true],
+    ['x^2=undef', true],
+    ['x^2=(4=undef)', true],
+    ['list[√(undef_+4),-√(undef_+4)]', true],
+    ['list[ln(undef_+4)]', true],
+    ['list[√(-undef_),-√(-undef_)]', true],
+    ['GIAC_ERROR: Unable to isolate x in x@1', true],
+    ['list[2/undefined_k]', false],
+    ['list[1/undefx]', false],
+    ['undefined_k*x=2', false],
+    ['list[√undef_1,-√undef_1]', false],
+    ['k_undef*x=2', false],
+    ['list[-2,2]', false],
+  ])('%s → %s', (raw, failed) => {
+    expect(isEngineFailure(raw)).toBe(failed);
+  });
+
+  it.each([
+    ['solve(undefined_k*x=2, x)', '2/undefined_k', '1/1 roots'],
+    ['solve(undefx*x=1, x)', '1/undefx', '1/1 roots'],
+    ['solve(undefx^2=4, undefx)', '{-2, 2}', '2/2 roots'],
+    ['solve(x^2=undef_1, x)', '{√undef_1, -√undef_1}', '2/2 roots'],
+  ])('%s → %s, verified', async (problem, answer, roots) => {
+    const r = await computeHandler({ problem });
+    expect(r.isError).toBe(false);
+    expect(allText(r)).toMatch(resultLine(answer));
+    expect(allText(r)).toContain(`Verified: ✓ (substitution: ${roots} satisfy the equation)`);
+  });
+
+  it('solveEquationHandler solves for a variable beside such a symbol', async () => {
+    const r = await solveEquationHandler({
+      equation: 'undefined_k*x^2=undefined_k*9',
+      variable: 'x',
+      domain: 'real',
+    });
+    expect(r.isError).toBe(false);
+    expect(allText(r)).toMatch(resultLine('{-3, 3}'));
+    expect(allText(r)).toContain('Verified: ✓ (substitution: 2/2 roots satisfy the equation)');
+  });
+
+  it("refuses a symbol spelled exactly like Giac's marker", async () => {
+    // `undef_` in an answer is indistinguishable from the marker, so it is
+    // refused rather than risk passing a swallowed syntax error on.
+    const r = await computeHandler({ problem: 'solve(x^2+undef_=0, x)' });
+    expect(r.isError).toBe(true);
+    expect(allText(r)).toContain(UNPARSEABLE);
   });
 });
