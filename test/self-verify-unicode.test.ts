@@ -30,6 +30,15 @@ describe('self-verification of superscript input', () => {
     ['integrate(x³+x², x)', 'x^4/4+x^3/3', 'differentiation: derivative of the result equals'],
     ['factor(x²-4)', '(x-2)*(x+2)', 'expand: expand(factored) equals the original'],
     ['factor(x³-x)', 'x*(x-1)*(x+1)', 'expand: expand(factored) equals the original'],
+    // The solve route sends the equation to the engine itself; it normalises
+    // at its own entry, and the verdict must hold end to end.
+    ['solve(x²=4, x)', '{-2, 2}', 'substitution: 2/2 roots satisfy the equation'],
+    ['solve((x-1)*(x²-9)=0, x)', '{-3, 1, 3}', 'substitution: 3/3 roots satisfy the equation'],
+    [
+      'solve_system([x²+y=3, x-y=-1], [x, y])',
+      '{(1, 2), (-2, -1)}',
+      'substitution: 2 solution(s) satisfy all equations',
+    ],
   ])('%s answers %s, verified', async (problem, expected, check) => {
     const r = await computeHandler({ problem });
     const text = allText(r);
