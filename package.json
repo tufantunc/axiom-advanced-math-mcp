@@ -73,11 +73,11 @@
     "zod": "^4.0.0"
   },
   "devDependencies": {
-    "@modelcontextprotocol/inspector": "2.13.0",
+    "@modelcontextprotocol/inspector": "2.15.0",
     "@types/node": "26.6.6",
     "@vitest/coverage-v8": "4.1.12",
     "happy-dom": "21.0.4",
-    "oxlint": "1.90.0",
+    "oxlint": "1.93.0",
     "prettier": "^3.2.4",
     "tsx": "^4.7.0",
     "typescript": "^5.3.3",
