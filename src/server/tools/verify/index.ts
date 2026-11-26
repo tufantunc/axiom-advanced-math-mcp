@@ -1,7 +1,12 @@
 import { z } from 'zod';
 import { MAX_EXPRESSION_LENGTH } from '../limits.js';
 import { giacEngine } from '../../giac/index.js';
-import { caretExponentRefusal, superscriptRefusal, unicodeToAscii } from '../unicode-normalize.js';
+import {
+  caretExponentRefusal,
+  functionPowerRefusal,
+  superscriptRefusal,
+  unicodeToAscii,
+} from '../unicode-normalize.js';
 import { rewriteCombinatorics } from '../combinatorics-rewrite.js';
 import { stripOrderTerm } from '../output-cleanup.js';
 
@@ -617,7 +622,9 @@ export async function verifyHandler(
   // trusted with — `x^(==) = x` verified TRUE with high confidence while
   // Giac was silently dropping the exponent. Same verdict class as the
   // superscript refusal: unevaluated, never a refutation.
-  const caret = caretExponentRefusal(claim);
+  // `sin^2(x)` raises the function, not its value: Giac refuted
+  // `sin²(x)+cos²(x)=1` as written. Unevaluated, like the caret refusal.
+  const caret = caretExponentRefusal(claim) ?? functionPowerRefusal(claim);
   if (caret !== undefined) {
     return formatVerifyResponse(
       {
