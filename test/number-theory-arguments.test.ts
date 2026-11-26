@@ -65,6 +65,9 @@ describe('number-theory arguments', () => {
     // 10^(10^7) came back "not an integer" from Integer_too_large_for_display.
     ['ifactor(2^100000)', '2^100000 is too large to work with here'],
     ['isprime(10^(10^7))', '10^(10^7) is too large to work with here'],
+    // The magnitude reader is trusted to the ODE path's depth and no deeper.
+    [`ifactor(${'('.repeat(101)}2${')'.repeat(101)})`, '(more than 100 nested brackets)'],
+    ['ifactor()', 'number must be a finite integer, e.g. ifactor(360)'],
   ])('%s is refused', async (problem, reason) => {
     const r = await computeHandler({ problem });
     const text = allText(r);
@@ -82,6 +85,15 @@ describe('number-theory arguments', () => {
     const text = allText(r);
     expect(r.isError, text).toBe(false);
     expect(text).toMatch(resultLine(expected));
+  });
+
+  // At the depth bound itself the argument is still read, and read exactly.
+  it('evaluates an argument 100 brackets deep', async () => {
+    const problem = `ifactor(${'('.repeat(100)}2^8+1${')'.repeat(100)})`;
+    const r = await computeHandler({ problem });
+    const text = allText(r);
+    expect(r.isError, text).toBe(false);
+    expect(text).toMatch(resultLine('257'));
   });
 
   // The factorization is short; the integer quoted in the note is not.
