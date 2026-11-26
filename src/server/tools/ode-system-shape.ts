@@ -431,6 +431,15 @@ function mentions(text: string, name: string): boolean {
   return new RegExp(String.raw`(?<![\w'])${escapeForRegExp(name)}(?!\w)`).test(text);
 }
 
+/** `text` without the round brackets that enclose all of it: `((x))` is `x`. */
+function peelRoundBrackets(text: string): string {
+  let inner = text.trim();
+  while (inner.startsWith('(') && closingParen(inner, 0) === inner.length - 1) {
+    inner = inner.slice(1, -1).trim();
+  }
+  return inner;
+}
+
 /** The index of the `)` closing the `(` at `open`, or -1. */
 function closingParen(text: string, open: number): number {
   let depth = 0;
@@ -472,12 +481,16 @@ function readOccurrences(text: string, fn: string, variable: string): ReadOccurr
       return { primes, at: 'other', argument };
     }
     const arg = text.slice(start + 1, close).trim();
-    if (arg === variable) return { primes, at: 'variable', argument: arg };
+    // `y((x))` is `y(x)`: Giac reads a redundant round bracket as nothing, and
+    // main answered `y'=y((x))` c_0*exp(x). A square bracket is a list, so
+    // `y([x])` stays what it is.
+    const bare = peelRoundBrackets(arg);
+    if (bare === variable) return { primes, at: 'variable', argument: arg };
     const isPoint =
-      arg.length > 0 &&
-      splitTopLevel(arg, ',').length === 1 &&
-      !mentions(arg, variable) &&
-      !mentions(arg, fn);
+      bare.length > 0 &&
+      splitTopLevel(bare, ',').length === 1 &&
+      !mentions(bare, variable) &&
+      !mentions(bare, fn);
     return { primes, at: isPoint ? 'point' : 'other', argument: arg };
   });
 }
@@ -519,14 +532,21 @@ function booleanOperands(member: string): string[] {
  * `fn` read out of redundant brackets, `(y)(x-1)` as `y(x-1)` and `((y'))` as
  * `y'`: Giac applies a bracketed name exactly as a bare one, so `y'=(y)(x-1)`
  * answered `(2*c_0+x^2-2*x)/2` as `y'=y(x-1)` did. A bracket that is a call's
- * argument list — `f(y)`, `y'(y)`, `g(x) (y)` — is not one and stays.
+ * argument list — `f(y)`, `x1(y)`, `y'(y)`, `g(x) (y)` — is not one and stays.
+ * A NUMBER before the bracket is a product, never a call, so `1(y)(x-1)` reads
+ * as `1 y(x-1)`, kept apart from the digit so the name stays a name.
  */
 function unwrapName(text: string, fn: string): string {
-  const wrapped = new RegExp(String.raw`(?<![\w')\]]\s*)\(\s*(${escapeForRegExp(fn)}'*)\s*\)`, 'g');
+  const wrapped = new RegExp(
+    String.raw`(?<!(?:[A-Za-z_]\w*|['\)\]])\s*)\(\s*(${escapeForRegExp(fn)}'*)\s*\)`,
+    'g'
+  );
   let read = text;
   for (let before = ''; before !== read;) {
     before = read;
-    read = read.replaceAll(wrapped, '$1');
+    read = read.replaceAll(wrapped, (_, name: string, offset: number, whole: string) =>
+      /[\d.]$/.test(whole.slice(0, offset).trimEnd()) ? ` ${name}` : name
+    );
   }
   return read;
 }
@@ -633,10 +653,7 @@ export function derivativeCallAtPoint(
  * `y(x-1)(0)` in the equation is reported as written; Giac answered it `c_0-x`.
  */
 export function misappliedArgument(text: string, fn: string, variable: string): string | undefined {
-  let read = unwrapName(unicodeToAscii(text), fn);
-  for (const call of derivativeCallsAtPoints(read, fn, variable).reverse()) {
-    read = read.slice(0, call.start) + primedAt(fn, call.order, call.point) + read.slice(call.end);
-  }
+  const read = readableOde(text, fn, variable);
   const members = splitTopLevel(stripEnclosingBrackets(read), ',').flatMap((m) =>
     splitTopLevel(m, ';')
   );
@@ -650,6 +667,104 @@ export function misappliedArgument(text: string, fn: string, variable: string): 
     if (misapplied !== undefined) return misapplied.argument;
   }
   return undefined;
+}
+
+/**
+ * The text both misapplication readers read: ASCII, a bracketed name read as
+ * the name (unwrapName), and a derivative call at a point as its primed
+ * spelling, `diff(y(x),x)(1)` as `y'(1)`. Rewritten from the right, so each
+ * call's offsets still hold when it is reached.
+ */
+function readableOde(text: string, fn: string, variable: string): string {
+  let read = unwrapName(unicodeToAscii(text), fn);
+  for (const call of derivativeCallsAtPoints(read, fn, variable).reverse()) {
+    read = read.slice(0, call.start) + primedAt(fn, call.order, call.point) + read.slice(call.end);
+  }
+  return read;
+}
+
+/** The start of the identifier ending just before `at`, or `at` if none. */
+function calleeStart(text: string, at: number): number {
+  const callee = /[A-Za-z_]\w*\s*$/.exec(text.slice(0, at));
+  return callee === null ? at : callee.index;
+}
+
+/**
+ * The operand of `@` that ends just before `at` (left) or starts at `at`
+ * (right): a bracket group (with its callee), a name or number with its
+ * primes, or nothing.
+ */
+function compositionOperand(text: string, at: number, side: 'left' | 'right'): string {
+  if (side === 'right') {
+    const rest = text.slice(at);
+    const lead = /^\s*/.exec(rest)?.[0].length ?? 0;
+    if (rest[lead] === '(') {
+      const close = closingParen(text, at + lead);
+      return close < 0 ? rest : text.slice(at, close + 1);
+    }
+    return /^\s*[\w.]+'*/.exec(rest)?.[0] ?? '';
+  }
+  const before = text.slice(0, at);
+  const trimmed = before.trimEnd();
+  if (trimmed.endsWith(')')) {
+    let depth = 0;
+    for (let i = trimmed.length - 1; i >= 0; i--) {
+      if (trimmed[i] === ')') depth++;
+      else if (trimmed[i] === '(' && --depth === 0) return before.slice(calleeStart(trimmed, i));
+    }
+    return before;
+  }
+  return /[\w.]+'*\s*$/.exec(before)?.[0] ?? '';
+}
+
+/**
+ * An application of something BUILT from `fn` rather than `fn` itself, as the
+ * caller wrote it, or undefined. Three shapes, read on readableOde's text:
+ *
+ *   - a bracket group that mentions `fn` and is applied: `(-y)(x-1)`,
+ *     `(1*y)(x-1)`, `(y@(x->x-1))(x)`, and a call's, `x1(y)(x-1)`;
+ *   - a composition with `fn` as an operand: `y@(x->x/2)`, `2@y`;
+ *   - `apply` or `map` with `fn` among its arguments: `apply(y,x-1)`.
+ *
+ * Giac answers these as it answers `y(x-1)` — measured on e480674,
+ * `desolve(y'=(-y)(x-1),x,y)` gave `(2*c_0-x^2+2*x)/2`, `(y@(x->x/2))(x)`
+ * gave `(4*c_0+x^2)/4` and `apply(y,x-1)` gave `c_0` — so the shape is
+ * refused whatever it builds, rather than each spelling once it has shipped
+ * a wrong answer. A bare `(y)` is no such group: unwrapName has read it as
+ * `y`, and misappliedArgument names where it is applied.
+ */
+export function appliedExpression(text: string, fn: string, variable: string): string | undefined {
+  const read = readableOde(text, fn, variable);
+  const found: { start: number; text: string }[] = [];
+  for (let open = read.indexOf('('); open >= 0; open = read.indexOf('(', open + 1)) {
+    const close = closingParen(read, open);
+    if (close < 0 || !mentions(read.slice(open + 1, close), fn)) continue;
+    const next = /^\s*\(/.exec(read.slice(close + 1));
+    if (next === null) continue;
+    const end = bracketChainEnd(read, close + next[0].length);
+    const start = calleeStart(read, open);
+    found.push({ start, text: (end < 0 ? read.slice(start) : read.slice(start, end + 1)).trim() });
+  }
+  for (const op of read.matchAll(/@+/g)) {
+    const left = compositionOperand(read, op.index, 'left');
+    const right = compositionOperand(read, op.index + op[0].length, 'right');
+    if (mentions(left, fn) || mentions(right, fn)) {
+      found.push({ start: op.index - left.length, text: `${left}${op[0]}${right}`.trim() });
+    }
+  }
+  for (const call of read.matchAll(/\b(?:apply|map)\s*\(/g)) {
+    const open = call.index + call[0].length - 1;
+    const close = closingParen(read, open);
+    const args = close < 0 ? read.slice(open + 1) : read.slice(open + 1, close);
+    if (splitTopLevel(args, ',').some((a) => mentions(a, fn))) {
+      found.push({
+        start: call.index,
+        text: close < 0 ? read.slice(call.index) : read.slice(call.index, close + 1),
+      });
+    }
+  }
+  found.sort((a, b) => a.start - b.start);
+  return found[0]?.text;
 }
 
 /**

@@ -1,7 +1,11 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { giacEngine } from '../src/server/giac/index.js';
 import { computeHandler } from '../src/server/tools/compute/index.js';
-import { derivativeCallAtPoint, misappliedArgument } from '../src/server/tools/ode-system-shape.js';
+import {
+  appliedExpression,
+  derivativeCallAtPoint,
+  misappliedArgument,
+} from '../src/server/tools/ode-system-shape.js';
 import { allText } from './helpers/all-text.js';
 import { resultLine } from './helpers/result-line.js';
 
@@ -184,6 +188,115 @@ describe('a derivative call at a point is refused with the spelling that works',
   });
 });
 
+const builtRefusal = (expression: string): string =>
+  `solve_ode cannot solve this equation — it applies y through ${expression} rather than at ` +
+  'the variable x, a delay or functional equation, which this does not solve';
+
+/**
+ * Something BUILT from y and applied, which Giac answers as it answers
+ * `y(x-1)` (e480674):
+ *
+ *   (-y)(x-1)            (2*c_0-x^2+2*x)/2
+ *   (+y)(x-1), (1*y)(x-1) (2*c_0+x^2-2*x)/2
+ *   (y@(x->x/2))(x)      (4*c_0+x^2)/4
+ *   apply(y,x-1)         c_0
+ */
+describe('an expression built from y and applied is refused', () => {
+  it.each([
+    ["desolve(y'=(-y)(x-1), x, y)", '(-y)(x-1)'],
+    ["y'=(-y)(x-1)", '(-y)(x-1)'],
+    ["desolve(y'=(+y)(x-1), x, y)", '(+y)(x-1)'],
+    ["desolve(y'=(1*y)(x-1), x, y)", '(1*y)(x-1)'],
+    ["desolve(y'=(y@(x->x-1))(x), x, y)", '(y@(x->x-1))(x)'],
+    ["desolve(y'=(y@(x->x/2))(x), x, y)", '(y@(x->x/2))(x)'],
+    ["y'=(y@(x->x/2))(x)", '(y@(x->x/2))(x)'],
+    ["desolve(y'=y@(x->x-1), x, y)", 'y@(x->x-1)'],
+    ["desolve(y'=apply(y,x-1), x, y)", 'apply(y,x-1)'],
+    ["y'=apply(y,x-1)", 'apply(y,x-1)'],
+    ["desolve(y'=map(x-1,y), x, y)", 'map(x-1,y)'],
+    ["desolve(y'=apply(y',0), x, y)", "apply(y',0)"],
+    ["desolve(y'=x1(y)(x-1), x, y)", 'x1(y)(x-1)'],
+    ["[y'=(-y)(x-1), y(0)=1]", '(-y)(x-1)'],
+    ["desolve(y'=(-y)(x-1), y(0)=1, x, y)", '(-y)(x-1)'],
+  ])('%s', async (problem, expression) => {
+    const r = await computeHandler({ problem });
+    const text = allText(r);
+    expect(r.isError, text).toBe(true);
+    expect(text).toContain(builtRefusal(expression));
+    expect(text).not.toMatch(/^Result:/m);
+  });
+
+  // A number before a bracket is a product, so the name inside is y itself.
+  it.each(["desolve(y'=1(y)(x-1), x, y)", "y'=1(y)(x-1)"])(
+    '%s applies y at x-1',
+    async (problem) => {
+      const r = await computeHandler({ problem });
+      expect(allText(r)).toContain(refusal('x-1'));
+    }
+  );
+
+  it.each([
+    // A redundant round bracket around the argument is the argument.
+    ["desolve(y'=y((x)), x, y)", 'c_0*exp(x)'],
+    ["y'=y((x))", 'c_0*exp(x)'],
+    ["desolve(y'=y( (x) )+1, x, y)", 'c_0*exp(x)-1'],
+    ["[y'=y, y((0))=1]", 'exp(x)'],
+    ["[y'=y, (y')(0)=1]", 'exp(x)'],
+    // Products, not applications.
+    ["desolve(y'=2(y), x, y)", 'c_0*exp(2*x)'],
+    ["desolve(y'=(y+1)*(x+2), x, y)", 'c_0*exp((x^2+4*x)/2)-1'],
+  ])('%s still solves', async (problem, expected) => {
+    const r = await computeHandler({ problem });
+    const text = allText(r);
+    expect(r.isError, text).toBe(false);
+    expect(text).toMatch(resultLine(expected));
+  });
+});
+
+describe('appliedExpression', () => {
+  it.each([
+    ["y'=(-y)(x-1)", '(-y)(x-1)'],
+    ["y'=(1*y)(x-1)", '(1*y)(x-1)'],
+    ["y'=x1(y)(x-1)", 'x1(y)(x-1)'],
+    ["y'=x1 (y)(x-1)", 'x1 (y)(x-1)'],
+    ["y'=(-y)(x)(0)+1", '(-y)(x)(0)'],
+    ["y'=(-y)(x-1", '(-y)(x-1'],
+    ["y'=(y@(x->x-1))(x)", '(y@(x->x-1))(x)'],
+    ["y'=y@(x->x/2)", 'y@(x->x/2)'],
+    ["y'=sin(x)@y", 'sin(x)@y'],
+    ["y'=sin@@2@y", '2@y'],
+    ["y'=y'@sin", "y'@sin"],
+    ["y'=sin@y'", "sin@y'"],
+    ["y'=apply(y,x-1)", 'apply(y,x-1)'],
+    ["y'=map(x-1,y)", 'map(x-1,y)'],
+    ["y'=apply(y,0", 'apply(y,0'],
+    // The first in the text, whichever shape.
+    ["y'=apply(y,0)+(-y)(x-1)", 'apply(y,0)'],
+    ["y'=(-y)(x-1)+apply(y,0)", '(-y)(x-1)'],
+  ])('%s applies %s', (text, expression) => {
+    expect(appliedExpression(text, 'y', 'x')).toBe(expression);
+  });
+
+  it.each([
+    "y'=y",
+    "y'=y(x)",
+    "y'=y((x))",
+    // A bare bracketed name is the name; misappliedArgument reads where.
+    "y'=(y)(x-1)",
+    "y'=(y)(x)",
+    "y'=2(y)",
+    "y'=(y+1)*(x+2)",
+    "y'=sin(x)(y)",
+    "y'=(x+1)(z)",
+    "y'=z@sin+apply(f,x)+map(x,z)",
+    "y'=mapy(y)+apply_y(y)+yy@sin",
+    // A derivative call at a point is y' there.
+    "[y'=y, diff(y(x),x)(0)=1]",
+  ])('%s applies nothing built from y', (text) => {
+    expect(appliedExpression(text, 'y', 'x')).toBeUndefined();
+  });
+});
+
 describe('derivativeCallAtPoint', () => {
   it.each([
     ["[y'=y, diff(y(x),x)(0)+y(0)=2]", 'diff(y(x),x)(0)', "y'(0)"],
@@ -229,6 +342,13 @@ describe('misappliedArgument', () => {
     ["y'=diff(y(x),x)(x-1)", 'x-1'],
     // A call's argument list is not a redundant bracket.
     ["y'=y'(y)", 'y'],
+    // A number before a bracket multiplies.
+    ["y'=1(y)(x-1)", 'x-1'],
+    ["y'=2.5 (y)(x-1)", 'x-1'],
+    // A redundant round bracket is read through, a square one is a list.
+    ["y'=y((x-1))", '(x-1)'],
+    ["y'=y((0))", '(0)'],
+    ["y'=y([x])", '[x]'],
     ["y'=y(x-1)(0)", '(x-1)(0)'],
     ["y'=y(x)(0)+1", '(x)(0)'],
     // `or` inside `floor` is no connective, nor is one inside a bracket.
@@ -278,6 +398,9 @@ describe('misappliedArgument', () => {
     "y'=(y)",
     "y'=f (y)(x-1)",
     "y'=g(x) (y)(x-1)",
+    "y'=x1(y)(x-1)",
+    "y'=y((x))",
+    "y'=y( ( x ) )",
     "[y'=y, y(1)=2*y(0)]",
     "[y'=y, y(L)=0]",
     // A condition applied twice is still a condition.

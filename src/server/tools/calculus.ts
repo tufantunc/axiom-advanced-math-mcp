@@ -10,6 +10,7 @@ import { giacEngine } from '../giac/index.js';
 import { verifyIntegrate, verifyOdeSystem, verifyOdeSolution } from './self-verify.js';
 import {
   leibnizQuotients,
+  appliedExpression,
   derivativeCallAtPoint,
   misappliedArgument,
   odeEquationMembers,
@@ -330,6 +331,14 @@ function validateSolveOde(args: Record<string, unknown>): string | null {
         return (
           `solve_ode cannot solve this equation — it applies ${fn} at ` +
           `${excerpt(misapplied, 60)} rather than at the variable ${variable}, ` +
+          'a delay or functional equation, which this does not solve'
+        );
+      }
+      const built = appliedExpression(equationText, fn, variable);
+      if (built !== undefined) {
+        return (
+          `solve_ode cannot solve this equation — it applies ${fn} through ` +
+          `${excerpt(built, 60)} rather than at the variable ${variable}, ` +
           'a delay or functional equation, which this does not solve'
         );
       }
