@@ -22,8 +22,10 @@
  *     which answers each of those with an error or with the glyph showing
  *     (`[(y⁽^⁾)^4]`), never a clean-looking wrong result.
  *   - Modifier letters outside the block (`ˣ` U+02E3, `ᵃ` U+1D43 and the
- *     rest), an open-ended alphabet with no boundary to stop at — `eˣ` still
- *     reaches Giac as an identifier and still answers `eˣ`.
+ *     rest), an open-ended alphabet with no boundary to stop at. Left as typed
+ *     they reach Giac as part of an identifier — `diff(eˣ, x)` answered 0 and
+ *     `integrate(x·eˣ, x)` answered `eˣ*x^2/2` — so superscriptRefusal refuses
+ *     them instead of mapping them.
  *   - Subscripts, since `x₁` reads as a variable named `x₁`, which is a
  *     meaning rather than an accident.
  */
@@ -262,12 +264,127 @@ export function ambiguousSuperscript(text: string): string | undefined {
  * +infinity.
  */
 export function superscriptRefusal(text: string): string | undefined {
+  const letter = MODIFIER_LETTER.exec(text)?.[0];
+  if (letter !== undefined) {
+    return (
+      `the superscript letter \`${letter}\` is not read as an exponent — ` +
+      'write the exponent with ^ instead, e.g. e^x'
+    );
+  }
   const run = ambiguousSuperscript(text);
   if (run === undefined) return undefined;
   const fix = /^[⁺⁻]$/u.test(run)
     ? 'for a one-sided limit give the direction as an argument, e.g. limit(f, x, a, +)'
     : 'write the exponent with ^ and brackets instead, e.g. x^(-1)*sin(x) or 2^(n^2)';
   return `the superscript \`${run}\` has more than one reading here — ${fix}`;
+}
+
+/**
+ * The superscript-looking letters outside the Superscripts block: the spacing
+ * modifier letters (`ʰ ʲ ʳ ʷ ʸ ˡ ˢ ˣ ˤ`) and the phonetic modifier letters
+ * (`ᴬ`…`ᵡ`, `ᵸ`, `ᶛ`…`ᶿ`). `ⁱ` and `ⁿ` are in the block and mapped, so not here,
+ * and U+1D62–U+1D6A (`ᵢ ᵣ ᵤ ᵥ ᵦ ᵧ ᵨ ᵩ ᵪ`) are SUBSCRIPTS, left alone with the
+ * others: `xᵢ` is a variable named `xᵢ`.
+ */
+const MODIFIER_LETTER = /[\u02B0-\u02B8\u02E0-\u02E4\u1D2C-\u1D61\u1D78\u1D9B-\u1DBF]/u;
+
+/**
+ * Giac's one-argument functions, whose textbook power `f^2(x)` it reads as a
+ * power of the function. Measured beyond the trigonometric ones: `asec^2`,
+ * `acot^2`, `log10^2`, `abs^2`, `erf^2` and `acoth^2` each answered a lambda.
+ */
+const POWERED_FUNCTIONS = [
+  'sin',
+  'cos',
+  'tan',
+  'sec',
+  'csc',
+  'cot',
+  'sinh',
+  'cosh',
+  'tanh',
+  'sech',
+  'csch',
+  'coth',
+  'asin',
+  'acos',
+  'atan',
+  'asec',
+  'acsc',
+  'acot',
+  'arcsin',
+  'arccos',
+  'arctan',
+  'arcsec',
+  'arccsc',
+  'arccot',
+  'asinh',
+  'acosh',
+  'atanh',
+  'asech',
+  'acsch',
+  'acoth',
+  'arcsinh',
+  'arccosh',
+  'arctanh',
+  'arsinh',
+  'arcosh',
+  'artanh',
+  'ln',
+  'log',
+  'log2',
+  'log10',
+  'lg',
+  'exp',
+  'sqrt',
+  'cbrt',
+  'abs',
+  'erf',
+  'erfc',
+  'gamma',
+  'Gamma',
+  'floor',
+  'ceil',
+  'sign',
+];
+
+/**
+ * A function, a power, then its argument — bracketed (`sin^2(x)`) or not
+ * (`sin^2 x`, `sin^2x`), which Giac reads the same way.
+ */
+const POWERED_FUNCTION = new RegExp(
+  String.raw`\b(${POWERED_FUNCTIONS.join('|')})\s*(?:\^|\*\*)\s*` +
+    String.raw`(\([^()]*\)|[+-]?[\w.]+)\s*[(\w]`
+);
+
+/**
+ * The textbook power of a function, `sin^2(x)` or `sin²(x)`, refused — or
+ * undefined when the text has none.
+ *
+ * Giac reads it as a power of the FUNCTION, not of its value, and answers
+ * every route wrongly or not at all: `limit(sin^2(x), x, 0)` answered a lambda
+ * `(x)->1`, `simplify(sin^2(x))` the lambda `(x)->(sin(x)^x)^2`,
+ * `integrate(sin^2(x), x)` a GIAC_ERROR shipped as the Result, and the verify
+ * tool refuted `sin²(x)+cos²(x)=1` — each with isError:false. The notation also
+ * means the inverse when the power is -1 (`sin^-1(x)` is asin), so it is
+ * refused rather than rewritten.
+ *
+ * Takes ASCII text: callers pass unicodeToAscii's output, so `sin²(x)` and
+ * `sin**2(x)` are read as `sin^2(x)`.
+ */
+export function functionPowerRefusal(ascii: string): string | undefined {
+  const match = POWERED_FUNCTION.exec(ascii);
+  if (match === null) return undefined;
+  const [, name, power] = match;
+  // The inverse reading is named only where there is one to name: sin^-1 is
+  // asin, while log^-1 is not alog.
+  const inverse = /^(sin|cos|tan|sinh|cosh|tanh)$/.test(name)
+    ? `, and its inverse as a${name}(x)`
+    : '';
+  return (
+    `\`${name}^${power}(…)\` raises the function ${name}, not its value — write the ` +
+    `power after the call, e.g. ${name}(x)^${power}${inverse}`
+  );
 }
 
 /** Characters that can only be operators: an exponent made of nothing else carries no operand. */

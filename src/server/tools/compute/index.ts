@@ -5,7 +5,12 @@ import type { ComputeEnvelope } from './types.js';
 import { COMPONENT_ORDER_PREFIX } from '../response-formatter.js';
 import { applyHygiene } from './hygiene.js';
 import { giacEngine } from '../../giac/index.js';
-import { caretExponentRefusal, superscriptRefusal, unicodeToAscii } from '../unicode-normalize.js';
+import {
+  caretExponentRefusal,
+  functionPowerRefusal,
+  superscriptRefusal,
+  unicodeToAscii,
+} from '../unicode-normalize.js';
 
 export { computeSchema } from './schema.js';
 export type { ComputeEnvelope, ResultType } from './types.js';
@@ -39,7 +44,8 @@ export async function computeHandler(
       typeof problem === 'string'
         ? (superscriptRefusal(problem) ??
           caretExponentRefusal(problem) ??
-          caretExponentRefusal(unicodeToAscii(problem)))
+          caretExponentRefusal(unicodeToAscii(problem)) ??
+          functionPowerRefusal(unicodeToAscii(problem)))
         : undefined;
     if (refusal !== undefined) {
       const refused = {
