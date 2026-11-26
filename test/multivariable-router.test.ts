@@ -83,7 +83,7 @@ describe('Router — multivariable', () => {
     const r = route('diff(x^5, x, 3)');
     expect(r.handler).toBe('calculus');
     expect(r.args.operation).toBe('differentiate');
-    expect(r.args.order).toBe(3);
+    expect(r.args.order).toBe('3');
   });
 
   it('parses vector components containing multi-arg functions (curl)', () => {

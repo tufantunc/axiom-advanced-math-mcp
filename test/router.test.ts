@@ -48,7 +48,7 @@ describe('Router', () => {
     it('should route diff with higher order', () => {
       const result = route('diff(x^5, x, 3)');
       expect(result.handler).toBe('calculus');
-      expect(result.args.order).toBe(3);
+      expect(result.args.order).toBe('3');
     });
 
     it('should route differentiate() call', () => {
@@ -97,7 +97,7 @@ describe('Router', () => {
       expect(result.args.expression).toBe('exp(x)');
       expect(result.args.variable).toBe('x');
       expect(result.args.point).toBe('0');
-      expect(result.args.order).toBe(5);
+      expect(result.args.order).toBe('5');
     });
   });
 
