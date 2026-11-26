@@ -51,9 +51,19 @@ export function parseTuples(result: string): string[][] {
  * than throwing, and answers a malformed input with `undef` INSIDE well-formed
  * output (`√(undef_+4)`), so testing for an exact `'undef'` misses both — and
  * either one, passed on, is printed as the solution set with exit status 0.
+ *
+ * The marker is matched as a whole token. Giac prints it two ways: `undef`
+ * standing alone (`undef`, `x^2=undef`, `4=undef`) and `undef_` where `solve`
+ * carries it into a symbolic answer (`√(undef_+4)`, `ln(undef_+4)`). No digit
+ * ever follows — `undef_1` is a caller's symbol, echoed as written. A prefix
+ * match (`/\bundef/`) also caught any identifier that merely starts with the
+ * word: `x*undefined_k=2` was refused as unparseable, because the parse probe
+ * runs this on the caller's own text.
  */
-function isEngineFailure(raw: string): boolean {
-  return raw.includes('GIAC_ERROR') || /\bundef/.test(raw);
+const UNDEFINED_MARKER = /\bundef_?(?!\w)/;
+
+export function isEngineFailure(raw: string): boolean {
+  return raw.includes('GIAC_ERROR') || UNDEFINED_MARKER.test(raw);
 }
 
 /**
