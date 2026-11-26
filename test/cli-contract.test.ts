@@ -176,6 +176,15 @@ describe('CLI — compute', () => {
     expect(r.stderr).not.toBe('');
   }, 30_000);
 
+  // Giac answers a truncated equation with `[]`, which printed `Result: {}` —
+  // "no solutions" — and exited 0.
+  it('refuses a truncated equation with exit 1 and clean stdout', async () => {
+    const r = await cli(['compute', '--', 'solve(x^2=']);
+    expect(r.code).toBe(1);
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toContain("Malformed equation: '=' has nothing after it");
+  }, 30_000);
+
   it('-- lets an expression that starts with a minus sign through', async () => {
     const r = await cli(['compute', '-q', '--', '-2+2']);
     expect(r.code).toBe(0);
