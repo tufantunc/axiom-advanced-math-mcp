@@ -160,12 +160,27 @@ async function buildGiacExpression(
 export const MAX_CALCULUS_ORDER = 100;
 
 /**
+ * The most entries a derivative with respect to a list may have: k variables
+ * to order n is a k^n tensor. Measured: `diff(exp(sin(x*y)), [x, y], 10)`
+ * (1024 entries) traps the shared worker, and so do 3^7 and 4^6 of the same
+ * shape, where 2^9 answers in 0.8 s. Even `diff(x*y, [x, y], 20)` traps, on
+ * size alone. 256 keeps a fourfold margin under the smallest trap measured.
+ */
+const MAX_DERIVATIVE_ENTRIES = 256;
+
+/**
  * Names Giac reads as constants: differentiating with respect to one is 0.
  * A pattern, not a Set literal — test/operation-coverage.test.ts reads every
  * `new Set([...])` in a handler as operation names it dispatches on. `π` is a
  * letter, so it passes the name check and is caught here; `∞` is not one.
  */
-const CONSTANT_NAME = /^(?:e|i|pi|π|infinity|euler_gamma)$/u;
+const CONSTANT_NAME = /^(?:e|i|pi|π|infinity|inf|euler_gamma)$/u;
+
+/**
+ * Names Giac reads as values rather than symbols: `diff(x^2, NULL)` answered
+ * 2*x, `diff(x^2, undef)` 0, `diff(x^2, true)` stayed unevaluated.
+ */
+const VALUE_NAME = /^(?:NULL|true|false|undef)$/u;
 
 /** A name as Giac reads one, `θ` included — the same rule as unicode-normalize. */
 const VARIABLE_NAME = new RegExp(`^${NAME_PATTERN}$`, 'u');
@@ -173,6 +188,9 @@ const VARIABLE_NAME = new RegExp(`^${NAME_PATTERN}$`, 'u');
 function nameRefusal(operation: string, text: string): string | null {
   if (!VARIABLE_NAME.test(text)) {
     return `${operation} needs a variable that is a name, such as x — got "${excerpt(text, 60)}"`;
+  }
+  if (VALUE_NAME.test(text)) {
+    return `${operation} needs a variable, and "${text}" is a value — name the variable, such as x`;
   }
   if (CONSTANT_NAME.test(text)) {
     return `${operation} needs a variable, and "${text}" is a constant — name the variable, such as x`;
@@ -186,8 +204,9 @@ function nameRefusal(operation: string, text: string): string | null {
  * value 2/3, and `diff(x^2, pi)` the number 0 — each with isError:false.
  *
  * differentiate also takes a bracketed list of names, Giac's gradient:
- * `diff(x^2*y^3, [x, y])`. Each is checked as a single variable is. An order
- * beside a list is refused rather than passed on, since it names no variable.
+ * `diff(x^2*y^3, [x, y])`, and with an order the Hessian or higher tensor:
+ * `diff(x^2*y^3, [x, y], 2)`. Each name is checked as a single variable is,
+ * and the tensor's size is bounded — see MAX_DERIVATIVE_ENTRIES.
  */
 function variableRefusal(
   operation: string,
@@ -201,10 +220,12 @@ function variableRefusal(
       const refusal = nameRefusal(operation, name);
       if (refusal) return refusal;
     }
-    if (order !== undefined) {
+    const n = order === undefined ? 1 : Number(String(order).trim());
+    if (/^\d+$/.test(String(order ?? '1').trim()) && names.length ** n > MAX_DERIVATIVE_ENTRIES) {
       return (
-        `differentiate takes an order with one variable, not a list — write ` +
-        `diff(f, x, 2), or list the variables for the gradient`
+        `differentiate with ${names.length} variables to order ${n} gives ` +
+        `${names.length}^${n} entries, more than the ${MAX_DERIVATIVE_ENTRIES} this computes — ` +
+        'lower the order or list fewer variables'
       );
     }
     return null;

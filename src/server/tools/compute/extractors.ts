@@ -32,23 +32,34 @@ import { rewriteCombinatorics } from '../combinatorics-rewrite.js';
 // ---------------------------------------------------------------------------
 
 /**
- * A one-letter name standing alone: not part of a longer name, so `sin` and
- * `x1` contribute nothing. Any letter, not ASCII only — `diff(sin(θ))` guessed
- * x and answered 0. A superscript ends a name (`x²`), as in unicode-normalize.
+ * A one-letter name standing alone, in any script: not part of a longer name,
+ * so `sin` and `x1` contribute nothing. A superscript ends a name (`x²`), as in
+ * unicode-normalize.
  */
 const SINGLE_LETTER = new RegExp(
   `(?<!${NAME_CHAR_PATTERN})(?:(?!\\p{N})${NAME_CHAR_PATTERN})(?!${NAME_CHAR_PATTERN})`,
   'gu'
 );
 
+const GUESS_CONSTANTS = new Set(['e', 'i', 'E', 'I', 'π']);
+
 /**
- * Guess the primary variable from an expression by finding single-letter
- * identifiers that aren't common constants (e, i, π) or function names.
+ * Guess the primary variable from an expression: a single-letter identifier
+ * that is not a common constant (e, i, π) or part of a function name.
+ *
+ * Two passes. An ASCII letter first, by the rule this always used, so a Greek
+ * PARAMETER written before the variable does not take its place:
+ * `diff(sin(ω*t))` is ω*cos(ω*t), and a single any-script pass answered
+ * t*cos(ω*t); `solve(α*x=2)` answered 2/x. Only when there is no ASCII letter
+ * does a letter of another script count — `diff(sin(θ))` guessed x there and
+ * answered 0.
  */
 function guessVariable(expr: string): string {
-  const constants = new Set(['e', 'i', 'E', 'I', 'π']);
+  for (const [v] of expr.matchAll(/\b[a-zA-Z]\b/g)) {
+    if (!GUESS_CONSTANTS.has(v)) return v;
+  }
   for (const [v] of expr.matchAll(SINGLE_LETTER)) {
-    if (v !== '_' && !constants.has(v)) return v;
+    if (v !== '_' && !GUESS_CONSTANTS.has(v)) return v;
   }
   return 'x';
 }

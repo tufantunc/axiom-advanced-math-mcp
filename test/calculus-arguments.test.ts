@@ -9,6 +9,11 @@ beforeAll(async () => {
   await giacEngine.initialize();
 }, 60000);
 
+/** Giac's print of the all-zero 2^n tensor: `[0,0]` nested n deep. */
+function zeroTensor(n: number): string {
+  return n === 1 ? '[0,0]' : `[${zeroTensor(n - 1)},${zeroTensor(n - 1)}]`;
+}
+
 function factorial(n: number): bigint {
   let f = 1n;
   for (let k = 2n; k <= BigInt(n); k++) f *= k;
@@ -47,10 +52,27 @@ describe('calculus arguments — the correct spellings answer', () => {
     ['diff(θ^3, θ$2)', '6*θ'],
     // The guessed variable too: this guessed x and answered 0.
     ['diff(sin(θ))', 'cos(θ)'],
-    // π is a constant, so the guess passes over it.
+    // An ASCII letter wins the guess, so r, not π, is the variable.
     ['diff(π*r^2)', 'pi*2*r'],
     // A bracketed list of names is Giac's gradient.
     ['diff(x^2*y^3, [x, y])', '[2*x*y^3,x^2*3*y^2]'],
+    // With an order, the Hessian and higher tensors, as Giac computes them.
+    ['diff(x^2*y^3, [x, y], 2)', '[[2*y^3,6*x*y^2],[6*x*y^2,6*x^2*y]]'],
+    ['diff(x^3*y, [x, y], 3)', '[[[6*y,6*x],[6*x,0]],[[6*x,0],[0,0]]]'],
+    // The entry cap is inclusive: 2^8 = 256 answers (x*y's eighth derivatives are all 0).
+    ['diff(x*y, [x, y], 8)', zeroTensor(8)],
+    // A Greek PARAMETER before the ASCII variable does not take its place: a
+    // single any-script guess answered t*cos(ω*t) and 2/x.
+    ['diff(sin(ω*t))', 'ω*cos(ω*t)'],
+    ['integrate(cos(ω*t))', 'sin(ω*t)/ω'],
+    ['diff(α*x^2)', 'α*2*x'],
+    ['solve(α*x=2)', '2/α'],
+    ['solve(ω*t=π)', 'pi/ω'],
+    // With no ASCII letter, the Greek one is the variable.
+    ['solve(θ^2=1)', '{-1, 1}'],
+    ['λ^2-3λ+2=0', '{1, 2}'],
+    // π is a constant, so the guess passes over it to θ.
+    ['diff(sin(π*θ))', 'pi*cos(pi*θ)'],
     // One trailing `;` ends the statement; it is not text after the call.
     ['diff(x^2,x);', '2*x'],
   ])('%s is %s', async (problem, expected) => {
@@ -170,9 +192,31 @@ describe('calculus arguments — a misread call is refused', () => {
       'differentiate needs a variable, and "π" is a constant — name the variable, such as x',
     ],
     [
-      'diff(x^2*y^3, [x, y], 2)',
-      'differentiate takes an order with one variable, not a list — write diff(f, x, 2), or ' +
-        'list the variables for the gradient',
+      'diff(x*y, [x, y], 9)',
+      'differentiate with 2 variables to order 9 gives 2^9 entries, more than the 256 this ' +
+        'computes — lower the order or list fewer variables',
+    ],
+    ['diff(x*y, [x, y], n)', order('differentiate', 'n')],
+    // Values, not symbols: NULL answered 2*x, undef 0, true stayed unevaluated.
+    [
+      'diff(inf^2, inf)',
+      'differentiate needs a variable, and "inf" is a constant — name the variable, such as x',
+    ],
+    [
+      'diff(x^2, NULL)',
+      'differentiate needs a variable, and "NULL" is a value — name the variable, such as x',
+    ],
+    [
+      'diff(x^2, true)',
+      'differentiate needs a variable, and "true" is a value — name the variable, such as x',
+    ],
+    [
+      'diff(x^2, false)',
+      'differentiate needs a variable, and "false" is a value — name the variable, such as x',
+    ],
+    [
+      'diff(x^2, undef)',
+      'differentiate needs a variable, and "undef" is a value — name the variable, such as x',
     ],
     // The gradient list is differentiate's alone.
     ['integrate(x, [x, y])', 'integrate needs a variable that is a name, such as x — got "[x, y]"'],
