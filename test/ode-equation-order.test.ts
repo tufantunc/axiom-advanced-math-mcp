@@ -146,6 +146,47 @@ describe('conditions keep their bounds', () => {
   });
 });
 
+/**
+ * `y'(x)` in a CONDITION is not the derivative the equation takes. Rewriting
+ * the whole list made `[y'=y, y(0)+y'(x)=3]` a two-equation list whose second
+ * member Giac never read, and `3*exp(x)` shipped — wrong under every reading.
+ * Only the one equation member is rewritten; every other member stays as typed
+ * and is refused, or bounded, exactly as before.
+ */
+describe('a condition that mentions the derivative at the variable', () => {
+  it.each([
+    ["[y'=y, y(0)+y'(x)=3]", 'the CAS returned no solution'],
+    ["desolve([y'=y, y(0)+y'(x)=3], x, y)", 'the CAS returned no solution'],
+    ["[y'=y, y'(x)-y(0)=5]", "the CAS returned an answer that does not satisfy y'=y"],
+    ["y'=y and y(0)+y'(x)=3", 'the CAS returned no solution'],
+    ["y'(x)=y(x) and y(0)+y'(x)=3", 'the CAS returned unevaluated derivative'],
+    ["[y'(x)=y(x), y(0)+y'(x)=3]", 'the CAS returned unevaluated derivative'],
+    [
+      `[y'=y, y(0)+0*y'(x)=${LONG_VALUE}]`,
+      'it gives an initial condition of 314 characters, above the 280',
+    ],
+  ])('%s is refused, not answered', async (problem, reason) => {
+    const r = await computeHandler({ problem });
+    const text = allText(r);
+    expect(r.isError, text).toBe(true);
+    expect(text).toContain(`solve_ode cannot solve this equation — ${reason}`);
+    expect(text).not.toMatch(/^Result:/m);
+  });
+
+  // A second derivative member stays a condition, so the list stays one
+  // equation and keeps the equation's wording, not a system's.
+  it.each(["[y'=y, y'(x)=1]", "desolve([y'=y, y'(x)=1], x, y)", "y'=y, y(0)=1, y'(x)=2"])(
+    '%s is refused as an equation',
+    async (problem) => {
+      const r = await computeHandler({ problem });
+      const text = allText(r);
+      expect(r.isError, text).toBe(true);
+      expect(text).toContain('solve_ode cannot solve this equation');
+      expect(text).not.toContain('system');
+    }
+  );
+});
+
 describe('primesAtVariableUnapplied', () => {
   it.each([
     ["y'(x)=y(x)", "y'=y(x)"],
@@ -159,6 +200,14 @@ describe('primesAtVariableUnapplied', () => {
     ["z'(x)=y", "z'(x)=y"],
     ["yy'(x)=1", "yy'(x)=1"],
     ['y(x)=1', 'y(x)=1'],
+    // Only the one equation member: a condition that mentions y'(x), a second
+    // equation, or a conjunction leaves the whole text as typed.
+    ["[y'=y, y(0)+y'(x)=3]", "[y'=y, y(0)+y'(x)=3]"],
+    ["[y'(x)=y(x), y(0)+y'(x)=3]", "[y'(x)=y(x), y(0)+y'(x)=3]"],
+    ["[y'=y, y'(x)=1]", "[y'=y, y'(x)=1]"],
+    ["y'(x)=y(x) and y(0)=1", "y'(x)=y(x) and y(0)=1"],
+    ["y'(x)=y(x) or y(0)=1", "y'(x)=y(x) or y(0)=1"],
+    ["[y'(x)=y(x), y(0)=1", "[y'(x)=y(x), y(0)=1"],
   ])('%s', (text, expected) => {
     expect(primesAtVariableUnapplied(text, 'y', 'x')).toBe(expected);
   });

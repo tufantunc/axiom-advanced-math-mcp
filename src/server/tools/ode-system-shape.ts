@@ -406,6 +406,16 @@ function takesUnappliedDerivative(text: string): boolean {
  * which of them is a point is the caller's variable to decide, so this cannot
  * be a rule inside classify, which has none.
  *
+ * Only in the ONE member that is the equation, and only when there is one.
+ * Rewriting the whole list turned a condition that mentions `y'(x)` into a
+ * second equation: `[y'=y, y(0)+y'(x)=3]` left odeMemberConditions (and the
+ * 280-character and depth bounds with it), Giac solved the first member only,
+ * and `3*exp(x)` shipped — wrong under every reading — where the list as typed
+ * is refused. So the rewrite is kept only when, after it, exactly one member
+ * reads as the equation and every member it changed is that one; otherwise the
+ * text is left as typed and fails, or is bounded, exactly as it did before.
+ * A member that joins a condition with `and` or `or` is never rewritten.
+ *
  * Returns `text` unchanged when there is nothing to rewrite, so every other
  * spelling reaches the engine exactly as written.
  */
@@ -416,7 +426,21 @@ export function primesAtVariableUnapplied(text: string, fn: string, variable: st
   );
   const ascii = unicodeToAscii(text);
   const rewritten = ascii.replaceAll(applied, '$1');
-  return rewritten === ascii ? text : rewritten;
+  if (rewritten === ascii || !bracketsBalance(ascii)) return text;
+  const members = splitTopLevel(stripEnclosingBrackets(ascii), ',').map((m) => m.trim());
+  const after = members.map((m) => m.replaceAll(applied, '$1'));
+  const equations = after.filter(isEquationMember);
+  // A member joined with `and`/`or` holds a condition too, and the rewrite
+  // would reach it: `y'=y and y(0)+y'(x)=3` answered `3*exp(x)` the same way.
+  const onlyTheEquationChanged = after.every(
+    (m, i) => m === members[i] || (isEquationMember(m) && !/\b(?:and|or)\b/.test(m))
+  );
+  return equations.length === 1 && onlyTheEquationChanged ? rewritten : text;
+}
+
+/** The test odeEquationMembers applies: a derivative not applied at a point. */
+function isEquationMember(member: string): boolean {
+  return classify(member).kind === 'equation' || takesUnappliedDerivative(member);
 }
 
 /**
@@ -445,9 +469,7 @@ export function equationFirst(text: string): string {
     m.trim()
   );
   if (members.length < 2 || parseOdeSystem(text) !== null) return text;
-  const equations = members.filter(
-    (m) => classify(m).kind === 'equation' || takesUnappliedDerivative(m)
-  );
+  const equations = members.filter(isEquationMember);
   if (equations.length !== 1) return text;
   const [equation] = equations;
   if (members[0] === equation && text.trim().startsWith('[')) return text;
