@@ -3,12 +3,17 @@ import { validateExpression } from './expression-validator.js';
 import { evalWithLatex, type EvaluatedResponse } from './giac-eval.js';
 import type { VerificationResult } from './self-verify.js';
 import { detectFailure } from './compute/silent-failure.js';
-import { splitTopLevel } from './output-cleanup.js';
+import { excerpt, splitTopLevel } from './output-cleanup.js';
 import { stripEnclosingBrackets } from './compute/arg-parsing.js';
 import { unicodeToAscii } from './unicode-normalize.js';
 import { giacEngine } from '../giac/index.js';
 import { verifyIntegrate, verifyOdeSystem, verifyOdeSolution } from './self-verify.js';
-import { parseOdeSystem } from './ode-system-shape.js';
+import {
+  leibnizQuotients,
+  parseOdeSystem,
+  replaceLeibnizQuotients,
+  type LeibnizQuotient,
+} from './ode-system-shape.js';
 import { translateOdeSystem } from './ode-system.js';
 
 /** Giac's spelling of a limit's direction: from the right, from the left, both sides. */
@@ -59,7 +64,7 @@ function buildSimpleCommand(operation: string, args: Record<string, unknown>): s
       // the two-sided limit for a side it does not recognise.
       if (dir === undefined) {
         throw new Error(
-          `unknown limit direction \`${String(args.direction).slice(0, 60)}\` — use + ` +
+          `unknown limit direction \`${excerpt(String(args.direction), 60)}\` — use + ` +
             '(from the right), - (from the left), or leave it out for both sides'
         );
       }
@@ -192,7 +197,7 @@ function validateSolveOde(args: Record<string, unknown>): string | null {
   const unsupported = args.unsupported_argument;
   if (typeof unsupported === 'string') {
     return (
-      `solve_ode does not understand the argument "${unsupported.slice(0, 60)}" — ` +
+      `solve_ode does not understand the argument "${excerpt(unsupported, 60)}" — ` +
       'give the equation, then any conditions as y(0)=1, then the variable ' +
       "and the function, as in desolve(y'=y, y(0)=1, x, y)"
     );
@@ -504,12 +509,109 @@ async function singleEquationGuard(
   return undefined;
 }
 
-export async function calculusHandler(args: Record<string, unknown>) {
-  try {
-    const operation = args.operation as string;
+/**
+ * The highest Leibniz order rewritten to primes.
+ *
+ * The order is caller digits, and the rewrite spells it out: with no ceiling
+ * `y'=d^10000000y/dx^10000000` (31 bytes) built a ten-million-character equation
+ * and took this process from 82 MB to 783 MB, and a larger order exhausts the
+ * heap of the server every caller shares. Order 1000 already traps the Giac
+ * worker. Hand-written ODEs stop long before 10.
+ */
+const MAX_LEIBNIZ_ORDER = 10;
 
-    const paramError = validateParams(operation, args);
+/**
+ * Why one Leibniz derivative cannot be rewritten to primes for this equation,
+ * or undefined when it can.
+ *
+ * Every quotient must be the function being solved for, taken with respect to
+ * the variable, at one well-formed order. A quotient of ANOTHER function cannot
+ * be left in place: Giac reads `dx/dt` as the quotient of two constants, and the
+ * residual check, which substitutes into the same text, then certified the
+ * misreading — `desolve(dy/dt = -dx/dt, t, y)` answered `(c_0*dt-dx*t)/dt` with
+ * "Verified: ✓" where it used to be refused.
+ */
+function leibnizRefusal(
+  quotient: LeibnizQuotient,
+  fn: string,
+  variable: string
+): string | undefined {
+  const written = excerpt(quotient.text, 20);
+  if (quotient.order !== quotient.orderBelow) {
+    return `its derivative ${written} has different orders above and below the line`;
+  }
+  if (quotient.order < 1) return `${written} is not a derivative — its order is 0`;
+  if (quotient.order > MAX_LEIBNIZ_ORDER) {
+    return `its derivative ${written} is of order above ${MAX_LEIBNIZ_ORDER}, the most this solves`;
+  }
+  if (quotient.fn !== fn) {
+    return (
+      `it differentiates ${excerpt(quotient.fn, 60)}, but the function being solved ` +
+      `for is ${excerpt(fn, 60)}`
+    );
+  }
+  if (quotient.wrt !== variable) {
+    return (
+      `it differentiates ${excerpt(fn, 60)} with respect to ${excerpt(quotient.wrt, 60)}, ` +
+      `but the variable is ${excerpt(variable, 60)}`
+    );
+  }
+  return undefined;
+}
+
+/**
+ * A single equation's Leibniz derivatives, `dy/dx` and `d^2y/dx^2`, rewritten
+ * to the `y'` and `y''` Giac reads.
+ *
+ * Giac has no Leibniz notation. It reads `dy/dx` as the quotient of two unknowns
+ * named `dy` and `dx`, so `desolve(dy/dx=y, y(0)=1, x, y)` answered `[dy/dx]`
+ * with isError:false: a wrong answer presented as a result, and the residual
+ * check could not catch it because the caller's own equation carried the same
+ * quotient. The system path translates the notation itself (ode-system.ts);
+ * this is the single-equation counterpart.
+ *
+ * Every quotient is checked before anything is rewritten (leibnizRefusal), and
+ * both texts are rewritten, the command and `original_equation`, so the residual
+ * check substitutes into the equation that was actually solved. The conditions
+ * are folded into `equation`, so checking it covers both.
+ */
+function rewriteLeibniz(
+  args: Record<string, unknown>
+): { args: Record<string, unknown> } | { error: string } {
+  const equation = args.equation;
+  if (typeof equation !== 'string' || parseOdeSystem(equation) !== null) return { args };
+  const quotients = leibnizQuotients(equation);
+  // Untouched when there is no quotient, so every other spelling reaches the
+  // engine exactly as before.
+  if (quotients.length === 0) return { args };
+  const fn = (args.function_name as string) ?? 'y';
+  const variable = (args.variable as string) ?? 'x';
+  const refusal = quotients
+    .map((quotient) => leibnizRefusal(quotient, fn, variable))
+    .find((reason) => reason !== undefined);
+  if (refusal !== undefined) return { error: `solve_ode cannot solve this equation — ${refusal}` };
+  const toPrimes = (text: string): string =>
+    replaceLeibnizQuotients(text, (quotient) => `${quotient.fn}${"'".repeat(quotient.order)}`);
+  const original = args.original_equation;
+  return {
+    args: {
+      ...args,
+      equation: toPrimes(equation),
+      ...(typeof original === 'string' ? { original_equation: toPrimes(original) } : {}),
+    },
+  };
+}
+
+export async function calculusHandler(input: Record<string, unknown>) {
+  try {
+    const operation = input.operation as string;
+
+    const paramError = validateParams(operation, input);
     if (paramError) return formatErrorResponse(paramError);
+
+    const leibniz = operation === 'solve_ode' ? rewriteLeibniz(input) : { args: input };
+    if ('error' in leibniz) return formatErrorResponse(leibniz.error);
+    const { args } = leibniz;
 
     const exprToValidate =
       operation === 'solve_ode' ? (args.equation as string) : (args.expression as string);

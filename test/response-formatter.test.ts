@@ -1,9 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { formatToolResponse } from '../src/server/tools/response-formatter.js';
-
-function allText(r: { content: { text: string }[] }): string {
-  return r.content.map((c) => c.text).join('\n');
-}
+import { allText } from './helpers/all-text.js';
 
 describe('formatToolResponse — verification rendering', () => {
   it('renders a verified line (always, even when true)', () => {

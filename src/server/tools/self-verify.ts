@@ -1,6 +1,6 @@
 import { giacEngine } from '../giac/index.js';
 import { MAX_ENGINE_DEPTH } from './giac-eval.js';
-import { nestingDepth, isPrintedZero, splitTopLevel } from './output-cleanup.js';
+import { escapeForRegExp, nestingDepth, isPrintedZero, splitTopLevel } from './output-cleanup.js';
 import { stripEnclosingBrackets } from './compute/arg-parsing.js';
 
 /** Largest answer this will substitute back; a huge one is its own hazard. */
@@ -437,11 +437,6 @@ function odeClauses(text: string): string[] {
   if (parts.length === 0) return [t];
   parts.push(t.slice(start));
   return parts.flatMap((part) => odeClauses(part));
-}
-
-/** Escapes a caller-supplied name for embedding in a RegExp source. */
-function escapeForRegExp(name: string): string {
-  return name.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 }
 
 /**

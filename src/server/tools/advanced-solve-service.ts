@@ -1,5 +1,6 @@
 import { giacEngine } from '../giac/index.js';
 import { toLatex } from './giac-eval.js';
+import { unicodeToAscii } from './unicode-normalize.js';
 
 export interface AdvancedSolveOptions {
   expression: string;
@@ -18,7 +19,14 @@ export interface AdvancedSolveResult {
 
 export class AdvancedSolveService {
   async evaluate(options: AdvancedSolveOptions): Promise<AdvancedSolveResult> {
-    const { expression, format, steps, simplify } = options;
+    const { format, steps, simplify } = options;
+    // Normalised here because this route goes straight to the engine, past
+    // evalWithLatex, which is where every other route gets it. Giac misreads the
+    // raw glyphs rather than refusing them: `sum(k², k, 1, n)` answered
+    // `kmicro^2*n`, `ifactor(2⁸+1)` answered 2 and `sum(1/k², k, 1, inf)`
+    // answered +infinity, each as a result. Once, at the top, so the evaluation,
+    // the steps and the variable list all read the same text.
+    const expression = unicodeToAscii(options.expression);
 
     try {
       let giacExpression = expression;

@@ -1,5 +1,5 @@
 import { stripEnclosingBrackets } from './compute/arg-parsing.js';
-import { GIAC_NUMBER, nestingDepth } from './output-cleanup.js';
+import { GIAC_NUMBER, excerpt, nestingDepth } from './output-cleanup.js';
 import { unicodeToAscii } from './unicode-normalize.js';
 
 /**
@@ -321,22 +321,6 @@ export function conditionsTogetherError(conditions: string[]): string | undefine
  * what would break the reader, not raising this number.
  */
 const MAX_READABLE_VALUE = 1e15;
-
-/**
- * Caller text quoted back in a refusal, cut to a readable length.
- *
- * Marked, because an unmarked cut names a DIFFERENT input from the one refused:
- * `10^1000*10^1000*10^1000*10^1000` came back as `(10^1000*10^1000*10^1)`, which
- * denotes 2,002 digits and passes the bound, so a caller shortening its input to
- * what the message named would be refused again. Every refusal in this file goes
- * through here — the exponent branch did not, and returned up to 8 KB of caller
- * digits as the tool's answer on the right-hand-side channel, which has no length
- * bound in front of it.
- */
-function excerpt(text: string): string {
-  const trimmed = text.trim();
-  return trimmed.length > 20 ? `${trimmed.slice(0, 20)}…` : trimmed;
-}
 
 /**
  * What a piece of condition text denotes, as a base-10 magnitude.

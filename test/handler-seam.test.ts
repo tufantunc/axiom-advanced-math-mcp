@@ -4,13 +4,13 @@ import { computeHandler } from '../src/server/tools/compute/index.js';
 import { computeTool } from '../src/server/tools.js';
 import { detectFailure } from '../src/server/tools/compute/silent-failure.js';
 import { exactValueHandler } from '../src/server/tools/exact-value.js';
+import { allText } from './helpers/all-text.js';
 
 beforeAll(async () => {
   await giacEngine.initialize();
 }, 60000);
 
-const text = (r: { content: { text: string }[] }): string =>
-  r.content.map((c) => c.text).join('\n');
+const text = allText;
 
 /**
  * The response with the `Command:` line removed.
@@ -909,12 +909,12 @@ describe('spellings the router has to tell apart', () => {
       // caveat, or stamp it on every exact_value answer, unnoticed.
       const r = await exactValueHandler({ operation: 'to_decimal', value: '1e308*10' });
       expect(r.isError).toBe(false);
-      expect(r.content.map((c) => c.text).join('\n')).toMatch(/result is infinite/);
+      expect(text(r)).toMatch(/result is infinite/);
     });
 
     it('exact_value to_decimal does not carry it for a finite result', async () => {
       const r = await exactValueHandler({ operation: 'to_decimal', value: '2/3' });
-      expect(r.content.map((c) => c.text).join('\n')).not.toMatch(/result is infinite/);
+      expect(text(r)).not.toMatch(/result is infinite/);
     });
 
     it('the caveat appears once in text, not twice', async () => {
@@ -2258,13 +2258,24 @@ describe('spellings the router has to tell apart', () => {
     });
 
     it('reports a variable that collides with an unknown as a collision', async () => {
-      // With no variable given it is inferred, and for the Leibniz spelling the
-      // inference picks `z`. Checked in the wrong order, the wrt guard fired
-      // first and advised "write the derivatives in z" — z being an unknown,
-      // that is impossible advice for a question the caller never asked.
-      const r = await computeHandler({ problem: 'desolve([dy/dx=z, dz/dx=-y])' });
+      // The derivatives are in x and the variable is z, an unknown. Checked in
+      // the wrong order, the wrt guard fired first and advised "write the
+      // derivatives in z" — z being an unknown, that is impossible advice for a
+      // question the caller never asked.
+      const r = await computeHandler({ problem: 'desolve([dy/dx=z, dz/dx=-y], z)' });
       expect(r.isError).toBe(true);
       expect(text(r)).toMatch(/uses z as both the independent variable and an unknown/);
+    });
+
+    it('infers the variable from the Leibniz quotient when none is named', async () => {
+      // Guessing from single letters used to pick `z`, an unknown, and refuse
+      // the call as a collision the caller never wrote.
+      const r = await computeHandler({ problem: 'desolve([dy/dx=z, dz/dx=-y])' });
+      expect(r.isError, text(r)).toBe(false);
+      expect(text(r)).toMatch(
+        /^Result: \[\[c_0\*cos\(x\)\+c_1\*sin\(x\),-c_0\*sin\(x\)\+c_1\*cos\(x\)\]\]$/m
+      );
+      expect(text(r)).toMatch(/^Verified: ✓/m);
     });
 
     it('does not blame initial conditions that were never given', async () => {

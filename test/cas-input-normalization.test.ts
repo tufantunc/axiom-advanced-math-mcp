@@ -4,14 +4,11 @@ import { evalWithLatex } from '../src/server/tools/giac-eval.js';
 import { computeHandler } from '../src/server/tools/compute/index.js';
 import { verifyHandler } from '../src/server/tools/verify/index.js';
 import { resultLine } from './helpers/result-line.js';
+import { allText } from './helpers/all-text.js';
 
 beforeAll(async () => {
   await giacEngine.initialize();
 }, 60000);
-
-function allText(r: { content: { text: string }[] }): string {
-  return r.content.map((c) => c.text).join('\n');
-}
 
 describe('evalWithLatex — input unicode normalization', () => {
   it('normalizes a superscript in giacExpr (no micro corruption)', async () => {

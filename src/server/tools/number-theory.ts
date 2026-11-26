@@ -2,20 +2,91 @@ import { giacEngine } from '../giac/index.js';
 import { formatToolResponse, formatErrorResponse } from './response-formatter.js';
 import { analyzeNumberCore } from './number-utils.js';
 import { identifySequenceCore } from './sequence-utils.js';
+import { excerpt, nestingDepth } from './output-cleanup.js';
+import { implausibleMagnitude } from './ode-condition-bounds.js';
+import { unicodeToAscii } from './unicode-normalize.js';
 
-async function primeFactorize(n: number) {
-  const absN = Math.abs(n);
-  if (absN < 2) {
+const INTEGER = /^-?\d+$/;
+
+/**
+ * A decimal or exponent literal, or a call that makes one. An integer derived
+ * from a float is an artifact of Giac's reduced-precision floats, not the number
+ * the caller wrote: `ifactor(floor(1e30))` factored 999999999999998612509741285376,
+ * which is neither 10^30 nor the double nearest it.
+ */
+const FLOAT_SOURCE = /\d\.\d*|\.\d|\d[eE][+-]?\d|\b(?:evalf|approx)\s*\(/;
+
+/** The bracket depth the magnitude reader is trusted with, as on the ODE path. */
+const MAX_ARGUMENT_DEPTH = 100;
+
+/**
+ * The integer a number-theory call is about, as exact decimal text.
+ *
+ * compute hands over the caller's argument as written (`expression`). It used to
+ * be read with Number.parseInt, which stops at the first character it cannot
+ * read and rounds past 2^53, so each of these answered something else with
+ * isError:false: `ifactor(2^8+1)` factored 2, `ifactor(12*5)` factored 12,
+ * `ifactor(3.5)` factored 3, `isprime(2^61-1)` analysed 2, and
+ * `ifactor(12345678901234567890)` factored a neighbouring number.
+ *
+ * A plain integer literal is used as written. Anything else is evaluated, and
+ * only an exact integer is accepted: `3.5`, `7/2` and a free symbol are refused
+ * rather than truncated, and so is any argument built from a float. Before
+ * evaluating, the argument is bounded with the ODE path's magnitude reader:
+ * `ifactor(2^100000)` (17 characters) crashed the shared Giac worker.
+ *
+ * A numeric `number` argument is still accepted from direct callers, up to
+ * 2^53, past which a JS number is no longer the integer the caller meant.
+ */
+async function resolveInteger(
+  args: Record<string, unknown>,
+  example: string
+): Promise<{ value: string } | { error: string }> {
+  const notInteger = `number must be a finite integer, e.g. ${example}`;
+  if (typeof args.expression === 'string') {
+    const text = unicodeToAscii(args.expression).trim();
+    if (text.length === 0) return { error: notInteger };
+    const quoted = excerpt(text, 60);
+    const literal = text.replace(/^\+/, '');
+    if (INTEGER.test(literal)) return { value: literal };
+    if (FLOAT_SOURCE.test(text)) {
+      return { error: `${quoted} is built from a decimal number — ${notInteger}` };
+    }
+    const oversized =
+      nestingDepth(text) > MAX_ARGUMENT_DEPTH
+        ? `more than ${MAX_ARGUMENT_DEPTH} nested brackets`
+        : implausibleMagnitude(text);
+    if (oversized !== undefined) {
+      return { error: `${quoted} is too large to work with here (${oversized})` };
+    }
+    const value = (await giacEngine.evaluate(text)).trim();
+    if (INTEGER.test(value)) return { value };
+    return { error: `${quoted} is not an integer — ${notInteger}` };
+  }
+  const n = args.number;
+  if (typeof n !== 'number' || !Number.isSafeInteger(n)) return { error: notInteger };
+  return { value: String(n) };
+}
+
+async function primeFactorize(value: string) {
+  // Quoted in the note through excerpt: an evaluated argument such as
+  // 3*2^20000 is thousands of digits, where the factorization is short.
+  const shown = excerpt(value, 60);
+  const magnitude = BigInt(value) < 0n ? -BigInt(value) : BigInt(value);
+  if (magnitude < 2n) {
+    // The value itself, sign included, as on the main path: -1 is -1.
     return formatToolResponse({
-      result: String(absN),
-      notes: [`${absN} has no prime factors.`],
+      result: value,
+      notes: [`${value} has no prime factors.`],
     });
   }
   try {
-    const result = await giacEngine.evaluate(`ifactor(${absN})`);
+    // Giac factors the exact integer, sign included: ifactor(-360) is
+    // -2^3*3^2*5.
+    const result = await giacEngine.evaluate(`ifactor(${value})`);
     return formatToolResponse({
       result: result.trim(),
-      notes: [`Prime factorization of ${absN}: ${result.trim()}`],
+      notes: [`Prime factorization of ${shown}: ${result.trim()}`],
     });
   } catch (error) {
     return formatErrorResponse(error instanceof Error ? error.message : String(error));
@@ -40,24 +111,28 @@ async function sequenceIdentify(terms: number[]) {
 }
 
 async function runPrimeFactorize(args: Record<string, unknown>) {
-  const n = args.number as number | undefined;
-  if (n === undefined) return formatErrorResponse("'number' is required for prime_factorize");
-  // The extractors run Number.parseInt on the caller's text with no NaN
-  // check, so `ifactor(foo)` arrives here as NaN and used to be answered
-  // ("NaN has no prime factors", isError:false). Refused, not answered.
-  if (!Number.isFinite(n)) {
-    return formatErrorResponse('number must be a finite integer, e.g. ifactor(360)');
+  if (args.expression === undefined && args.number === undefined) {
+    return formatErrorResponse("'number' is required for prime_factorize");
   }
-  return await primeFactorize(n);
+  const resolved = await resolveInteger(args, 'ifactor(360)');
+  if ('error' in resolved) return formatErrorResponse(resolved.error);
+  return await primeFactorize(resolved.value);
 }
 
 async function runAnalyze(args: Record<string, unknown>) {
-  const n = args.number as number | undefined;
-  if (n === undefined) return formatErrorResponse("'number' is required for analyze");
-  // Same extractor gap: `isprime(x)` / `euler(n)` arrive as NaN and
-  // analyzeNumberCore used to ship its degenerate report at isError:false.
-  if (!Number.isFinite(n)) {
-    return formatErrorResponse('number must be a finite integer, e.g. isprime(97)');
+  if (args.expression === undefined && args.number === undefined) {
+    return formatErrorResponse("'number' is required for analyze");
+  }
+  const resolved = await resolveInteger(args, 'isprime(97)');
+  if ('error' in resolved) return formatErrorResponse(resolved.error);
+  // analyzeNumberCore works in JS numbers — divisors, sums, the totient — so
+  // past 2^53 it would report on a rounded neighbour. Refused, not rounded.
+  const n = Number(resolved.value);
+  if (!Number.isSafeInteger(n)) {
+    return formatErrorResponse(
+      `${excerpt(resolved.value, 20)} is too large to analyse exactly — the limit is ` +
+        `${Number.MAX_SAFE_INTEGER}`
+    );
   }
   return await analyzeNumber(n);
 }

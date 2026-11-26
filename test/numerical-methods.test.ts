@@ -1,16 +1,13 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { giacEngine } from '../src/server/giac/index.js';
 import { numericalMethodsHandler } from '../src/server/tools/numerical-methods.js';
+import { allText } from './helpers/all-text.js';
 
 beforeAll(async () => {
   await giacEngine.initialize();
 }, 60000);
 
 describe('numerical_methods', () => {
-  function allText(r: { content: { text: string }[] }): string {
-    return r.content.map((c) => c.text).join('\n');
-  }
-
   describe('newton_raphson', () => {
     it('should find sqrt(2) as root of x^2 - 2', async () => {
       const result = await numericalMethodsHandler({

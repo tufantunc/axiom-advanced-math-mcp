@@ -1,6 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import { AdvancedSolveService } from '../src/server/tools/advanced-solve-service.js';
 import { giacEngine } from '../src/server/giac/index.js';
+import { computeHandler } from '../src/server/tools/compute/index.js';
+import { allText } from './helpers/all-text.js';
+import { resultLine } from './helpers/result-line.js';
 
 describe('AdvancedSolveService', () => {
   let service: AdvancedSolveService;
@@ -36,6 +39,39 @@ describe('AdvancedSolveService', () => {
     // the flag), but it is this service's own audit trail — order included.
     const r = await service.evaluate({ expression: '2*x + 3*x', steps: true });
     expect(r.steps).toEqual(['Input: 2*x + 3*x', 'Raw result: 2*x+3*x', 'Simplified: 5*x']);
+  });
+
+  // This route goes straight to the engine, past evalWithLatex, and Giac
+  // misreads a raw superscript glyph rather than refusing it: each of these
+  // answered a wrong result with isError:false before the service normalised
+  // its input.
+  describe('Unicode input', () => {
+    it.each([
+      ['sum(k², k, 1, n)', '(2*n^3+3*n^2+n)/6', ['n']],
+      ['sum(1/k², k, 1, inf)', 'pi^2/6', undefined],
+      ['product(k², k, 1, 3)', '36', undefined],
+      ['laplace(t², t, s)', '2/s^3', ['s']],
+    ])('%s answers %s', async (expression, expected, variables) => {
+      const r = await service.evaluate({ expression });
+      expect(r.result).toBe(expected);
+      // The exact list, so a raw glyph read as `kmicro` or `tmicro` fails it.
+      expect(r.variables).toEqual(variables);
+    });
+
+    it('records normalised steps', async () => {
+      const r = await service.evaluate({ expression: 'sum(k², k, 1, n)', steps: true });
+      expect(r.steps).toEqual([
+        'Input: sum(k^2, k, 1, n)',
+        'Raw result: (2*(n+1)^3-3*(n+1)^2+n+1)/6',
+        'Simplified: (2*n^3+3*n^2+n)/6',
+      ]);
+    });
+
+    it('reaches the route through compute', async () => {
+      const r = await computeHandler({ problem: 'sum(k², k, 1, n)' });
+      expect(r.isError).toBe(false);
+      expect(allText(r)).toMatch(resultLine('(2*n^3+3*n^2+n)/6'));
+    });
   });
 
   describe('Integration', () => {

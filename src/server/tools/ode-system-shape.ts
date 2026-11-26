@@ -1,5 +1,5 @@
 import { stripEnclosingBrackets } from './compute/arg-parsing.js';
-import { splitTopLevel } from './output-cleanup.js';
+import { excerpt, splitTopLevel } from './output-cleanup.js';
 import { unicodeToAscii } from './unicode-normalize.js';
 import {
   conditionBoundError,
@@ -122,6 +122,67 @@ interface DerivativeTarget {
 }
 
 /**
+ * Leibniz notation, `dy/dx` and `d^2y/dx^2`: the one grammar every reader of it
+ * shares — derivativeTarget and differentiatedFunction here, the router's ODE
+ * test, the extractor's variable inference, and the rewrite to primes in
+ * calculus.ts.
+ *
+ * One grammar because several did not agree. When the rewrite to primes learned
+ * `d^2y/dx^2` and these readers did not, `desolve(d^2z/dt^2=-z)` was read as a
+ * function y of d and failed, while the same equation without the verb was read
+ * as z of t — the same claim spelled two ways getting different answers.
+ *
+ * Groups: 1 the order above the line, 2 the function, 3 the variable, 4 the
+ * order below it. Read on ASCII text: `d²y/dx²` is `d^2y/dx^2` once normalised.
+ */
+export const LEIBNIZ_QUOTIENT = String.raw`\bd(?:\^(\d+)\s*)?([A-Za-z_]\w*)\s*\/\s*d([A-Za-z_]\w*)(?:\^(\d+))?`;
+
+/** One Leibniz derivative found in equation text. */
+export interface LeibnizQuotient {
+  /** The quotient as written, after unicodeToAscii. */
+  text: string;
+  fn: string;
+  wrt: string;
+  /** The order above the line, 1 when unwritten. */
+  order: number;
+  /** The order below it. Equal to `order` in any well-formed derivative. */
+  orderBelow: number;
+}
+
+/** Every Leibniz derivative in `text`, left to right. */
+export function leibnizQuotients(text: string): LeibnizQuotient[] {
+  return [...unicodeToAscii(text).matchAll(new RegExp(LEIBNIZ_QUOTIENT, 'g'))].map((m) => ({
+    text: m[0],
+    fn: m[2],
+    wrt: m[3],
+    order: Number(m[1] ?? '1'),
+    orderBelow: Number(m[4] ?? '1'),
+  }));
+}
+
+/**
+ * `text` after unicodeToAscii, with every Leibniz derivative replaced by
+ * `replace(quotient)`. Same grammar as leibnizQuotients, so a caller that
+ * validated that list rewrites exactly what it validated.
+ */
+export function replaceLeibnizQuotients(
+  text: string,
+  replace: (quotient: LeibnizQuotient) => string
+): string {
+  return unicodeToAscii(text).replaceAll(
+    new RegExp(LEIBNIZ_QUOTIENT, 'g'),
+    (whole: string, top: string | undefined, fn: string, wrt: string, below: string | undefined) =>
+      replace({
+        text: whole,
+        fn,
+        wrt,
+        order: Number(top ?? '1'),
+        orderBelow: Number(below ?? '1'),
+      })
+  );
+}
+
+/**
  * The function a derivative is taken of AND its order, for the three spellings
  * the router accepts.
  *
@@ -136,8 +197,14 @@ function derivativeTarget(lhs: string): DerivativeTarget | undefined {
   const lagrange = /^([A-Za-z_]\w*)('+)$/.exec(lhs);
   // `y'` names no variable, so there is nothing to disagree with.
   if (lagrange) return { fn: lagrange[1], order: lagrange[2].length };
-  const leibniz = /^d([A-Za-z_]\w*)\s*\/\s*d([A-Za-z_]\w*)$/.exec(lhs);
-  if (leibniz) return { fn: leibniz[1], order: 1, wrt: leibniz[2] };
+  const [leibniz] = leibnizQuotients(lhs);
+  if (leibniz !== undefined && leibniz.text === unicodeToAscii(lhs)) {
+    // A quotient whose orders disagree (`d^2y/dx`) is no derivative this can
+    // name; calculus.ts refuses it by name on the single-equation path.
+    return leibniz.order === leibniz.orderBelow
+      ? { fn: leibniz.fn, order: leibniz.order, wrt: leibniz.wrt }
+      : undefined;
+  }
   if (isBareDiffCall(lhs)) {
     const inner = /^(?:diff|derive|deriver)\s*\(\s*([A-Za-z_]\w*)/.exec(lhs);
     if (!inner) return undefined;
@@ -170,7 +237,7 @@ function classify(member: string): Member {
 
 /**
  * The function a SINGLE equation differentiates, for every spelling the router
- * accepts — `y'`, `dy/dx`, and `diff(y(x),x)`.
+ * accepts — `y'`, `dy/dx` (and `d^2y/dx^2`), and `diff(y(x),x)`.
  *
  * Exported so the extractor and this file cannot disagree about it. They did:
  * the extractor had its own reader that knew two of the three, so for the
@@ -192,8 +259,8 @@ export function differentiatedFunction(equation: string): string | undefined {
   if (target) return target.fn;
   const lagrange = /\b([A-Za-z_]\w*)'/.exec(eq);
   if (lagrange) return lagrange[1];
-  const leibniz = /\bd([A-Za-z_]\w*)\s*\/\s*d[A-Za-z_]/.exec(eq);
-  if (leibniz) return leibniz[1];
+  const [leibniz] = leibnizQuotients(eq);
+  if (leibniz) return leibniz.fn;
   return /\bdiff\s*\(\s*([A-Za-z_]\w*)/.exec(eq)?.[1];
 }
 
@@ -476,7 +543,7 @@ export function validateSystemShape(
     // disagreeing.
     const parsed = CONDITION_FORM.exec(condition);
     if (!parsed) {
-      return { error: `has a member "${condition.slice(0, 60)}" that is not of the form y(0)=1` };
+      return { error: `has a member "${excerpt(condition, 60)}" that is not of the form y(0)=1` };
     }
     parsedConditions.push(parsed);
     // Bounded here because the conditions reach an engine call with nothing else
