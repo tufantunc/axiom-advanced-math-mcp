@@ -253,6 +253,113 @@ describe('an expression built from y and applied is refused', () => {
   });
 });
 
+/**
+ * Giac reads `A(B)` as a PRODUCT when B writes bare a name A writes —
+ * `y(1-y)` is `y*(1-y)`, `(x+y)(x+1)` a product — and as an application only
+ * when it shares none. 15fc328 refused every one of these, the logistic
+ * equation among them, as a delay equation; main answers each.
+ */
+describe('a product written by juxtaposition still solves', () => {
+  it.each([
+    ["y'=y(1-y)", '[1/(-c_0*exp(-x)+1)]', undefined],
+    ["desolve(y'=y(1-y), x, y)", '[1/(-c_0*exp(-x)+1)]', undefined],
+    ["y'=y(y+1)", '[exp(x)/(-exp(x)+c_0)]', undefined],
+    ["y'=x*y(1-y)", '[exp(1/2*x^2)/(exp(1/2*x^2)-c_0)]', undefined],
+    ["y'=(y)(1-y)", '[1/(-c_0*exp(-x)+1)]', "y'=(y)(1-y) exactly)"],
+    ["y'=(y)(y-1)", '[1/(-c_0*exp(x)+1)]', "y'=(y)(y-1) exactly)"],
+    ["y'=(1+y)(1-y)", '[(c_0*exp(-2*x)+1)/(-c_0*exp(-2*x)+1)]', "y'=(1+y)(1-y) exactly)"],
+    [
+      "[y'=(1+y)(1-y), y(0)=0]",
+      '[(-exp(-2*x)+1)/(exp(-2*x)+1)]',
+      "y'=(1+y)(1-y) exactly and meets the conditions)",
+    ],
+    ["y'=-(y-1)(y-2)", '[(-c_0*exp(-x)+2)/(-c_0*exp(-x)+1)]', "y'=-(y-1)(y-2) exactly)"],
+    ["y'=(y+1)(y-1)", '[(c_0*exp(2*x)+1)/(-c_0*exp(2*x)+1)]', "y'=(y+1)(y-1) exactly)"],
+    ["y'=(2+y)(3-y)", '[(2*c_0*exp(-5*x)+3)/(-c_0*exp(-5*x)+1)]', "y'=(2+y)(3-y) exactly)"],
+    [
+      "y'=(y-1)(y-2)(y-3)",
+      '[(-2*exp(2*x)+√(-c_0*exp(2*x)+c_0^2)+2*c_0)/(-exp(2*x)+c_0),(-2*exp(2*x)-√(-c_0*exp(2*x)+c_0^2)+2*c_0)/(-exp(2*x)+c_0)]',
+      undefined,
+    ],
+    [
+      "y'=(x+y)(x+1)",
+      'c_0*exp((x^2+2*x)/2)-x+√pi*erf(1/2*(x+1)*exp(ln(2)/2))*exp((x^2+2*x-ln(2)+1)/2)',
+      undefined,
+    ],
+    [
+      "y'=(y^2+1)(y)",
+      '[√(c_0*exp(2*x)-c_0^2*exp(2*x)^2)/(-c_0*exp(2*x)+1),-√(c_0*exp(2*x)-c_0^2*exp(2*x)^2)/(-c_0*exp(2*x)+1)]',
+      undefined,
+    ],
+  ])('%s', async (problem, expected, verified) => {
+    const r = await computeHandler({ problem });
+    const text = allText(r);
+    expect(r.isError, text).toBe(false);
+    expect(text).toMatch(resultLine(expected));
+    if (verified !== undefined) {
+      expect(text).toContain(`Verified: ✓ (substitution: substitutes back into ${verified}`);
+    }
+  });
+});
+
+/**
+ * A number written against the name: Giac lexes `2y(x-1)` as `(2*y)(x-1)`,
+ * and e480674 did not see `y` behind the digit (c_0+x^2-2*x).
+ */
+describe('a coefficient does not hide the function', () => {
+  it.each([
+    ["y'=2y(x-1)", 'x-1'],
+    ["desolve(y'=2y(x-1), x, y)", 'x-1'],
+    ["y'=3y(x/2)", 'x/2'],
+    ["y'=0.5y(x-1)", 'x-1'],
+    ["y'=2y(0)", '0'],
+    ["y'=y+3y(0)", '0'],
+    ["desolve(y'=y+3y(0), x, y)", '0'],
+    // A product applied: (y*(1-y))(x-1) to Giac.
+    ["y'=y(1-y)(x-1)", '(1-y)(x-1)'],
+  ])('%s applies y at %s', async (problem, at) => {
+    const r = await computeHandler({ problem });
+    const text = allText(r);
+    expect(r.isError, text).toBe(true);
+    expect(text).toContain(refusal(at));
+  });
+
+  it.each([
+    ["y'=(2y)(x-1)", '(2y)(x-1)'],
+    ["y'=2y(x)", '2y(x)'],
+    ["desolve(y'=2y(x), x, y)", '2y(x)'],
+    // Shares no bare name, so applied: main answered (y^2)(x^2) (5*c_0+x^5)/5.
+    ["y'=(y+1)(x+2)", '(y+1)(x+2)'],
+    ["y'=(y^2)(x^2)", '(y^2)(x^2)'],
+    ["desolve(y'=(y^2)(x^2), x, y)", '(y^2)(x^2)'],
+    // A name inside a call is not counted: main gave c_0+x*a(sin(a))+x*sin(a).
+    ["y'=(a+y)(sin(a))", '(a+y)(sin(a))'],
+  ])('%s applies y through %s', async (problem, expression) => {
+    const r = await computeHandler({ problem });
+    const text = allText(r);
+    expect(r.isError, text).toBe(true);
+    expect(text).toContain(builtRefusal(expression));
+  });
+});
+
+const conditionRefusal = (expression: string): string =>
+  `solve_ode cannot solve this equation — it gives a condition that applies y through ` +
+  `${expression} — write a condition at a point, as y(0)=1 or y'(0)=0`;
+
+describe('an expression built from y in a condition is the condition’s fault', () => {
+  it.each([
+    ["[y'=y, (2*y)(0)=1]", '(2*y)(0)'],
+    ["desolve([y'=y, (2*y)(0)=1], x, y)", '(2*y)(0)'],
+    ["[y'=y, (y+y')(0)=4]", "(y+y')(0)"],
+    ["y'=y and (2*y)(0)=1", '(2*y)(0)'],
+  ])('%s', async (problem, expression) => {
+    const r = await computeHandler({ problem });
+    const text = allText(r);
+    expect(r.isError, text).toBe(true);
+    expect(text).toContain(conditionRefusal(expression));
+  });
+});
+
 describe('appliedExpression', () => {
   it.each([
     ["y'=(-y)(x-1)", '(-y)(x-1)'],
@@ -273,8 +380,16 @@ describe('appliedExpression', () => {
     // The first in the text, whichever shape.
     ["y'=apply(y,0)+(-y)(x-1)", 'apply(y,0)'],
     ["y'=(-y)(x-1)+apply(y,0)", '(-y)(x-1)'],
+    ["y'=2y(x)", '2y(x)'],
+    ["y'=0.5 y(x)", '0.5 y(x)'],
+    ["y'=(2y)(x-1)", '(2y)(x-1)'],
+    ["y'=(y+x)(sin(x))", '(y+x)(sin(x))'],
+    // A call's result applied is never a product, shared name or not.
+    ["y'=sin(y)(y)", 'sin(y)(y)'],
+    // A lambda's names are bound, not shared.
+    ["y'=(y@(x->x-1))(x)", '(y@(x->x-1))(x)'],
   ])('%s applies %s', (text, expression) => {
-    expect(appliedExpression(text, 'y', 'x')).toBe(expression);
+    expect(appliedExpression(text, 'y', 'x')).toEqual({ expression, inCondition: false });
   });
 
   it.each([
@@ -292,8 +407,26 @@ describe('appliedExpression', () => {
     "y'=mapy(y)+apply_y(y)+yy@sin",
     // A derivative call at a point is y' there.
     "[y'=y, diff(y(x),x)(0)=1]",
+    // Products: the brackets share a bare name.
+    "y'=(1+y)(1-y)",
+    "y'=(x+y)(x+1)",
+    "y'=(y-1)(y-2)(y-3)",
+    "y'=-(y-1)(y-2)",
+    "y'=(y^2+1)(y)",
+    "y'=2y(1-y)",
+    "y'=(2*y)(x-y)",
   ])('%s applies nothing built from y', (text) => {
     expect(appliedExpression(text, 'y', 'x')).toBeUndefined();
+  });
+
+  it.each([
+    ["[y'=y, (2*y)(0)=1]", { expression: '(2*y)(0)', inCondition: true }],
+    ["[y'=y, (y+y')(0)=4]", { expression: "(y+y')(0)", inCondition: true }],
+    // The equation's is reported first, wherever it stands.
+    ["[(2*y)(0)=1, y'=(-y)(x-1)]", { expression: '(-y)(x-1)', inCondition: false }],
+    ["[y'=y+(-y)(x-1)*0, (2*y)(0)=1]", { expression: '(-y)(x-1)', inCondition: false }],
+  ])('%s', (text, expected) => {
+    expect(appliedExpression(text, 'y', 'x')).toEqual(expected);
   });
 });
 
@@ -342,6 +475,19 @@ describe('misappliedArgument', () => {
     ["y'=diff(y(x),x)(x-1)", 'x-1'],
     // A call's argument list is not a redundant bracket.
     ["y'=y'(y)", 'y'],
+    // A bracket that writes y bare multiplies it, unless y is primed; a name
+    // inside a call is not counted, and y applied is not bare.
+    ["y'=y'(1-y)", '1-y'],
+    ["y'=y(sin(y))", 'sin(y)'],
+    ["y'=y(f(y))", 'f(y)'],
+    ["y'=y(y')", "y'"],
+    // The product's own inner application is still read: y*(y(0)+y).
+    ["y'=y(y(0)+y)", '0'],
+    ["y'=y(1-y)(x-1)", '(1-y)(x-1)'],
+    // A number against the name does not hide it.
+    ["y'=2y(x-1)", 'x-1'],
+    ["y'=y+3y(0)", '0'],
+    ["y'=0.5y(x-1)", 'x-1'],
     // A number before a bracket multiplies.
     ["y'=1(y)(x-1)", 'x-1'],
     ["y'=2.5 (y)(x-1)", 'x-1'],
@@ -399,6 +545,15 @@ describe('misappliedArgument', () => {
     "y'=f (y)(x-1)",
     "y'=g(x) (y)(x-1)",
     "y'=x1(y)(x-1)",
+    // Products.
+    "y'=y(1-y)",
+    "y'=x*y(1-y)",
+    "y'=y(x+y)",
+    // Another name: x1y is one identifier.
+    "y'=x1y(x-1)+y",
+    // Nor is a name after a prime y: Giac lexes `y'y(x-1)` as undef(x-1), and
+    // the CAS's own error stands.
+    "y'=y'y(x-1)",
     "y'=y((x))",
     "y'=y( ( x ) )",
     "[y'=y, y(1)=2*y(0)]",

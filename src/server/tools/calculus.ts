@@ -335,10 +335,10 @@ function validateSolveOde(args: Record<string, unknown>): string | null {
         );
       }
       const built = appliedExpression(equationText, fn, variable);
-      if (built !== undefined) {
+      if (built !== undefined && !built.inCondition) {
         return (
           `solve_ode cannot solve this equation — it applies ${fn} through ` +
-          `${excerpt(built, 60)} rather than at the variable ${variable}, ` +
+          `${excerpt(built.expression, 60)} rather than at the variable ${variable}, ` +
           'a delay or functional equation, which this does not solve'
         );
       }
@@ -377,6 +377,16 @@ function validateSolveOde(args: Record<string, unknown>): string | null {
       return (
         `solve_ode cannot solve this equation — it writes a derivative at a point as ` +
         `${excerpt(applied.call, 60)}, which the CAS drops — write it ${applied.primed}`
+      );
+    }
+    // The same shapes as the equation's check above, standing in a condition:
+    // `[y'=y, (2*y)(0)=1]` is no condition Giac can read.
+    const built = appliedExpression(equationText, fn, variable);
+    if (built?.inCondition === true) {
+      return (
+        `solve_ode cannot solve this equation — it gives a condition that applies ${fn} ` +
+        `through ${excerpt(built.expression, 60)} — write a condition at a point, ` +
+        `as ${fn}(0)=1 or ${fn}'(0)=0`
       );
     }
   }

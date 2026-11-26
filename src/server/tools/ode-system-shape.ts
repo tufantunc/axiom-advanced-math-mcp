@@ -428,7 +428,60 @@ function bracketChainEnd(text: string, open: number): number {
 
 /** Whether `name` appears in `text` as a whole identifier. */
 function mentions(text: string, name: string): boolean {
-  return new RegExp(String.raw`(?<![\w'])${escapeForRegExp(name)}(?!\w)`).test(text);
+  return new RegExp(String.raw`${NOT_INSIDE_A_NAME}${escapeForRegExp(name)}(?!\w)`).test(text);
+}
+
+/**
+ * Lookbehinds for a name that starts here: not the tail of another identifier
+ * (`x1y` is one name) and not after a prime. A NUMBER before it does not join
+ * it — Giac lexes `2y(x-1)` as `(2*y)(x-1)` — so `\w` alone, which counts the
+ * digit, hid `y` in `y'=2y(x-1)`, answered c_0+x^2-2*x.
+ */
+const NOT_INSIDE_A_NAME = String.raw`(?<![A-Za-z_]\w*)(?<!')`;
+
+/**
+ * The names written BARE in `text`, each with its primes: not a call's name,
+ * and not inside a call's arguments. `y` and `x` for `1-y+x*sin(t)`, `y'` for
+ * `y'+1`, nothing for `f(y)` or `(x->x-1)`.
+ *
+ * What Giac's parser compares to decide whether `A(B)` is a product or an
+ * application, as far as it could be pinned (measured on the engine, quote()):
+ * `y(1-y)` is `y*(1-y)`, `(x+y)(x+1)` is a product and `(y+1)(x+2)` an
+ * application — B shares a name with A, or not. Inside a call it is not a
+ * function of the text alone: `y(sin(y))` multiplies while `y(f(y))` and
+ * `(a+b)(sin(a))` apply. So a name inside a call is not counted, and those
+ * read as applications — refused, where they already failed or answered
+ * garbage (`(a+y)(sin(a))` gave c_0+x*a(sin(a))+x*sin(a)).
+ */
+function bareNames(text: string): Set<string> {
+  const insideCall: boolean[] = [];
+  const calls: boolean[] = [];
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '(' || ch === '[' || ch === '{') {
+      const close = ch === '(' ? closingParen(text, i) : -1;
+      const isCall = ch === '(' && /(?:[A-Za-z_]\w*'*|[)\]])\s*$/.test(text.slice(0, i));
+      // A lambda's names are bound, not written: `x` in `(x->x-1)` is not the
+      // `x` of `(y@(x->x-1))(x)`, which Giac applies.
+      const isLambda =
+        ch === '(' && (close < 0 ? text.slice(i) : text.slice(i, close)).includes('->');
+      calls.push(isCall || isLambda);
+    }
+    insideCall.push(calls.includes(true));
+    if (ch === ')' || ch === ']' || ch === '}') calls.pop();
+  }
+  const names = new Set<string>();
+  for (const m of text.matchAll(/[A-Za-z_]\w*'*/g)) {
+    if (insideCall[m.index] || /^\s*\(/.test(text.slice(m.index + m[0].length))) continue;
+    names.add(m[0]);
+  }
+  return names;
+}
+
+/** Whether `a` and `b` write any name bare in common: Giac's `a(b)` is then a product. */
+function shareBareName(a: string, b: string): boolean {
+  const inA = bareNames(a);
+  return [...bareNames(b)].some((n) => inA.has(n));
 }
 
 /** `text` without the round brackets that enclose all of it: `((x))` is `x`. */
@@ -467,7 +520,7 @@ export function functionOccurrences(
 
 /** functionOccurrences, with each single application's argument. */
 function readOccurrences(text: string, fn: string, variable: string): ReadOccurrence[] {
-  const name = new RegExp(String.raw`(?<![\w'])${escapeForRegExp(fn)}(?!\w)('*)`, 'g');
+  const name = new RegExp(String.raw`${NOT_INSIDE_A_NAME}${escapeForRegExp(fn)}(?!\w)('*)`, 'g');
   return [...text.matchAll(name)].map((m): ReadOccurrence => {
     const primes = m[1].length;
     const rest = text.slice(m.index + m[0].length);
@@ -481,6 +534,10 @@ function readOccurrences(text: string, fn: string, variable: string): ReadOccurr
       return { primes, at: 'other', argument };
     }
     const arg = text.slice(start + 1, close).trim();
+    // `y(1-y)` is a PRODUCT: Giac multiplies when the bracket writes the name
+    // bare (bareNames), and the logistic `y'=y(1-y)` is answered correctly on
+    // main. `y'(1-y)` and `y(y(0))` stay applications, as Giac reads them.
+    if (primes === 0 && bareNames(arg).has(fn)) return { primes, at: 'bare' };
     // `y((x))` is `y(x)`: Giac reads a redundant round bracket as nothing, and
     // main answered `y'=y((x))` c_0*exp(x). A square bracket is a list, so
     // `y([x])` stays what it is.
@@ -717,33 +774,46 @@ function compositionOperand(text: string, at: number, side: 'left' | 'right'): s
   return /[\w.]+'*\s*$/.exec(before)?.[0] ?? '';
 }
 
-/**
- * An application of something BUILT from `fn` rather than `fn` itself, as the
- * caller wrote it, or undefined. Three shapes, read on readableOde's text:
- *
- *   - a bracket group that mentions `fn` and is applied: `(-y)(x-1)`,
- *     `(1*y)(x-1)`, `(y@(x->x-1))(x)`, and a call's, `x1(y)(x-1)`;
- *   - a composition with `fn` as an operand: `y@(x->x/2)`, `2@y`;
- *   - `apply` or `map` with `fn` among its arguments: `apply(y,x-1)`.
- *
- * Giac answers these as it answers `y(x-1)` — measured on e480674,
- * `desolve(y'=(-y)(x-1),x,y)` gave `(2*c_0-x^2+2*x)/2`, `(y@(x->x/2))(x)`
- * gave `(4*c_0+x^2)/4` and `apply(y,x-1)` gave `c_0` — so the shape is
- * refused whatever it builds, rather than each spelling once it has shipped
- * a wrong answer. A bare `(y)` is no such group: unwrapName has read it as
- * `y`, and misappliedArgument names where it is applied.
- */
-export function appliedExpression(text: string, fn: string, variable: string): string | undefined {
-  const read = readableOde(text, fn, variable);
+/** Where appliedExpression found an application, and what it is. */
+export interface AppliedExpression {
+  /** The application as written: `(-y)(x-1)`, `apply(y,x-1)`. */
+  expression: string;
+  /** Whether it stands in a condition (`(2*y)(0)=1`) rather than the equation. */
+  inCondition: boolean;
+}
+
+/** Every application of something built from `fn` in one operand, in text order. */
+function builtApplications(read: string, fn: string): { start: number; text: string }[] {
   const found: { start: number; text: string }[] = [];
   for (let open = read.indexOf('('); open >= 0; open = read.indexOf('(', open + 1)) {
     const close = closingParen(read, open);
     if (close < 0 || !mentions(read.slice(open + 1, close), fn)) continue;
     const next = /^\s*\(/.exec(read.slice(close + 1));
     if (next === null) continue;
-    const end = bracketChainEnd(read, close + next[0].length);
     const start = calleeStart(read, open);
+    const nextClose = closingParen(read, close + next[0].length);
+    // A plain group times a bracket that shares a bare name is a product,
+    // `(1+y)(1-y)`; a call's result applied is never one, `sin(y)(y)`.
+    const following = read.slice(close + next[0].length + 1, nextClose < 0 ? undefined : nextClose);
+    if (start === open && shareBareName(read.slice(open + 1, close), following)) continue;
+    const end = bracketChainEnd(read, close + next[0].length);
     found.push({ start, text: (end < 0 ? read.slice(start) : read.slice(start, end + 1)).trim() });
+  }
+  // A number written against the name: Giac's `2y(x)` is `(2*y)(x)`.
+  const scaled = new RegExp(
+    String.raw`(?<![A-Za-z_]\w*)(?:\d+\.?\d*|\.\d+)\s*${escapeForRegExp(fn)}'*\s*\(`,
+    'g'
+  );
+  for (const m of read.matchAll(scaled)) {
+    const open = m.index + m[0].length - 1;
+    const close = closingParen(read, open);
+    const inner = close < 0 ? read.slice(open + 1) : read.slice(open + 1, close);
+    if (shareBareName(m[0].slice(0, -1), inner)) continue;
+    const end = bracketChainEnd(read, open);
+    found.push({
+      start: m.index,
+      text: (end < 0 ? read.slice(m.index) : read.slice(m.index, end + 1)).trim(),
+    });
   }
   for (const op of read.matchAll(/@+/g)) {
     const left = compositionOperand(read, op.index, 'left');
@@ -763,8 +833,55 @@ export function appliedExpression(text: string, fn: string, variable: string): s
       });
     }
   }
-  found.sort((a, b) => a.start - b.start);
-  return found[0]?.text;
+  return found.sort((a, b) => a.start - b.start);
+}
+
+/**
+ * An application of something BUILT from `fn` rather than `fn` itself, as the
+ * caller wrote it, or undefined. Four shapes, read on readableOde's text:
+ *
+ *   - a bracket group that mentions `fn` and is applied: `(-y)(x-1)`,
+ *     `(1*y)(x-1)`, `(y@(x->x-1))(x)`, and a call's, `x1(y)(x-1)` — but not a
+ *     plain group times a bracket sharing a bare name, which Giac multiplies:
+ *     `(1+y)(1-y)`, `(x+y)(x+1)`, `(y-1)(y-2)(y-3)`;
+ *   - a number written against the name and applied: `2y(x)`, `(2*y)(x)` to Giac;
+ *   - a composition with `fn` as an operand: `y@(x->x/2)`, `2@y`;
+ *   - `apply` or `map` with `fn` among its arguments: `apply(y,x-1)`.
+ *
+ * Giac answers these as it answers `y(x-1)` — measured on e480674,
+ * `desolve(y'=(-y)(x-1),x,y)` gave `(2*c_0-x^2+2*x)/2`, `(y@(x->x/2))(x)`
+ * gave `(4*c_0+x^2)/4` and `apply(y,x-1)` gave `c_0` — so the shape is
+ * refused whatever it builds, rather than each spelling once it has shipped
+ * a wrong answer. A bare `(y)` is no such group: unwrapName has read it as
+ * `y`, and misappliedArgument names where it is applied.
+ *
+ * Read per operand, as misappliedArgument reads, so that one found in a
+ * condition — `[y'=y, (2*y)(0)=1]` — is reported as the condition's. An
+ * operand is a condition when, with every application found in it taken out,
+ * it holds `fn` neither bare nor at the variable and takes no unapplied
+ * derivative. One in the equation is reported first.
+ */
+export function appliedExpression(
+  text: string,
+  fn: string,
+  variable: string
+): AppliedExpression | undefined {
+  const read = readableOde(text, fn, variable);
+  const members = splitTopLevel(stripEnclosingBrackets(read), ',').flatMap((m) =>
+    splitTopLevel(m, ';')
+  );
+  let inCondition: AppliedExpression | undefined;
+  for (const operand of members.flatMap(booleanOperands)) {
+    const found = builtApplications(operand, fn);
+    if (found.length === 0) continue;
+    const rest = found.reduce((t, f) => t.replace(f.text, '0'), operand);
+    const isEquation =
+      readOccurrences(rest, fn, variable).some((o) => o.at === 'bare' || o.at === 'variable') ||
+      takesUnappliedDerivative(rest);
+    if (isEquation) return { expression: found[0].text, inCondition: false };
+    inCondition ??= { expression: found[0].text, inCondition: true };
+  }
+  return inCondition;
 }
 
 /**
