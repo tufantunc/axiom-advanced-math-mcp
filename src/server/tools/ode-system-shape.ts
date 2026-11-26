@@ -405,6 +405,27 @@ export interface FunctionOccurrence {
   at: 'bare' | 'variable' | 'point' | 'other';
 }
 
+/**
+ * An occurrence with what `fn` is applied at, absent only when bare: the text
+ * between the brackets of a single application, `x-1` for `y(x-1)`, and every
+ * bracket group as written otherwise — `(x-1)(0)` for `y(x-1)(0)`, `(x` for an
+ * unclosed `y(x`.
+ */
+interface ReadOccurrence extends FunctionOccurrence {
+  argument?: string;
+}
+
+/** The end of the run of bracket groups that opens at `open`, or -1 if one is unclosed. */
+function bracketChainEnd(text: string, open: number): number {
+  let close = closingParen(text, open);
+  while (close >= 0) {
+    const next = /^\s*\(/.exec(text.slice(close + 1));
+    if (!next) return close;
+    close = closingParen(text, close + next[0].length);
+  }
+  return close;
+}
+
 /** Whether `name` appears in `text` as a whole identifier. */
 function mentions(text: string, name: string): boolean {
   return new RegExp(String.raw`(?<![\w'])${escapeForRegExp(name)}(?!\w)`).test(text);
@@ -432,24 +453,101 @@ export function functionOccurrences(
   fn: string,
   variable: string
 ): FunctionOccurrence[] {
+  return readOccurrences(text, fn, variable).map(({ primes, at }) => ({ primes, at }));
+}
+
+/** functionOccurrences, with each single application's argument. */
+function readOccurrences(text: string, fn: string, variable: string): ReadOccurrence[] {
   const name = new RegExp(String.raw`(?<![\w'])${escapeForRegExp(fn)}(?!\w)('*)`, 'g');
-  return [...text.matchAll(name)].map((m): FunctionOccurrence => {
+  return [...text.matchAll(name)].map((m): ReadOccurrence => {
     const primes = m[1].length;
     const rest = text.slice(m.index + m[0].length);
     const open = /^\s*\(/.exec(rest);
     if (!open) return { primes, at: 'bare' };
     const start = m.index + m[0].length + open[0].length - 1;
     const close = closingParen(text, start);
-    if (close < 0 || /^\s*\(/.test(text.slice(close + 1))) return { primes, at: 'other' };
+    if (close < 0 || /^\s*\(/.test(text.slice(close + 1))) {
+      const end = bracketChainEnd(text, start);
+      const argument = (end < 0 ? text.slice(start) : text.slice(start, end + 1)).trim();
+      return { primes, at: 'other', argument };
+    }
     const arg = text.slice(start + 1, close).trim();
-    if (arg === variable) return { primes, at: 'variable' };
+    if (arg === variable) return { primes, at: 'variable', argument: arg };
     const isPoint =
       arg.length > 0 &&
       splitTopLevel(arg, ',').length === 1 &&
       !mentions(arg, variable) &&
       !mentions(arg, fn);
-    return { primes, at: isPoint ? 'point' : 'other' };
+    return { primes, at: isPoint ? 'point' : 'other', argument: arg };
   });
+}
+
+/**
+ * The operands of the top-level boolean connectives in `member`: `y'=y` and
+ * `y(0)=1` for `y'=y and y(0)=1`, `y'=y && (y(0)=1)` or `y'=y and(y(0)=1)`.
+ * A member without one is its own single operand.
+ *
+ * The join spellings are self-verify.ts's JOIN_OPERATOR and JOIN_WORD — `∧`
+ * among them, which Giac answers as `and` — plus `xor`. Mirrored, not
+ * imported: that module reaches the engine, and this one must not. A spelling
+ * missing here costs a correct answer, not a wrong one: the condition stays in
+ * the equation's operand and its point is refused as a misapplication.
+ */
+function booleanOperands(member: string): string[] {
+  const operands: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < member.length; i++) {
+    const ch = member[i];
+    if (ch === '(' || ch === '[' || ch === '{') depth++;
+    else if (ch === ')' || ch === ']' || ch === '}') depth--;
+    if (depth !== 0) continue;
+    const word = i === 0 || !/\w/.test(member[i - 1]);
+    const op =
+      /^(?:&&|\|\||\u2227|\u2228)/.exec(member.slice(i)) ??
+      (word ? /^(?:and|or|xor)(?!\w)/i.exec(member.slice(i)) : null);
+    if (op === null) continue;
+    operands.push(member.slice(start, i));
+    start = i + op[0].length;
+    i = start - 1;
+  }
+  operands.push(member.slice(start));
+  return operands.map((o) => o.trim()).filter((o) => o.length > 0);
+}
+
+/**
+ * The argument at which a single ODE's EQUATION applies `fn` other than at
+ * exactly `variable` — `x-1` for `y'=y(x-1)`, `x/2` for `y'=y(x/2)`, `0` for
+ * `y'=y(0)`, `x` for `y'=y(x)` solved in `t` — or undefined when it applies
+ * `fn` nowhere else.
+ *
+ * Giac reads no such equation as the caller means it and answers anyway:
+ * `desolve(y'=y(x-1),x,y)` gives `(2*c_0+x^2-2*x)/2`, treating `y(x-1)` as a
+ * function of something else, and `y'=y(0)` gives `c_0`. A delay, pantograph
+ * or nonlocal equation has no closed form this solves, so the only right
+ * answer is a refusal.
+ *
+ * Read on every comma member and every operand of a top-level `and`, `or`,
+ * `xor`, `&&` or `||`, since a condition can be joined to the equation either
+ * way. An operand is the EQUATION when it holds `fn` bare or at the variable,
+ * or takes a derivative not applied at a point; every other operand —
+ * `y(0)=1`, `y'(0)=0`, `2*y(0)=1`, `y(0)+y'(0)=1`, `diff(y(x),x)(0)=0` — is a
+ * condition, where `fn` at a point is what a condition is, and is not read.
+ * A chained `y(x-1)(0)` in the equation is reported as written; Giac answered
+ * it `c_0-x`.
+ */
+export function misappliedArgument(text: string, fn: string, variable: string): string | undefined {
+  const members = splitTopLevel(stripEnclosingBrackets(unicodeToAscii(text)), ',');
+  for (const operand of members.flatMap(booleanOperands)) {
+    const occurrences = readOccurrences(operand, fn, variable);
+    const isEquation =
+      occurrences.some((o) => o.at === 'bare' || o.at === 'variable') ||
+      takesUnappliedDerivative(operand);
+    if (!isEquation) continue;
+    const misapplied = occurrences.find((o) => o.at === 'point' || o.at === 'other');
+    if (misapplied !== undefined) return misapplied.argument;
+  }
+  return undefined;
 }
 
 /**

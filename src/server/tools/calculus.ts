@@ -10,6 +10,7 @@ import { giacEngine } from '../giac/index.js';
 import { verifyIntegrate, verifyOdeSystem, verifyOdeSolution } from './self-verify.js';
 import {
   leibnizQuotients,
+  misappliedArgument,
   odeEquationMembers,
   parseOdeSystem,
   replaceLeibnizQuotients,
@@ -313,6 +314,22 @@ function validateSolveOde(args: Record<string, unknown>): string | null {
         return (
           `solve_ode cannot solve this equation — it has a term of implausible magnitude ` +
           `(${oversized}) — coefficients and forcing terms are ordinary numbers`
+        );
+      }
+    }
+    // `y'=y(x-1)` is a delay equation, and Giac answers it anyway — reading
+    // y(x-1) as some other function, `(2*c_0+x^2-2*x)/2` with isError:false.
+    // So does `y'=y(x/2)`, `y'=y(0)`, and `y'=y(x)` solved in t. The equation
+    // is argument zero, so this outranks every condition and argument refusal.
+    const fn = args.function_name;
+    const variable = args.variable;
+    if (typeof fn === 'string' && typeof variable === 'string') {
+      const misapplied = misappliedArgument(equationText, fn, variable);
+      if (misapplied !== undefined) {
+        return (
+          `solve_ode cannot solve this equation — it applies ${fn} at ` +
+          `${excerpt(misapplied, 60)} rather than at the variable ${variable}, ` +
+          'a delay or functional equation, which this does not solve'
         );
       }
     }
