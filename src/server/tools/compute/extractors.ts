@@ -2,6 +2,7 @@ import type { RouteResult } from './types.js';
 import {
   parseOdeSystem,
   differentiatedFunction,
+  leibnizQuotients,
   isDerivativeEquation,
   odeMemberConditions,
 } from '../ode-system-shape.js';
@@ -20,6 +21,7 @@ import {
   stripEnclosingBrackets,
 } from './arg-parsing.js';
 import { isNumberList } from '../value-guards.js';
+import { escapeForRegExp } from '../output-cleanup.js';
 import { rewriteCombinatorics } from '../combinatorics-rewrite.js';
 
 // ---------------------------------------------------------------------------
@@ -45,6 +47,12 @@ function guessVariable(expr: string): string {
  * identifier that is neither the unknown function nor a constant.
  */
 function independentVariable(equation: string, functionName: string): string {
+  // A Leibniz quotient names the variable outright: `dy/dt` is a derivative
+  // with respect to t. Guessing from single letters read `desolve(dy/dt=y)` as
+  // a function of x, and calculus.ts then refuses the quotient as taken with
+  // respect to the wrong variable.
+  const leibniz = leibnizQuotients(equation).find((q) => q.fn === functionName);
+  if (leibniz) return leibniz.wrt;
   const candidates = equation.match(/\b([a-zA-Z])\b/g) ?? [];
   const excluded = new Set([functionName, 'e', 'E', 'i', 'I']);
   return candidates.find((name) => !excluded.has(name)) ?? 'x';
@@ -199,7 +207,9 @@ export function extractLimit(problem: string): RouteResult {
   const expression = parts[0] || '';
   const variable = parts[1] || guessVariable(expression);
   const point = parts[2] || '0';
-  const direction = parts[3] as '+' | '-' | undefined;
+  // Passed through as typed: calculus.ts validates the direction and refuses
+  // anything it does not recognise.
+  const direction: string | undefined = parts[3];
   return {
     handler: 'calculus',
     args: {
@@ -538,7 +548,7 @@ export function extractOde(problem: string): RouteResult {
         // correctness is whether the answer satisfies the caller's equation, which
         // only a residual check can ask; the system path has one in verifyOdeSystem
         // and this path does not.
-        const escaped = variable.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+        const escaped = escapeForRegExp(variable);
         const mentionsVariable = new RegExp(String.raw`\b${escaped}\b`).test(rest[i]);
         if (mentionsVariable) return { kind: 'unsupported' } as const;
         // The same three bounds the system path puts on a condition, from the same
@@ -751,6 +761,13 @@ export function extractOde(problem: string): RouteResult {
   // members of the list either way, so validateSystemShape re-checks them under
   // the identical rule before its first engine call and nothing is lost.
   const implicitEquation = problem.trim();
+  // Leibniz notation names the function and its variable, wherever in the text it
+  // stands: `[dy/dt=y, y(0)=1]` and `y(0)=1, dy/dt=y` are a function y of t too.
+  // Read through the shared readers, so this route and the verb route agree.
+  const implicitFunction =
+    leibnizQuotients(implicitEquation).length > 0
+      ? (differentiatedFunction(implicitEquation) ?? 'y')
+      : undefined;
   const implicitRefusal =
     parseOdeSystem(implicitEquation) !== null
       ? undefined
@@ -763,8 +780,11 @@ export function extractOde(problem: string): RouteResult {
       operation: 'solve_ode',
       equation: implicitEquation,
       original_equation: implicitEquation,
-      variable: 'x',
-      function_name: 'y',
+      // `y` and its variable unless the equation says otherwise in Leibniz form:
+      // `dz/dt=z` is a function z of t, and calculus.ts refuses a quotient taken
+      // with respect to anything but the variable it is handed.
+      variable: implicitFunction ? independentVariable(implicitEquation, implicitFunction) : 'x',
+      function_name: implicitFunction ?? 'y',
       ...(implicitRefusal !== undefined ? { condition_refusal: implicitRefusal } : {}),
     },
   };
@@ -843,30 +863,20 @@ export function extractMatrix(problem: string): RouteResult {
 
 export function extractNumberTheory(problem: string): RouteResult {
   const trimmed = problem.trim().toLowerCase();
-  const inner = extractFnArgs(problem);
-
-  if (trimmed.startsWith('ifactor')) {
-    return {
-      handler: 'number_theory',
-      args: { operation: 'prime_factorize', number: Number.parseInt(inner, 10) },
-    };
+  // The argument as written: number-theory.ts resolves it to an exact integer.
+  // Number.parseInt here answered `ifactor(2^8+1)` with the factors of 2.
+  const expression = extractFnArgs(problem);
+  // Only a bare call is this route's. Anything after the closing bracket was
+  // dropped: `ifactor(6)*2` answered 2*3 and `isprime(7)+1` answered 7. The raw
+  // route evaluates the whole expression instead.
+  const whole = problem.trim();
+  const callEnd = whole.indexOf('(') + 1 + expression.length;
+  if (whole.indexOf('(') === -1 || whole.slice(callEnd).trim() !== ')') {
+    return extractGiacRaw(problem);
   }
-  if (trimmed.startsWith('isprime')) {
-    return {
-      handler: 'number_theory',
-      args: { operation: 'analyze', number: Number.parseInt(inner, 10) },
-    };
-  }
-  if (trimmed.startsWith('euler')) {
-    return {
-      handler: 'number_theory',
-      args: { operation: 'analyze', number: Number.parseInt(inner, 10) },
-    };
-  }
-  return {
-    handler: 'number_theory',
-    args: { operation: 'prime_factorize', number: Number.parseInt(inner, 10) },
-  };
+  const operation =
+    trimmed.startsWith('isprime') || trimmed.startsWith('euler') ? 'analyze' : 'prime_factorize';
+  return { handler: 'number_theory', args: { operation, expression } };
 }
 
 // --- Combinatorics ---

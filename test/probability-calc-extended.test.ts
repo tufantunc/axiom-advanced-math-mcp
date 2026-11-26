@@ -1,16 +1,13 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { giacEngine } from '../src/server/giac/index.js';
 import { probabilityCalcHandler } from '../src/server/tools/probability-calc.js';
+import { allText } from './helpers/all-text.js';
 
 beforeAll(async () => {
   await giacEngine.initialize();
 }, 60000);
 
 describe('probability_calc extended distributions', () => {
-  function allText(r: { content: { text: string }[] }): string {
-    return r.content.map((c) => c.text).join('\n');
-  }
-
   describe('binomial summary notes', () => {
     // The headline values are pinned elsewhere; these pin the E[X]/Var(X)
     // notes a model reads for the distribution summary — a dropped or

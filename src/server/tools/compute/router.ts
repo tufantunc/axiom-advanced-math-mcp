@@ -1,6 +1,8 @@
 import type { RouterRule, RouteResult } from './types.js';
 import { stripEnclosingBrackets } from './arg-parsing.js';
 import { splitTopLevel } from '../output-cleanup.js';
+import { LEIBNIZ_QUOTIENT } from '../ode-system-shape.js';
+import { unicodeToAscii } from '../unicode-normalize.js';
 import {
   extractSolveSystem,
   extractSolveEquation,
@@ -221,6 +223,9 @@ function isBetaDistributionCall(problem: string): boolean {
  *
  * `y''` contains `y'`, so the first pattern already covers second-order forms.
  */
+/** A Leibniz derivative at the start of a member, on the left of an `=`. */
+const LEIBNIZ_MEMBER = new RegExp(String.raw`(^|[,[(])\s*${LEIBNIZ_QUOTIENT}\s*=`);
+
 function looksLikeOde(problem: string): boolean {
   // Any differentiated name, not just `y`, and the prime may sit anywhere —
   // `y'' + y = 0` carries it well before the `=`, and requiring adjacency sent
@@ -236,7 +241,10 @@ function looksLikeOde(problem: string): boolean {
   // named verb — this rule sits above factor and simplify — so `simplify(dv/dt*m)`
   // was sent to solve_ode and came back as a raw GIAC_ERROR presented as a
   // successful answer.
-  if (/(^|[,[(])\s*d[A-Za-z_]\w*\s*\/\s*d[A-Za-z_]\w*\s*=/.test(problem)) return true;
+  // The shared Leibniz grammar, so `d^2y/dt^2=-y` counts as well: with a
+  // first-order-only pattern here it went to solve_equation as an equation in
+  // `d` and came back as a nonsense set with isError:false.
+  if (LEIBNIZ_MEMBER.test(unicodeToAscii(problem))) return true;
 
   // A prime counts only outside a quoted string. Giac takes string arguments —
   // `zeros(20000,20000,'sparse')`, `purge('a b')` — whose closing quote follows an

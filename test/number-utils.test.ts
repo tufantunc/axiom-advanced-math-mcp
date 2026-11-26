@@ -74,7 +74,9 @@ describe('handlers refuse non-finite numbers before analyzeNumberCore', () => {
   // which is where the refusal now lives.
   it('number_theory analyze refuses NaN (isprime(x), euler(n), analyze(foo))', async () => {
     const { numberTheoryHandler } = await import('../src/server/tools/number-theory.js');
-    for (const number of [Number.NaN]) {
+    // 3.5 is no integer; 1e21 is one, but no longer the integer the caller
+    // meant, and `String(1e21)` is `1e+21`, which BigInt refused with a raw error.
+    for (const number of [Number.NaN, 3.5, 1e21]) {
       const r = await numberTheoryHandler({ operation: 'analyze', number });
       expect(r.isError).toBe(true);
       expect(r.content[0].text).toContain('finite integer');
@@ -83,9 +85,11 @@ describe('handlers refuse non-finite numbers before analyzeNumberCore', () => {
 
   it('number_theory prime_factorize refuses NaN (ifactor(foo))', async () => {
     const { numberTheoryHandler } = await import('../src/server/tools/number-theory.js');
-    const r = await numberTheoryHandler({ operation: 'prime_factorize', number: Number.NaN });
-    expect(r.isError).toBe(true);
-    expect(r.content[0].text).toContain('finite integer');
+    for (const number of [Number.NaN, 3.5, 1e21]) {
+      const r = await numberTheoryHandler({ operation: 'prime_factorize', number });
+      expect(r.isError).toBe(true);
+      expect(r.content[0].text).toContain('finite integer');
+    }
   });
 
   it('number_properties refuses NaN (number_properties(foo))', async () => {

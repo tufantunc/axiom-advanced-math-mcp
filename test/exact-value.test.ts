@@ -1,9 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { exactValueHandler } from '../src/server/tools/exact-value.js';
-
-function allText(r: { content: { text: string }[] }): string {
-  return r.content.map((c) => c.text).join('\n');
-}
+import { allText } from './helpers/all-text.js';
 
 describe('exactValueHandler — to_exact', () => {
   it('finds the exact form of a terminating decimal', async () => {

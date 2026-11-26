@@ -1,7 +1,9 @@
 /**
  * Pure string helpers for Giac-shaped text — CAS output on its way to the model
  * or the structured envelope, and (for the depth-aware splitter) problem text on
- * its way in. No I/O, no Giac calls — easy to unit-test.
+ * its way in — plus the excerpt a refusal quotes caller text through and the
+ * escape for names built into a pattern. No I/O, no Giac calls — easy to
+ * unit-test.
  */
 
 /**
@@ -218,7 +220,7 @@ export function parseComplexTerm(term: string): { re: number; im: number } {
 export function parseComplexList(raw: string): { re: number; im: number }[] {
   const trimmed = raw.trim();
   if (!trimmed.startsWith('[') || !trimmed.endsWith(']')) {
-    throw new Error(`expected a Giac list, got: ${trimmed.slice(0, 60)}`);
+    throw new Error(`expected a Giac list, got: ${excerpt(trimmed, 60)}`);
   }
   const inner = trimmed.slice(1, -1).trim();
   if (inner === '') return [];
@@ -251,4 +253,33 @@ export function nestingDepth(text: string): number {
     else if (ch === ')') depth -= 1;
   }
   return deepest;
+}
+
+/**
+ * Caller text quoted back in a refusal, cut to a readable length.
+ *
+ * Marked, because an unmarked cut names a DIFFERENT input from the one refused:
+ * `10^1000*10^1000*10^1000*10^1000` came back as `(10^1000*10^1000*10^1)`, which
+ * denotes 2,002 digits and passes the bound, so a caller shortening its input to
+ * what the message named would be refused again. Every refusal that quotes caller
+ * text goes through here. The exponent branch in ode-condition-bounds.ts once did
+ * not, and returned up to 8 KB of caller digits as the tool's answer on the
+ * right-hand-side channel, which has no length bound in front of it.
+ *
+ * `max` is 20 for the magnitude refusals and 60 where a whole argument or
+ * condition is quoted.
+ */
+export function excerpt(text: string, max = 20): string {
+  const trimmed = text.trim();
+  return trimmed.length > max ? `${trimmed.slice(0, max)}…` : trimmed;
+}
+
+/**
+ * A caller-supplied name escaped for embedding in a RegExp source.
+ *
+ * Shared because it had been written out inline at each site that built a
+ * pattern from a function or variable name, four copies in all.
+ */
+export function escapeForRegExp(name: string): string {
+  return name.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 }

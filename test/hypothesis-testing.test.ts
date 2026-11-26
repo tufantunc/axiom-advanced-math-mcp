@@ -1,14 +1,11 @@
 import { describe, it, expect, beforeAll, vi, afterEach } from 'vitest';
 import { giacEngine } from '../src/server/giac/index.js';
 import { hypothesisTestingHandler } from '../src/server/tools/hypothesis-testing.js';
+import { allText } from './helpers/all-text.js';
 
 beforeAll(async () => {
   await giacEngine.initialize();
 }, 60000);
-
-function allText(r: { content: { text: string }[] }): string {
-  return r.content.map((c) => c.text).join('\n');
-}
 
 describe('hypothesis_testing', () => {
   describe('one_sample_t', () => {

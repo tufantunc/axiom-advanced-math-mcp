@@ -49,11 +49,12 @@ describe('limit direction', () => {
     );
   });
 
-  // Quoted as other refusals in this handler are, to its first 60 characters.
-  it('quotes a long direction to its first 60 characters', async () => {
+  // Quoted as other refusals in this handler are: its first 60 characters, with
+  // the cut marked so the caller can tell the quote from the whole input.
+  it('quotes a long direction to its first 60 characters, marking the cut', async () => {
     const r = await computeHandler({ problem: `limit(1/x, x, 0, ${'a'.repeat(100)})` });
     const text = allText(r);
     expect(r.isError, text).toBe(true);
-    expect(text).toContain(`limit direction \`${'a'.repeat(60)}\``);
+    expect(text).toContain(`limit direction \`${'a'.repeat(60)}…\``);
   });
 });

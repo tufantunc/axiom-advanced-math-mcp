@@ -1,9 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { geometryHandler } from '../src/server/tools/geometry.js';
-
-function allText(r: { content: { text: string }[] }): string {
-  return r.content.map((c) => c.text).join('\n');
-}
+import { allText } from './helpers/all-text.js';
 
 // Goldens verified against the handler before the Math.hypot conversion; the
 // values must not move by more than the renderer's 10th decimal when they do.

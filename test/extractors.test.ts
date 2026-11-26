@@ -292,7 +292,19 @@ describe('Extractors', () => {
     it('should extract ifactor', () => {
       const result = extractNumberTheory('ifactor(2310)');
       expect(result.args.operation).toBe('prime_factorize');
-      expect(result.args.number).toBe(2310);
+      expect(result.args.expression).toBe('2310');
+    });
+
+    // Passed through as written; Number.parseInt here read `2^8+1` as 2.
+    it('passes an expression argument through unparsed', () => {
+      expect(extractNumberTheory('ifactor(2^8+1)').args).toEqual({
+        operation: 'prime_factorize',
+        expression: '2^8+1',
+      });
+      expect(extractNumberTheory('euler(3*4)').args).toEqual({
+        operation: 'analyze',
+        expression: '3*4',
+      });
     });
   });
 

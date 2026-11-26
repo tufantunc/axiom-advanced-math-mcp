@@ -6,14 +6,11 @@ import { algebraHandler } from '../src/server/tools/algebra.js';
 import { calculusHandler } from '../src/server/tools/calculus.js';
 import { solveEquationHandler, solveSystemHandler, parseSolutions, parseTuple, parseTuples } from '../src/server/tools/solve.js';
 import { computeHandler } from '../src/server/tools/compute/index.js';
+import { allText } from './helpers/all-text.js';
 
 beforeAll(async () => {
   await giacEngine.initialize();
 }, 60000);
-
-function allText(r: { content: { text: string }[] }): string {
-  return r.content.map((c) => c.text).join('\n');
-}
 
 describe('evalWithLatex — verify callback + methodNote', () => {
   it('attaches verification from the verify callback', async () => {

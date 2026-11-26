@@ -4,14 +4,11 @@ import { evalWithLatex, toLatex } from '../src/server/tools/giac-eval.js';
 import { tryExactResult } from '../src/server/tools/exact-arithmetic.js';
 import { solveEquationHandler, solveSystemHandler } from '../src/server/tools/solve.js';
 import { computeHandler } from '../src/server/tools/compute/index.js';
+import { allText } from './helpers/all-text.js';
 
 beforeAll(async () => {
   await giacEngine.initialize();
 }, 60000);
-
-function allText(r: { content: { text: string }[] }): string {
-  return r.content.map((c) => c.text).join('\n');
-}
 
 describe('evalWithLatex — generic output hygiene', () => {
   it('A: strips surrounding quotes from latex() output', async () => {
