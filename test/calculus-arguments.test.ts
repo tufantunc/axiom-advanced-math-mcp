@@ -39,6 +39,20 @@ describe('calculus arguments — the correct spellings answer', () => {
     ['taylor(sin(x), x=0)', 'x-1/6*x^3+1/120*x^5'],
     // A divergent integral is an answer, not a failure marker.
     ['integrate(1/x^2, x, 0, 1)', '+infinity'],
+    // Any letter is a name to Giac, not ASCII only: these were refused.
+    ['diff(sin(θ), θ)', 'cos(θ)'],
+    ['integrate(cos(θ), θ)', 'sin(θ)'],
+    ['taylor(sin(θ), θ, 0, 3)', 'θ-1/6*θ^3'],
+    ['integrate(cos(θ), θ=0..π)', '0'],
+    ['diff(θ^3, θ$2)', '6*θ'],
+    // The guessed variable too: this guessed x and answered 0.
+    ['diff(sin(θ))', 'cos(θ)'],
+    // π is a constant, so the guess passes over it.
+    ['diff(π*r^2)', 'pi*2*r'],
+    // A bracketed list of names is Giac's gradient.
+    ['diff(x^2*y^3, [x, y])', '[2*x*y^3,x^2*3*y^2]'],
+    // One trailing `;` ends the statement; it is not text after the call.
+    ['diff(x^2,x);', '2*x'],
   ])('%s is %s', async (problem, expected) => {
     const r = await computeHandler({ problem });
     expect(r.isError, allText(r)).toBe(false);
@@ -135,6 +149,33 @@ describe('calculus arguments — a misread call is refused', () => {
     ],
     ['diff(, x)', 'diff cannot read this call — argument 1 is empty'],
     ['integrate(x, x, , 1)', 'integrate cannot read this call — argument 3 is empty'],
+    // splitArgs drops a final empty slot; these fell back to the default.
+    ['taylor(sin(x), x, 0, )', 'taylor cannot read this call — argument 4 is empty'],
+    ['diff(x^2, x, )', 'diff cannot read this call — argument 3 is empty'],
+    ['diff(x^2, )', 'diff cannot read this call — argument 2 is empty'],
+    [
+      'diff(x^2,x);;',
+      'diff cannot read this call — it must be a single diff(...) with nothing after the ' +
+        'closing parenthesis',
+    ],
+    [
+      'diff(x^2, π)',
+      'differentiate needs a variable, and "π" is a constant — name the variable, such as x',
+    ],
+    ['diff(x^2, ∞)', 'differentiate needs a variable that is a name, such as x — got "∞"'],
+    ['diff(x^2, x²)', 'differentiate needs a variable that is a name, such as x — got "x²"'],
+    ['diff(x^2*y^3, [x, 2])', 'differentiate needs a variable that is a name, such as x — got "2"'],
+    [
+      'diff(x^2*y^3, [x, π])',
+      'differentiate needs a variable, and "π" is a constant — name the variable, such as x',
+    ],
+    [
+      'diff(x^2*y^3, [x, y], 2)',
+      'differentiate takes an order with one variable, not a list — write diff(f, x, 2), or ' +
+        'list the variables for the gradient',
+    ],
+    // The gradient list is differentiate's alone.
+    ['integrate(x, [x, y])', 'integrate needs a variable that is a name, such as x — got "[x, y]"'],
   ])('%s is refused', async (problem, message) => {
     const r = await computeHandler({ problem });
     const text = allText(r);

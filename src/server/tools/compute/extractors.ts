@@ -24,6 +24,7 @@ import {
 import { isNumberList } from '../value-guards.js';
 import { escapeForRegExp, excerpt } from '../output-cleanup.js';
 import { validateExpression } from '../expression-validator.js';
+import { NAME_PATTERN, NAME_CHAR_PATTERN } from '../unicode-normalize.js';
 import { rewriteCombinatorics } from '../combinatorics-rewrite.js';
 
 // ---------------------------------------------------------------------------
@@ -31,15 +32,23 @@ import { rewriteCombinatorics } from '../combinatorics-rewrite.js';
 // ---------------------------------------------------------------------------
 
 /**
+ * A one-letter name standing alone: not part of a longer name, so `sin` and
+ * `x1` contribute nothing. Any letter, not ASCII only — `diff(sin(θ))` guessed
+ * x and answered 0. A superscript ends a name (`x²`), as in unicode-normalize.
+ */
+const SINGLE_LETTER = new RegExp(
+  `(?<!${NAME_CHAR_PATTERN})(?:(?!\\p{N})${NAME_CHAR_PATTERN})(?!${NAME_CHAR_PATTERN})`,
+  'gu'
+);
+
+/**
  * Guess the primary variable from an expression by finding single-letter
- * identifiers that aren't common constants (e, i) or function names.
+ * identifiers that aren't common constants (e, i, π) or function names.
  */
 function guessVariable(expr: string): string {
-  const varMatch = expr.match(/\b([a-zA-Z])\b/g);
-  if (!varMatch) return 'x';
-  const constants = new Set(['e', 'i', 'E', 'I']);
-  for (const v of varMatch) {
-    if (!constants.has(v)) return v;
+  const constants = new Set(['e', 'i', 'E', 'I', 'π']);
+  for (const [v] of expr.matchAll(SINGLE_LETTER)) {
+    if (v !== '_' && !constants.has(v)) return v;
   }
   return 'x';
 }
@@ -193,7 +202,9 @@ interface CalculusCall {
  * , 1)` — fell back to a guessed default for that slot.
  */
 function readCalculusCall(problem: string): CalculusCall {
-  const text = problem.trim();
+  // One trailing `;` is a statement end, not text after the call: Giac reads
+  // `diff(x^2,x);` as the call itself.
+  const text = problem.trim().replace(/;$/, '').trimEnd();
   const open = text.indexOf('(');
   const name = open === -1 ? text : text.slice(0, open).trim();
   const inner = extractFnArgs(text);
@@ -209,6 +220,15 @@ function readCalculusCall(problem: string): CalculusCall {
       refusal:
         `${name} cannot read this call — it must be a single ${name}(...) with ` +
         'nothing after the closing parenthesis',
+    };
+  }
+  // splitArgs drops a final empty slot, so `diff(x^2, x, )` reads as two
+  // arguments and the order falls back to its default; the comma says otherwise.
+  if (/,\s*$/.test(inner)) {
+    return {
+      name,
+      parts,
+      refusal: `${name} cannot read this call — argument ${parts.length + 1} is empty`,
     };
   }
   const empty = parts.findIndex((p) => p === '');
@@ -235,7 +255,7 @@ export function extractDiff(problem: string): RouteResult {
   let refusal = call.refusal;
   // Giac's own `x$2` spelling of an order, split so the order is bounded with
   // the third-argument one rather than reaching the engine unchecked.
-  const dollar = /^([A-Za-z_]\w*)\s*\$\s*(.+)$/.exec(variable);
+  const dollar = new RegExp(`^(${NAME_PATTERN})\\s*\\$\\s*(.+)$`, 'u').exec(variable);
   if (dollar) {
     if (order !== undefined) {
       refusal ??= `${name} is given the order twice — write ${name}(f, x, 2) or ${name}(f, x$2)`;
@@ -270,7 +290,7 @@ export function extractIntegrate(problem: string): RouteResult {
   let refusal = call.refusal;
   // Giac's range spelling, `int(x, x=0..1)`, split into the two bounds so the
   // variable is a name like every other spelling's.
-  const range = /^([A-Za-z_]\w*)\s*=(.+?)\.\.(.+)$/.exec(variable);
+  const range = new RegExp(`^(${NAME_PATTERN})\\s*=(.+?)\\.\\.(.+)$`, 'u').exec(variable);
   if (range) {
     if (lower_bound !== undefined) {
       refusal ??= `${name} is given its bounds twice — write ${name}(x, x, 0, 1) or ${name}(x, x=0..1)`;

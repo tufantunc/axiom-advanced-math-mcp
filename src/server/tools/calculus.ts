@@ -5,7 +5,7 @@ import type { VerificationResult } from './self-verify.js';
 import { detectFailure } from './compute/silent-failure.js';
 import { excerpt, splitTopLevel } from './output-cleanup.js';
 import { stripEnclosingBrackets } from './compute/arg-parsing.js';
-import { unicodeToAscii } from './unicode-normalize.js';
+import { unicodeToAscii, NAME_PATTERN } from './unicode-normalize.js';
 import { giacEngine } from '../giac/index.js';
 import { verifyIntegrate, verifyOdeSystem, verifyOdeSolution } from './self-verify.js';
 import {
@@ -162,24 +162,54 @@ export const MAX_CALCULUS_ORDER = 100;
 /**
  * Names Giac reads as constants: differentiating with respect to one is 0.
  * A pattern, not a Set literal — test/operation-coverage.test.ts reads every
- * `new Set([...])` in a handler as operation names it dispatches on.
+ * `new Set([...])` in a handler as operation names it dispatches on. `π` is a
+ * letter, so it passes the name check and is caught here; `∞` is not one.
  */
-const CONSTANT_NAME = /^(?:e|i|pi|infinity|euler_gamma)$/;
+const CONSTANT_NAME = /^(?:e|i|pi|π|infinity|euler_gamma)$/u;
 
-/**
- * The variable must be a name. `diff(x, 2)` answered the unevaluated
- * `diff(x,2)`, `integrate(x, 2)` a GIAC_ERROR, `taylor(sin(x), 2, 0, 3)` the
- * value 2/3, and `diff(x^2, pi)` the number 0 — each with isError:false.
- */
-function variableRefusal(operation: string, variable: unknown): string | null {
-  const text = String(variable).trim();
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(text)) {
+/** A name as Giac reads one, `θ` included — the same rule as unicode-normalize. */
+const VARIABLE_NAME = new RegExp(`^${NAME_PATTERN}$`, 'u');
+
+function nameRefusal(operation: string, text: string): string | null {
+  if (!VARIABLE_NAME.test(text)) {
     return `${operation} needs a variable that is a name, such as x — got "${excerpt(text, 60)}"`;
   }
   if (CONSTANT_NAME.test(text)) {
     return `${operation} needs a variable, and "${text}" is a constant — name the variable, such as x`;
   }
   return null;
+}
+
+/**
+ * The variable must be a name. `diff(x, 2)` answered the unevaluated
+ * `diff(x,2)`, `integrate(x, 2)` a GIAC_ERROR, `taylor(sin(x), 2, 0, 3)` the
+ * value 2/3, and `diff(x^2, pi)` the number 0 — each with isError:false.
+ *
+ * differentiate also takes a bracketed list of names, Giac's gradient:
+ * `diff(x^2*y^3, [x, y])`. Each is checked as a single variable is. An order
+ * beside a list is refused rather than passed on, since it names no variable.
+ */
+function variableRefusal(
+  operation: string,
+  variable: unknown,
+  order: unknown = undefined
+): string | null {
+  const text = String(variable).trim();
+  if (operation === 'differentiate' && text.startsWith('[') && text.endsWith(']')) {
+    const names = splitTopLevel(text.slice(1, -1), ',').map((n) => n.trim());
+    for (const name of names) {
+      const refusal = nameRefusal(operation, name);
+      if (refusal) return refusal;
+    }
+    if (order !== undefined) {
+      return (
+        `differentiate takes an order with one variable, not a list — write ` +
+        `diff(f, x, 2), or list the variables for the gradient`
+      );
+    }
+    return null;
+  }
+  return nameRefusal(operation, text);
 }
 
 /**
@@ -207,7 +237,7 @@ function calculusArgsRefusal(operation: string, args: Record<string, unknown>): 
   if (typeof args.argument_refusal === 'string') return args.argument_refusal;
   if (!args.expression) return `'expression' is required for ${operation}`;
   if (!args.variable) return `'variable' is required for ${operation}`;
-  return variableRefusal(operation, args.variable);
+  return variableRefusal(operation, args.variable, args.order);
 }
 
 function validateDifferentiate(args: Record<string, unknown>): string | null {
