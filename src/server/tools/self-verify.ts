@@ -5,6 +5,7 @@ import {
   giacNumber,
   nestingDepth,
   isPrintedZero,
+  printedReal,
   splitTopLevel,
 } from './output-cleanup.js';
 import { stripEnclosingBrackets } from './compute/arg-parsing.js';
@@ -34,18 +35,73 @@ function toZeroForm(equation: string): string {
   return `(${equation})`;
 }
 
-/** True iff evalf(subst(zeroForm, substs)) is ~0, with a symbolic fallback. Never throws. */
-async function isZeroAfterSubst(zeroForm: string, substs: string): Promise<boolean> {
+/** Largest |residual| a substituted root may leave and still count as a root. */
+const ROOT_TOLERANCE = 1e-8;
+
+/**
+ * What substituting a candidate back leaves: provably zero, provably not, or
+ * something this check cannot decide either way.
+ */
+type Residual = 'zero' | 'nonzero' | 'undecided';
+
+/**
+ * The magnitude of `expr` when it evaluates to a pure number, else undefined.
+ *
+ * `abs` folds a complex residual into one real (`1+2*i` reads as 2.236, where
+ * the complex spelling is not a number at all), and the reply is read whole by
+ * printedReal, never by its leading digits. `parseFloat` read the residual of
+ * `solve(x*k=2, x)`, which evalf leaves as `2.0/k*k-2.0`, as the number 2, and
+ * a correct answer was reported as disproved — while `k*x=2`, whose residual
+ * happens to print with a letter first, verified ✓. Infinity is a magnitude:
+ * a root at a pole leaves `+infinity`, and that is a disproof.
+ */
+async function magnitudeOf(expr: string): Promise<number | undefined> {
+  const value = printedReal(await giacEngine.evaluate(`evalf(abs(${expr}))`));
+  return Number.isNaN(value) ? undefined : value;
+}
+
+function residualOf(magnitude: number): Residual {
+  return magnitude < ROOT_TOLERANCE ? 'zero' : 'nonzero';
+}
+
+/**
+ * Substitutes a candidate root back and reads what is left. Never throws.
+ *
+ * Numerically first — cheap, and enough for every root without a free symbol.
+ * A residual that still mentions a parameter is simplified EXACTLY before
+ * anything is read from it (`2/k*k-2` is 0, `3/k*k-2` is 1). What is still
+ * symbolic after that is undecided, not wrong: `simplify` is not a zero test,
+ * and "could not check" is no evidence against the answer.
+ */
+async function residualAfterSubst(zeroForm: string, substs: string): Promise<Residual> {
+  const substituted = `subst(${zeroForm},${substs})`;
   try {
-    const r = await giacEngine.evaluate(`evalf(subst(${zeroForm},${substs}))`);
-    const n = Number.parseFloat(r);
-    if (!Number.isNaN(n)) return Math.abs(n) < 1e-8;
-    // Non-numeric result (e.g. a complex residual like "0.+0.*i"): fall back to
-    // a symbolic zero check on the un-evalf'd substitution.
-    return await simplifiesToZero(`subst(${zeroForm},${substs})`);
+    const numeric = await magnitudeOf(substituted);
+    if (numeric !== undefined) return residualOf(numeric);
+    const exact = (await giacEngine.evaluate(`simplify(${substituted})`)).trim();
+    if (isPrintedZero(exact)) return 'zero';
+    const settled = await magnitudeOf(exact);
+    return settled === undefined ? 'undecided' : residualOf(settled);
   } catch {
-    return false;
+    return 'undecided';
   }
+}
+
+/**
+ * The verdict over several residuals: ✗ if any is disproved, no verdict if
+ * any is undecided, ✓ only when every one is zero.
+ */
+function substitutionVerdict(
+  residuals: Residual[],
+  what: (ok: number, total: number) => string
+): VerificationResult | undefined {
+  const ok = residuals.filter((r) => r === 'zero').length;
+  const undecided = residuals.filter((r) => r === 'undecided').length;
+  const disproved = residuals.length - ok - undecided;
+  if (disproved === 0 && undecided > 0) return undefined;
+  let detail = what(ok, residuals.length);
+  if (undecided > 0) detail += `; ${undecided} undecided`;
+  return { verified: disproved === 0, method: 'substitution', detail };
 }
 
 /**
@@ -84,46 +140,48 @@ async function simplifiesToZero(expr: string): Promise<boolean> {
  * for its cache key too.
  */
 
+/**
+ * Substitutes each root back into the equation. Undefined (no verdict) when no
+ * root is disproved but some residual cannot be decided.
+ */
 export async function verifySolveSet(
   equation: string,
   variable: string,
   solutions: string[]
-): Promise<VerificationResult> {
-  const method = 'substitution';
+): Promise<VerificationResult | undefined> {
   if (solutions.length === 0) {
-    return { verified: false, method, detail: 'no solutions to verify' };
+    return { verified: false, method: 'substitution', detail: 'no solutions to verify' };
   }
   const zero = toZeroForm(unicodeToAscii(equation));
-  let ok = 0;
+  const residuals: Residual[] = [];
   for (const sol of solutions) {
-    if (await isZeroAfterSubst(zero, `${variable}=${sol}`)) ok++;
+    residuals.push(await residualAfterSubst(zero, `${variable}=${sol}`));
   }
-  return {
-    verified: ok === solutions.length,
-    method,
-    detail: `${ok}/${solutions.length} roots satisfy the equation`,
-  };
+  return substitutionVerdict(residuals, (ok, n) => `${ok}/${n} roots satisfy the equation`);
 }
 
+/**
+ * Substitutes one solution tuple into every equation. Undefined (no verdict)
+ * when no equation is disproved but some residual cannot be decided.
+ */
 export async function verifySystem(
   equations: string[],
   variables: string[],
   tuple: string[]
-): Promise<VerificationResult> {
-  const method = 'substitution';
+): Promise<VerificationResult | undefined> {
   if (tuple.length === 0 || tuple.length !== variables.length) {
-    return { verified: false, method, detail: 'solution tuple does not match variables' };
+    return {
+      verified: false,
+      method: 'substitution',
+      detail: 'solution tuple does not match variables',
+    };
   }
   const substs = variables.map((v, i) => `${v}=${tuple[i]}`).join(',');
-  let ok = 0;
+  const residuals: Residual[] = [];
   for (const eq of equations) {
-    if (await isZeroAfterSubst(toZeroForm(unicodeToAscii(eq)), substs)) ok++;
+    residuals.push(await residualAfterSubst(toZeroForm(unicodeToAscii(eq)), substs));
   }
-  return {
-    verified: ok === equations.length,
-    method,
-    detail: `${ok}/${equations.length} equations satisfied`,
-  };
+  return substitutionVerdict(residuals, (ok, n) => `${ok}/${n} equations satisfied`);
 }
 
 export async function verifyFactor(
@@ -232,7 +290,7 @@ export async function verifyOdeSystem(
       const settled = await evaluate(`evalf(subst(${residual},${variable}=13/10))`);
       const magnitude = Math.max(
         ...splitTopLevel(stripEnclosingBrackets(settled.trim()), ',').map((c) =>
-          Math.abs(Number(c.trim()))
+          Math.abs(giacNumber(c) ?? Number.NaN)
         )
       );
       if (!Number.isFinite(magnitude) || magnitude < 1e-6) return undefined;
@@ -674,7 +732,7 @@ async function disproveResidual(
         .join(',');
       const substs = [`${variable}=${point}`, ...(constants ? [constants] : [])].join(',');
       const settled = await evaluate(`evalf(subst(${residual},${substs}))`);
-      const here = Math.abs(Number(settled.trim()));
+      const here = Math.abs(giacNumber(settled) ?? Number.NaN);
       // Max over the constant assignments, as before: a solution FAMILY has to
       // satisfy the equation for every constant, so one assignment leaving a
       // residual is enough at this point.

@@ -68,12 +68,12 @@ describe('self-verification of superscript input', () => {
       method: 'substitution',
       detail: '2/2 roots satisfy the equation',
     });
-    expect((await verifySolveSet('x²=4', 'x', ['3'])).verified).toBe(false);
+    expect((await verifySolveSet('x²=4', 'x', ['3']))?.verified).toBe(false);
     // x=1, y=2: 1²+2 = 3 and 1-2 = -1.
     const system = await verifySystem(['x²+y=3', 'x-y=-1'], ['x', 'y'], ['1', '2']);
-    expect(system.verified).toBe(true);
-    expect(system.detail).toBe('2/2 equations satisfied');
-    expect((await verifySystem(['x²+y=3', 'x-y=-1'], ['x', 'y'], ['2', '3'])).verified).toBe(
+    expect(system?.verified).toBe(true);
+    expect(system?.detail).toBe('2/2 equations satisfied');
+    expect((await verifySystem(['x²+y=3', 'x-y=-1'], ['x', 'y'], ['2', '3']))?.verified).toBe(
       false
     );
   });

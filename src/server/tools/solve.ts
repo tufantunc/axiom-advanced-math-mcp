@@ -76,7 +76,8 @@ interface Candidate {
 
 interface Attempt {
   giacExpr: string;
-  verification: VerificationResult;
+  /** Undefined when the substitution check could not decide either way. */
+  verification: VerificationResult | undefined;
   note?: string;
 }
 
@@ -122,7 +123,7 @@ export async function solveEquationHandler(args: Record<string, unknown>) {
       if (!raw || isEngineFailure(raw)) continue;
       const verification = await verifySolveSet(equation, variable, parseSolutions(raw));
       primary ??= { giacExpr, verification, note: undefined };
-      if (verification.verified) {
+      if (verification?.verified) {
         chosen = { giacExpr, verification, note: cand.note };
         break;
       }
@@ -168,9 +169,12 @@ export async function solveSystemHandler(args: Record<string, unknown>) {
     const verify = async (result: string): Promise<VerificationResult | undefined> => {
       const tuples = parseTuples(result);
       if (tuples.length === 0) return undefined; // unparseable / no solution → skip
+      let undecided = false;
       for (const tup of tuples) {
         const v = await verifySystem(equations, variables, tup);
-        if (!v.verified) {
+        if (v === undefined) {
+          undecided = true;
+        } else if (!v.verified) {
           return {
             verified: false,
             method: 'substitution',
@@ -178,6 +182,8 @@ export async function solveSystemHandler(args: Record<string, unknown>) {
           };
         }
       }
+      // Not disproved, but not proven either: no verdict rather than a ✓.
+      if (undecided) return undefined;
       return {
         verified: true,
         method: 'substitution',
