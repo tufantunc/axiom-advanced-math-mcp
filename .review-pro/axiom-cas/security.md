@@ -38,11 +38,14 @@ expressions. Two independent evaluators sit behind the `compute`, `verify` and
   worker 10 s, `(k)$(k=1..10^7)` and `x$(10^7)` killed it, `(f->f(f))(f->f(f))`
   recurses on free names, a bare `restart` runs, and `_seq(…)` is `seq` spelled
   as a unit. A `quote(…)` is no shelter — `desolve` evaluates what it holds.
-  A bound over caller text that reaches Giac must judge every NAME, bare or
-  called, against `GIAC_RESERVED_NAMES` (generated from the engine by
-  `scripts/generate-giac-reserved-names.mjs`), plus the operators no name
-  shows. A hand-written list of "dangerous" names is a finding: the engine
-  reserves ~3,700.
+  Nor is a glyph or an operator spelling: the engine reads `∑` and `Σ` as
+  `sum`, `∫` as `int`, `∂` as `diff`, `→` as a store, and `&^` and `.^` as
+  powers no cost reader sees. A bound over caller text that reaches Giac must
+  judge every NAME, bare or called, against `GIAC_RESERVED_NAMES` (generated
+  from the engine by `scripts/generate-giac-reserved-names.mjs`), admit a
+  non-ASCII character only from `GIAC_FREE_GLYPHS`, and refuse the operators
+  no name shows. A hand-written list of "dangerous" names is a finding: the
+  engine reserves over 2,000, besides every `_` name.
 - **Error text echoed back to the caller** that contains a filesystem path, a
   stack frame, or raw engine internals. Tool errors and the JSON-RPC `-32603`
   envelope must stay opaque.

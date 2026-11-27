@@ -1,26 +1,22 @@
-import { GIAC_RESERVED_NAMES } from './giac-reserved-names.js';
+import { equationNameError } from './ode-name-bounds.js';
 import { excerpt } from './output-cleanup.js';
 import {
-  MAGNITUDE_OPERATORS,
   factorialLog10,
   foldPrimes,
-  literalReason,
-  odeLiteral,
-  quotedReason,
   tokenizeMagnitude,
   type MagnitudeToken,
 } from './ode-text-tokens.js';
-import { POWERED_FUNCTIONS, unicodeToAscii } from './unicode-normalize.js';
+import { unicodeToAscii } from './unicode-normalize.js';
 
 /**
  * The COST bounds on ODE text — what solving it would cost the shared worker —
  * as opposed to the SIZE bounds in ode-condition-bounds.ts (length, depth, the
- * digits a condition denotes). Every rule about cost is here: what an initial
- * condition may CALL (conditionCallError, applied per condition through
- * conditionBoundError) and what a whole problem's numbers and powers cost
- * (odeCostError, applied to the equation and its conditions together).
+ * digits a condition denotes). Two axes: what the text NAMES — the calls,
+ * keywords and operators it hands the CAS, ruled on in ode-name-bounds.ts —
+ * and what its numbers and powers cost, which is this file's tree
+ * (odeCostError runs both, over the equation and its conditions together).
  *
- * Text-only, like ode-condition-bounds.ts and ode-text-tokens.ts: no `async`,
+ * Text-only, like ode-condition-bounds.ts and ode-name-bounds.ts: no `async`,
  * no engine symbol, and no import path to `src/server/giac`.
  * ode-system-shape-boundary.test.ts checks all three for this file.
  *
@@ -53,7 +49,7 @@ import { POWERED_FUNCTIONS, unicodeToAscii } from './unicode-normalize.js';
  *     worker 10s — and `y'=y+0*seq(k,k,1,10^7)` killed it ("RuntimeError:
  *     unreachable") in 176ms. A quote is no shelter: `desolve` evaluates
  *     what it holds, and `y'=y+quote(ifactor(2^257-1))` timed out the same.
- *     equationNameError refuses all of them by name.
+ *     equationNameError (ode-name-bounds.ts) refuses all of them by name.
  */
 
 /**
@@ -115,299 +111,6 @@ const MAX_EXPANSION = 3_000;
  * far past any ODE a caller writes and far inside the JS stack.
  */
 const MAX_COST_DEPTH = 100;
-
-/**
- * The derivative operator's spellings: Giac's `diff` and its aliases `derive`
- * and `deriver`. ode-system-shape.ts builds DERIVATIVE_CALL from this list, so
- * the shape reader and the condition call check cannot disagree about which
- * names are the derivative.
- */
-export const DERIVATIVE_NAMES = ['diff', 'derive', 'deriver'] as const;
-
-/**
- * What an initial condition may call besides the unknowns and the derivative:
- * Giac's elementary one-argument functions (POWERED_FUNCTIONS, the list
- * unicode-normalize.ts keeps of them), the three spellings readMagnitude
- * already bounds (`factorial`, `Gamma`, `pow`), and `round`, the rounding
- * function POWERED_FUNCTIONS lacks beside `floor` and `ceil`.
- *
- * An ALLOWLIST, because what an initial condition calls is a cost the size
- * bounds cannot see: `ifactor(2^257-1)` denotes a 78-digit number and burns
- * the budget. A DENYLIST of the number-theory names would be
- * ode-condition-bounds.ts's most-repeated defect in another form: `comb`,
- * `perm`, `ithprime`, `sum`, `fib` and every name not yet thought of would
- * each have been the next escape.
- *
- * Every name here was measured cheap on a 78-digit and a 2,863-digit argument:
- * `sqrt`, `ln`, `exp`, `sin`, `atan` and the rest answer in under 30ms in both
- * `exact([y(0)=…,z(0)=0])` and the single-equation fold. What is NOT cheap is
- * an exact ROOT of a large integer — `sqrt(3^1000+2)` times out in the fold —
- * and that is a size MAX_PROBLEM_HEIGHT refuses, because the solver forms such
- * roots itself from bare numbers.
- *
- * The cost is stated: a free user function is refused too. `y(0)=g(2)` and
- * `y(0)=myfactorial(50000)` came back symbolic and cheap, and are now refused,
- * because the text cannot tell `g` from `ifactor` and a condition is a number.
- */
-const CONDITION_FUNCTIONS: ReadonlySet<string> = new Set([
-  ...POWERED_FUNCTIONS,
-  'factorial',
-  'Gamma',
-  'pow',
-  'round',
-]);
-
-/**
- * What an EQUATION may name of the CAS's own, besides what a condition may
- * call: the step and impulse functions forcing terms are written with, the
- * remaining special functions an equation states rather than computes, the
- * derivative spellings, the constants, the `and`/`or` the single-equation
- * path joins its conditions with, and `quote`.
- *
- * `quote` because what it holds is read here like the rest of the text, and
- * that is the bound: a quote is no shelter — `desolve` evaluates what it
- * holds, and `y'=y+quote(ifactor(2^257-1))` timed out on main — so
- * `quote(ifactor(…))` is refused for its `ifactor`. A quote of free names is
- * cheap and left to odeMisreadRefusal, which says what the quote does to y.
- *
- * Every function here was measured cheap in the three places an equation puts
- * it, one input per fresh worker: as a forcing term (`y'=y+F(x)`), as a
- * coefficient (`y'=F(x)*y`) and on a 140-digit constant (`y'=y+0*F(10^140+7)`),
- * and as the right side of a second-order equation on `3^140+2` — each answered
- * in under 100ms. CONDITION_FUNCTIONS is included whole, so a condition folded
- * into the equation is never refused here for a call its own check admitted.
- *
- * An ALLOWLIST over the CAS's names, and only over them: a name the CAS does
- * not reserve (GIAC_RESERVED_NAMES) is the caller's own — `r`, `K`, `lambda`,
- * `f(x)`, `g(x)` — and is admitted, because to the CAS it is an inert symbol
- * and costs nothing. That is the difference from the condition rule, which
- * refuses `g(2)` because a condition is a number. What is refused is every
- * other name the CAS gives a meaning to: `ifactor`, `nextprime`, `ithprime`,
- * `factor`, `seq`, `sum`, `product`, `eval`, `apply`, and the loop
- * keywords `for`, `while` and `repeat`, which hold the worker with no call at
- * all. A denylist of those would have been the condition check's lesson again:
- * the next name not thought of is the next escape, and the CAS has 3,700 of
- * them. The cost is stated: an equation that writes `besselJ(0,x)`, `int(…)`
- * or `sum(…)` is refused and told to write the forcing term in closed form.
- */
-const EQUATION_NAMES: ReadonlySet<string> = new Set([
-  ...CONDITION_FUNCTIONS,
-  ...DERIVATIVE_NAMES,
-  'sign',
-  'Heaviside',
-  'Dirac',
-  'Si',
-  'Ci',
-  'Ei',
-  'max',
-  'min',
-  'pi',
-  'Pi',
-  'PI',
-  'e',
-  'i',
-  'infinity',
-  'inf',
-  'oo',
-  'euler_gamma',
-  'and',
-  'AND',
-  'or',
-  'quote',
-]);
-
-/**
- * Giac's repeated-variable spelling of a derivative's order, `diff(y(x),x$2)`,
- * admitted where every other `$` is refused: a NAME repeated a literal number
- * of times, at most MAX_REPEATED_ORDER. `x$100` answers in 248ms as the
- * hundredth-order `diff(y(x),x$100)+y(x)=0`; `x$(10^7)` killed the worker
- * ("RuntimeError: unreachable"). The count must END the argument — `x$2^30`
- * is `x$(2^30)` to the CAS, and `x$2*k` is not read here at all. The bound is
- * calculus.ts's MAX_CALCULUS_ORDER, restated because this file imports no
- * module that can reach the engine.
- */
-const REPEATED_ORDER = /([A-Za-z_]\w*)\s*\$\s*(\d+)(?=\s*(?:[),\]]|$))/g;
-const MAX_REPEATED_ORDER = 100;
-
-/**
- * Whether a character is one an EQUATION can be written with: the number
- * characters, and `&` for the `&&` join. Every other ASCII character is an
- * operator an equation does not need and a cost no name shows: `$` builds a
- * sequence (`(k)$(k=1..10^7)` names nothing the CAS reserves, so only
- * REPEATED_ORDER's `x$2` is admitted), `:=` assigns
- * and `;` sequences, `->` builds a function (`(f->f(f))(f->f(f))` recurses
- * forever with free names only), `@` composes and `@@` iterates, `{}` is a
- * block and `|` substitutes. Only ASCII is read: a glyph unicodeToAscii
- * leaves alone lexes as undef to the CAS, which odeMisreadRefusal answers.
- */
-function isEquationCharacter(character: string): boolean {
-  return character > '\x7f' || character === '&' || isNumberCharacter(character);
-}
-
-/** The text with every admitted `x$2` written as its name alone. */
-function withoutRepeatedOrders(text: string): string {
-  return text.replaceAll(REPEATED_ORDER, (whole, name: string, order: string) =>
-    Number(order) <= MAX_REPEATED_ORDER ? name : whole
-  );
-}
-
-/**
- * Why an ODE's text names something too costly to hand the CAS, or undefined.
- * `text` is normalised; the phrase continues "cannot solve this … — it ".
- *
- * Over everything the solver will read — the single-equation path's folded
- * command, a system's right-hand sides and conditions — so a name is judged
- * wherever it stands: after an `and`, `&&` or `∧` join, in a condition written
- * first, in a member list, or inside `quote(…)`.
- *
- * Judged by NAME, called or bare: `for k from 1 to 10^9 do od` calls nothing,
- * `(ifactor)(N)` applies a group, and a bare `restart` runs. A name with a
- * leading `_` is refused too: the CAS reads it as a unit, and `_seq(k,k,1,3)`
- * runs `seq`.
- */
-export function equationNameError(text: string): string | undefined {
-  const literal = odeLiteral(text);
-  if (literal !== undefined) return literalReason(literal);
-  const instead =
-    'an equation may use elementary functions such as sin, exp, ln, sqrt and ' +
-    'Heaviside, and parameters or functions of its own';
-  const stray = [...withoutRepeatedOrders(text)].find(
-    (character) => !isEquationCharacter(character)
-  );
-  if (stray !== undefined) {
-    return `contains "${stray}", which an equation is not written with — ${instead}`;
-  }
-  if (text.includes('..')) {
-    return `contains a range "..", which an equation is not written with — ${instead}`;
-  }
-  const tokens = foldPrimes(tokenizeMagnitude(text));
-  for (const [i, token] of tokens.entries()) {
-    if (token.kind !== 'name') continue;
-    const name = token.text.replace(/'+$/, '');
-    if (EQUATION_NAMES.has(name)) continue;
-    if (!GIAC_RESERVED_NAMES.has(name) && !name.startsWith('_')) continue;
-    const shown = excerpt(name, 30);
-    const next = tokens[i + 1]?.text;
-    return next === '(' || next === '['
-      ? `calls ${shown}, which the CAS runs as a command rather than reading as part of an ` +
-          `equation — ${instead}; for a value ${shown} computes, compute it on its own first ` +
-          'and write the value in'
-      : `names ${shown}, which the CAS reserves for its own commands and syntax — ${instead}; ` +
-          `rename a parameter spelled ${shown}`;
-  }
-  return undefined;
-}
-
-/**
- * Whether a character is one a number can be written with: digits, names for
- * constants and functions, the tokenizer's operators, the derivative prime and
- * the `=` that joins a condition. Anything else is an operator a number does
- * not need and a cost no reader sees: Giac's `$` builds a sequence
- * (`(2^900+k)$(k=1..10000)` is ten thousand numbers and no call), `..` is a
- * range, `:=` assigns, `@` composes, and a quoted string can name a function.
- * `**` and the typeset minus `−` never reach here; unicodeToAscii rewrites
- * them to `^` and `-`.
- */
-function isNumberCharacter(character: string): boolean {
-  return /[\w\s.'=]/.test(character) || MAGNITUDE_OPERATORS.includes(character);
-}
-
-/**
- * Why an initial condition's CALLS are too costly to evaluate, or undefined.
- * `condition` is normalised text; the phrase continues "cannot solve this … —
- * it ".
- *
- * Its SUBJECT first: a condition constrains one of the `unknowns`, and a
- * subject that is not one is worded as such rather than as a call — main
- * folded `ifactor(2^257-1)=1` in as a condition and burned the budget on it.
- * Then every bracket, by what precedes it: an operator, a number or nothing is
- * grouping; a name is a call, admitted when it is an unknown, a derivative
- * spelling or in CONDITION_FUNCTIONS; and a closing bracket applies the group
- * it closes — `diff(y(x),x)(0)` was judged at `diff`'s own bracket, and
- * `(ifactor)(N)`, a call with no name in front of it, is judged by the names
- * inside the group.
- */
-export function conditionCallError(
-  condition: string,
-  unknowns: readonly string[]
-): string | undefined {
-  // A string, comment or escape first, worded as odeMisreadRefusal words it
-  // over the whole equation: this check reaches a condition before that one
-  // does, and the same character should not be named two ways.
-  const literal = odeLiteral(condition);
-  if (literal !== undefined) return literalReason(literal);
-  const stray = [...condition].find((character) => !isNumberCharacter(character));
-  const asNumber = 'give the value itself, as in y(0)=1';
-  if (stray !== undefined)
-    return `contains "${stray}", which a number is not written with — ${asNumber}`;
-  if (condition.includes('..'))
-    return `contains a range "..", which a number is not written with — ${asNumber}`;
-  const admits = (name: string): boolean => {
-    const bare = name.replace(/'+$/, '');
-    return (
-      CONDITION_FUNCTIONS.has(bare) ||
-      (DERIVATIVE_NAMES as readonly string[]).includes(bare) ||
-      unknowns.includes(bare)
-    );
-  };
-  const tokens = foldPrimes(tokenizeMagnitude(condition));
-  const [subject, opens] = tokens;
-  if (subject?.kind === 'name' && opens?.text === '(' && !admits(subject.text)) {
-    const solved = unknowns.join(' or ');
-    return (
-      `gives a condition on ${excerpt(subject.text, 30)}(…), but the function solved for is ` +
-      `${solved} — write it as ${unknowns[0] ?? 'y'}(0)=1`
-    );
-  }
-  // A quote is refused as odeMisreadRefusal refuses one it finds in what the
-  // engine prints — `y(0)=quote(y(1))` is not y at 1 to Giac — and here, before
-  // any engine call, because the quote could as well hold `ifactor(…)`.
-  const quoted = (open: number): string => {
-    let depth = 0;
-    let close = open;
-    for (; close < tokens.length; close += 1) {
-      if (tokens[close]?.text === '(') depth += 1;
-      else if (tokens[close]?.text === ')' && --depth === 0) break;
-    }
-    const inner = tokens
-      .slice(open + 1, close)
-      .map((t) => t.text)
-      .join('');
-    const fn = subject?.kind === 'name' ? subject.text.replace(/'+$/, '') : '';
-    return quotedReason(
-      excerpt(`'${inner}'`, 60),
-      unknowns.includes(fn) ? fn : (unknowns[0] ?? 'y'),
-      true
-    );
-  };
-  const calls = (name: string): string =>
-    `calls ${excerpt(name, 30)} — an initial condition is a number, so compute ` +
-    `${excerpt(name, 30)}(…) on its own first and give the value it returns`;
-  for (const [i, token] of tokens.entries()) {
-    if (token.kind !== 'op' || (token.text !== '(' && token.text !== '[')) continue;
-    const before = tokens[i - 1];
-    if (before?.kind === 'name') {
-      if (before.text === 'quote') return quoted(i);
-      if (!admits(before.text)) return calls(before.text);
-      continue;
-    }
-    if (before?.text !== ')' && before?.text !== ']') continue;
-    const opener = before.text === ')' ? '(' : '[';
-    let depth = 0;
-    let at = i - 1;
-    for (; at >= 0; at -= 1) {
-      if (tokens[at]?.text === before.text) depth += 1;
-      else if (tokens[at]?.text === opener && --depth === 0) break;
-    }
-    if (tokens[at - 1]?.kind === 'name') continue;
-    const foreign = tokens
-      .slice(Math.max(at, 0), i - 1)
-      .find((t) => t.kind === 'name' && !admits(t.text));
-    if (foreign !== undefined) return calls(foreign.text);
-    if (opener === '[') return `applies a list as a function — ${asNumber}`;
-  }
-  return undefined;
-}
 
 type Span = { from: number; to: number };
 

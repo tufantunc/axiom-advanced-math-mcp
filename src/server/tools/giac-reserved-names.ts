@@ -7,7 +7,7 @@
  * not listed here is free — the caller's own parameter or function. The
  * script's docblock says how each name was classified.
  *
- * Text-only and import-free: ode-cost-bounds.ts reads it before any engine call.
+ * Text-only and import-free: ode-name-bounds.ts reads it before any engine call.
  */
 
 /** SHA-256 of the giac.wasm.js these names were read from. */
@@ -41,253 +41,64 @@ Rref SCALE SCALEADD SCHUR SEC SIGMA SIGMALIST SIGN SIN SINH SIZE SORT SPECNORM S
 SST_IN START STEP SUB SVD SVL SWAP SWAPCOL SWAPROW SWITCH SetFold Si SiCi_f SiCi_g SortA SortD
 StoPic Store Sum TAN TANH TAYLOR THEN TO TRACE TRN TRUE TRUNCATE TRY TeX Text Then Title Try
 UNION UNTIL UTPC UTPF UTPN UTPT Unarchiv VARS VAS VAS_positive VIEWS VRAI WAIT WHILE While XHMS
-XOR XPON Zeta ZoomRcl ZoomSto _ _0 _0B _1 _11char_traitsIcEEEE _11char_traitsIcEEEEEE
-_11char_traitsIcEENS_9allocatorIcEEEE _11char_traitsIwEEEE _11char_traitsIwEEEEEE _2
-_210__stdinbufIcEE _210__stdinbufIwEE _210__time_putE _210ctype_baseE _210istrstreamE
-_210money_baseE _210moneypunctIcLb0EEE _210moneypunctIcLb1EEE _210moneypunctIwLb0EEE
-_210moneypunctIwLb1EEE _211__money_getIcEE _211__money_getIwEE _211__money_putIcEE
-_211__money_putIwEE _211__stdoutbufIcEE _211__stdoutbufIwEE _212__do_messageE _212codecvt_baseE
-_212strstreambufE _212system_errorE _213messages_baseE _214__num_get_baseE _214__num_put_baseE
-_214__shared_countE _214error_categoryE _217bad_function_callE _219__iostream_categoryE
-_220__time_get_c_storageIcEE _220__time_get_c_storageIwEE _25ctypeIcEE _25ctypeIwEE
-_26locale5__impE _26locale5facetE _27codecvtIDiDu11__mbstate_tEE _27codecvtIDic11__mbstate_tEE
-_27codecvtIDsDu11__mbstate_tEE _27codecvtIDsc11__mbstate_tEE _27codecvtIcc11__mbstate_tEE
-_27codecvtIwc11__mbstate_tEE _27collateIcEE _27collateIwEE _28ios_base7failureE _28ios_baseE
-_28messagesIcEE _28messagesIwEE _28numpunctIcEE _28numpunctIwEE _29 _29__num_getIcEE
-_29__num_getIwEE _29__num_putIcEE _29__num_putIwEE _29basic_iosIcNS_11char_traitsIcEEEE
-_29basic_iosIwNS_11char_traitsIwEEEE _29time_baseE _2cols _2d _2d_unit_vector _3 _38 _3d
-_3d_unit_vector _3dpoint _3genEEES4_E _3genEEES7_EEE _3genEEES7_ENS_9allocatorIS9_EES8_EE _4 _4X
-_4uh _5 _6 _7 _8 _9 _9allocatorIS7_EES6_EE _9allocatorIS9_EES8_EE _9allocatorIcEEEE _A
-_ACCENTGRAVE _AFFECT _ALL _AND_OP _ARGS _ASSUME_BEGIN _ASSUME_END _Ai _Angstrom _B _BEGIN
-_BEGIN_PAR _BIDON _BINARY _BLOC _BLOC_BEGIN _BLOC_END _BREAK _BY _Bi _Bq _Btu _C _CASE _CASE38
-_CATCH _CDF _COLLATE _COMPLEX _COMPOSE _CONTEXT _CONTINUE _COUNT _CTYPE _CURVE_BEGIN _CURVE_END
-_Ci _Ci0 _Cont _Curie _D _DEFAULT _DEFINE _DEUXPOINTS _DEUX_POINTS _DIALOG _DIGITS _DISPATCH
-_DIV _DO _DOLLAR _DOLLAR_MAPLE _DOUBLE_ _DOUBLE_DEUX_POINTS _DOUBLE_val _Dirac _E _EE _EEE
-_EES6_EE _EES8_EE _ELIF _ELSE _END _ENDCASE _END_INPUT _END_PAR _ENS_9allocatorIS7_EES6_EE
-_ENS_9allocatorIS9_EES8_EE _EQUAL _ERROR _EXPRESSION _EXT _EXTERN _Ei _Ei0 _Ei_f _Eta _F
-_FACTORIAL _FF _FLOAT _FOIS _FOR _FP _FRAC _FRAC2_SYMB _FROM _FUNC _FUNCTION _F_ _Faraday_ _Fdy
-_G _GROUPE_BEGIN _GROUPE_END _G_ _Gal _Gamma _Gy _H _HASH _HELP _HFCC _HOME _Heaviside _Hz _I0_
-_ICDF _ID _IDENT _IF _IFERR _IFTE _IMPMULT _IN _INDEX_BEGIN _INPUT _INT _INTERROGATION
-_INTERSECT _INTERVAL _IO_ _IP _IS_LINEAR _J _K _Kcal _L _LINEAR _LINE_BEGIN _LINE_END _LIST
-_LITERAL _LOCAL _LOCALBLOC _LOGO _LONGFLOAT _LOOP _LambertW _LambertWs _M _MAP _MAPLE _MAPLELIB
-_MAPSTO _MATRICE_BEGIN _MATRICE_END _MATRIX _MESSAGES _MHz _MINUS _MOD _MOINS _MOINS38 _MONETARY
-_MUPMAP_WHILE _MW _Maplefile _MeV _Mupadfile _N _NAME _NA_ _NEG38 _NOT _NULL _NUMBER _NUMERIC _O
-_OF _OP _OP_38 _Ohm _Ox_2d _Ox_3d _Oy_2d _Oy_3d _Oz_3d _P _PAR _PIPE _PLUS _POINTS _POLY1_BEGIN
-_POLY1_END _POW _PRGM _PRIME _PROC _PROGRAM _PSun_ _Pa _Psi _Psi_minus_ln _Q _QUOTE
-_QUOTED_BINARY _R _RAT _REPEAT _RETURN _REarth_ _RNDA _ROOT _ROOTOF_BEGIN _ROOTOF_END _RPN_BEGIN
-_RPN_CASE _RPN_END _RPN_FOR _RPN_IF _RPN_OP _RPN_UNTIL _RPN_WHILE _RSun_ _R_ _Rankine
-_Rinfinity_ _S _SEMI _SEQ__VECT _SERIES _SET_BEGIN _SET_END _SPECIALFLOAT _SPOLY1_BEGIN
-_SPOLY1_END _SQ _STACK _START _STO _STRING _STRNG _STRNGptr _SWITCH _SYMB _SYMBOL _SYMBOLIC _Si
-_SiCi_f _SiCi_g _St _StdP_ _StdT_ _Sv _T _TEST_EQUAL _THEN _TIME _TO _TRY _TRY_CATCH _TYPE_ID
-_Tc _Torr _UNARY_OP _UNARY_OP_38 _UNION _UNIT _UNTIL _V _VECT _VECTOR_BEGIN _VECTOR_END
-_VECT_BEGIN _VECT_DISPATCH _VECT_END _VECTptr _VIRGULE _Vm_ _W _WHILE _Wb _Wh _X _Z _Zeta __
-__210__stdinbufIcEE __210__stdinbufIwEE __210__time_putE __210ctype_baseE __210istrstreamE
-__210money_baseE __210moneypunctIcLb0EEE __210moneypunctIcLb1EEE __210moneypunctIwLb0EEE
-__210moneypunctIwLb1EEE __211__money_getIcEE __211__money_getIwEE __211__money_putIcEE
-__211__money_putIwEE __211__stdoutbufIcEE __211__stdoutbufIwEE __212__do_messageE
-__212codecvt_baseE __212strstreambufE __212system_errorE __213messages_baseE
-__214__num_get_baseE __214__num_put_baseE __214__shared_countE __214error_categoryE
-__217bad_function_callE __219__iostream_categoryE __220__time_get_c_storageIcEE
-__220__time_get_c_storageIwEE __25ctypeIcEE __25ctypeIwEE __26locale5__impE __26locale5facetE
-__27codecvtIDiDu11__mbstate_tEE __27codecvtIDic11__mbstate_tEE __27codecvtIDsDu11__mbstate_tEE
-__27codecvtIDsc11__mbstate_tEE __27codecvtIcc11__mbstate_tEE __27codecvtIwc11__mbstate_tEE
-__27collateIcEE __27collateIwEE __28ios_base7failureE __28ios_baseE __28messagesIcEE
-__28messagesIwEE __28numpunctIcEE __28numpunctIwEE __29__num_getIcEE __29__num_getIwEE
-__29__num_putIcEE __29__num_putIwEE __29basic_iosIcNS_11char_traitsIcEEEE
-__29basic_iosIwNS_11char_traitsIwEEEE __29time_baseE __6 __VECT ___ __apps
-__baseIFbRKN4giac7index_mES5_EEE __class_type_infoE __cxxabiv116__shim_type_infoE
-__cxxabiv117__class_type_infoE __cxxabiv117__pbase_type_infoE __cxxabiv119__pointer_type_infoE
-__cxxabiv120__function_type_infoE __cxxabiv120__si_class_type_infoE
-__cxxabiv121__vmi_class_type_infoE __cxxabiv123__fundamental_type_infoE __do_messageE
-__function_type_infoE __fundamental_type_infoE __gmp_bits_per_limb __gmpfr_ceil_log2
-__gmpfr_emax __gmpfr_flags __gmpn_fft_next_size __gmpn_mod_1 __gmpz_sizeinbase __impE
-__iostream_categoryE __mbstate_tEE __money_getIcEE __money_getIwEE __money_putIcEE
-__money_putIwEE __num_getIcEE __num_getIwEE __num_get_baseE __num_putIcEE __num_putIwEE
-__num_put_baseE __pbase_type_infoE __platf __pointer_to_member_type_infoE __pointer_type_infoE
-__shared_countE __shim_type_infoE __si_class_type_infoE __stdinbufIcEE __stdinbufIwEE
-__stdoutbufIcEE __stdoutbufIwEE __time_get_c_storageIcEE __time_get_c_storageIwEE __time_putE
-__tmp_ __vmi_class_type_infoE _a _a0_ _a_z _abc _abca _abs _abstractE _accroissement _acos
-_acosh _acre _action _addassume _aire _alg _alg_ext_order_size _algext _aligne _all_vars _alloc
-_allowed _alpha _alpha_ _ambient _ambient_and_diffuse _an _and _and_back _and_diffuse _ang
-_angl_ _angle _animate _apply _apps _arc _arcmin _arcs _are_files _arg _argument
-_array_new_length _arret _asin _asinh _assign _assume _at _at_Ci _at_Ci0 _at_Dirac _at_Ei
-_at_Ei0 _at_Ei_f _at_Eta _at_Gamma _at_LambertW _at_LambertWs _at_Psi _at_Psi_minus_ln _at_Si
-_at_SiCi_f _at_SiCi_g _at_Zeta _at_abs _at_acos _at_acosh _at_asin _at_asinh _at_atan _at_atanh
-_at_cos _at_cosh _at_erf _at_erfc _at_erfs _at_exp _at_factorial _at_id _at_ln _at_lnGamma_minus
-_at_log10 _at_neg _at_order_size _at_quote _at_sign _at_sin _at_sinh _at_sq _at_sqrt _at_tan
-_at_tanh _at_unquote _atan _atanh _atm _attenuation _au _augment _autosimplify _axes _axis
-_axis_color _axis_name _axis_unit _b _back _bar _base _base7failureE _baseE
-_baseIFbRKN4giac7index_mES5_EEE _basis_exp _batons _bbl _bblep _bestlocalbound _bestprojection
-_binary _binaryvariables _bisector _bits_per_limb _blend _bloc_end _block _blocksize _bn _boe
-_breadthfirst _bridge _bu _buUS _buffer _buffer_stack _build_complex _bundle _bytes _c _c3_ _c_
-_c_conjugate _c_storageIcEE _c_storageIwEE _cache _cachesize _cal _call _callE _canaux
-_canonique _carre _cas _case _cast _catch _category _categoryE _cd _cdf _ceil_log2 _centre
-_cercle _certificate _certify _cf _chain _chaine _channels _chapeau_carre _chapeau_plat
-_chapeau_rond _check _circle _circle_bundle _class_type_infoE _cm _cn _cocoa _cocyclic
-_cocyclique _cof _colinear _collinear _color _color_control _color_indexes _column _comment
-_common_alg_ext_order_size _commune _compare _compat _complex _complexe _composite_ _computed
-_concyclic _cone _conic _conjugate _conjugue _conjugue_C _conjugue_complexe
-_constant_attenuation _context _control _convert_ _convert_2 _convert_7 _coordinates _coplanaire
-_coplanar _correlation _cos _cosh _cospherical _cospherique _cote _count _countE _counter _cpdf
-_crayon _create_buffer _croix _cst _ct _cu _cube _cumulees _cutoff _cxxabiv116__shim_type_infoE
-_cxxabiv117__class_type_infoE _cxxabiv117__pbase_type_infoE _cxxabiv119__pointer_type_infoE
-_cxxabiv120__function_type_infoE _cxxabiv120__si_class_type_infoE
-_cxxabiv121__vmi_class_type_infoE _cxxabiv123__fundamental_type_infoE _cycle _d _dB _dE _dans
-_dans_C _data _de_cote _de_fichier _decay _decomp _deg _deg2 _degree _degreeF _denominator
-_depthfirst _depthlimit _derivativeE _derivative_oneargE _derivee _dessin _det _deux_points
-_dfl_prec _diff _difference _diffuse _digits _dim2 _direction _display _div _div_q _div_qr
-_divappr_q _divide _division _division_harmonique _division_point _divrem2 _do _do_messageE _dot
-_double _droit _droite _du_dessin _dv _dyn _e _e1 _eV _element _else _emax _emission _empty _end
-_enregistrement _entier _entiers _entropy _epaisseur_1 _epaisseur_2 _epaisseur_3 _epaisseur_4
-_epaisseur_5 _epaisseur_6 _epaisseur_7 _epaisseur_8 _epsilon _epsilon0_ _epsilon0q_ _epsilonox_
-_epsilonsi_ _eq _equal _equal_in_prog _equation _equilateral _erf _erfc _erfs _erg _error
-_errorE _est_dans _etoile _euler _eval _evalE _eval_level _exp _exp2 _exp_t _exponent _ext
-_ext_digits _ext_order_size _extern _extract _extremum _f _f0_ _f5 _factor _factorial
-_factoriser _faisceau_cercle _faisceau_droite _fath _fbm _fc _fconcat _fdy _feasibilitytolerance
-_fermi _fft _fft_next_size _fichier _field _fieldE _file_name _filebufIcNS_11char_traitsIcEEEE
-_fileinfo _files _filled_arc _filled_circle _firstfractional _flags _flam _flat _flat_line
-_floor _fm _fnest _fonction _for _for_display _form _format _fraction _frequencies _front
-_front_and_back _ft _ftUS _function _function_abstractE _function_call _function_callE
-_function_eval _function_evalE _function_of _function_ptr _function_type_infoE _function_userE
-_functions _fundamental_type_infoE _g _g_ _ga _galC _galUK _galUS _gamma _gaptolerance _gauche
-_gbasis _gcd _gcdmod _get _getIcEE _getIwEE _get_baseE _get_c_storageIcEE _get_c_storageIwEE
-_get_next_buffer _gf _giacmcp _gmol _gmp_bits_per_limb _gmpfr_ceil_log2 _gmpfr_emax _gmpfr_flags
-_gmpn_fft_next_size _gmpn_mod_1 _gmpz_sizeinbase _gon _good_eval _grad _gradient _grain _greater
-_h _h_ _ha _handle_tools_list _handler _harmonic _harmonic_circle_bundle _harmonic_line_bundle
-_harmonique _hbar_ _head_tail _help _help_w _hensel_lift_factor _hessenberg _hessenberg_p
-_heuristic _history _hp _hybrid _hyp2exp _i _i_ _ia_mcptools _icdf _id _ideal _if _if_true
-_ifactors _ifstreamIcNS_11char_traitsIcEEEE _ilaplace _image _impE _impair _in _inH20 _inH2O
-_inHg _in_gbasis _in_prog _inch _included _inclus _incomplete_gamma _increment _index _indexes
-_inequation _inf _info _infoE _infolevel _initialpoint _inplace _input _input_ _inside
-_instructions _int _integer _integertolerance _integervariables _integral _inter _interiorpoint
-_interpolate _intersect _interval _intervalE _intgab38 _inv_diff _invisible
-_iosIcNS_11char_traitsIcEEEE _iosIwNS_11char_traitsIwEEEE _iostreamIcNS_11char_traitsIcEEEE
-_iostream_categoryE _irreducible _is_greater _is_inside _isocele _isoceles _isosceles
-_istreamIcNS_11char_traitsIcEEEE _istreamIwNS_11char_traitsIwEEEE _iter _iterationlimit
-_iteratorIcNS_11char_traitsIcEEEEEE _iteratorIwNS_11char_traitsIwEEEEEE _j _jordan _jordan_block
-_k _kWh _k_ _key _keyword _kg _kip _km _knot _kph _kq_ _l _lam _lambda0 _lambda0_ _lambdac_
-_language _large _large_for_display _lastfractional _laurin _lb _lbf _lbmol _lbt _lcm _leequal
-_lehmer _length _lep _less _level _lex_is_greater _lexer _lexer_ _lexer_at _lgamma _lib _lieu
-_lift_factor _light _light0 _light1 _light2 _light3 _light4 _light5 _light6 _light7
-_light_model_ambient _light_model_color_control _light_model_local_viewer _light_model_two_side
-_ligne _ligne_1 _ligne_2 _ligne_3 _ligne_4 _ligne_5 _ligne_6 _ligne_7 _ligne_8 _limb _limb_t
-_limit _line _line_bundle _lineaire _linear_attenuation _linsolve _liqpt _list _literal _lm _ln
-_lnGamma_minus _local_viewer _log10 _log2 _logx _logy _logz _loop _losange _loss _lower
-_lower_incomplete_gamma _lx _lyr _lz _m _mES2_E _mES5_EEE _mES5_ENS_9allocatorIS7_EES6_EE
-_mEarth_ _mSun_ _mac_laurin _malloc _massey _material _matrix _max _max_pairs _max_tries
-_maxcuts _maximize _mbstate_tEE _mcp_server _mcptools _me_ _measure _member_type_infoE _messageE
-_mesure _method _mho _mi _miUS _mil _mile _milieu _mille _min _minor _minus _minus_ln
-_minus_src_alpha _ml _mm _mmHg _mn _mod _mod_1 _mod_decomp _mode _mode_decomp _model_ambient
-_model_color_control _model_local_viewer _model_two_side _modes _modgcd _mol _molK
-_money_getIcEE _money_getIwEE _money_putIcEE _money_putIwEE _montrer _mostfractional _moyal _mp_
-_mp_d _mp_size _mpfr_exp _mpfr_prec _mpfr_sign _mph _mpme_ _mu0_ _muB_ _muN_ _mult _mult_size _n
-_n2 _name _nand _neg _new_length _next_buffer _next_size _nmi _noabs _node_sum _nodelimit
-_nodeselect _non_zero _nonnegative _nonnegint _norm _normal _normale _nostep _not _nrows_2cols
-_num_getIcEE _num_getIwEE _num_get_baseE _num_putIcEE _num_putIwEE _num_put_baseE _numerique
-_object _objectE _odeplot _of _of_deg2 _of_range _of_variable _ofstreamIcNS_11char_traitsIcEEEE
-_on _one_minus_src_alpha _oneargE _op _operator _operator_reduce _operator_times _option _or
-_or_empty _or_literal _order_size _ortho _ortho3 _orthogonal _osculateur
-_ostreamIcNS_11char_traitsIcEEEE _ostreamIwNS_11char_traitsIwEEEE _ouvert _oz _ozUK _ozfl _ozt
-_p _pair _pairs _paper _par_parties_dv _par_parties_u _parallel _parallele _parallelogram
-_parallelogramme _parameq _parametrique _parties_dv _parties_u _pbase_type_infoE _pc _pcar _pdl
-_per_limb _permu _perpendiculaire _perpendicular _perspective _pf _ph _phase _phi_ _phrase _pi
-_pivot _pixel _pixels _pk _plat _platf _plein _plot _plotode _plus _plus_montrer _point _point_1
-_point_2 _point_3 _point_4 _point_5 _point_6 _point_7 _point_8 _point_arret _pointe _pointee
-_pointer_to_member_type_infoE _pointer_type_infoE _pointpoint _points _pol _polaire _polaires
-_polar_complex _polygon _polygonale _polygonale_pointee _polynomial _population _position
-_positive _pow _power _prec _prec_t _precision _premier _premiers _presolve _prime _prime_p
-_primes _print_tex _proba_time _probab_prime_p _probabiliste _proc _prod _product _prog
-_pseudocost _pseudoprime _psi _pt _ptUK _ptr _putE _putIcEE _putIwEE _put_baseE _q _q6 _qA _q_
-_qe _qe_ _qepsilon0_ _qme_ _qr _qt _quadratic_attenuation _quadric _quadrille _quaternion _quote
-_r _rad _rad_ _radian _radical _range _rat _rat_ro_rat _rate _ratio _rational _raw _rd
-_reciproque _record_name _rect _rectangle _rectangulaires _rectangular _recurrence
-_recursive_normal _reduce _reduce_pf _reduite _regression _regression_plot _regressiont _regroup
-_regrouper _reinject _reinsch_decomp _reinsch_mod_decomp _reinsch_mode_decomp _rem _rempli _rep
-_resultant _rev _revlex_is_greater _rhombus _riemann _right_triangle _ro_rat _rod _rond _root
-_root_of_deg2 _rootof _rotation _rotation_axis _round_line _rpm _rref _rsolve _s _s1 _samples
-_sb _scalaire _scan_buffer _scan_bytes _scc _screen _sd _sd_ _search _search_start _segments
-_seidel_linsolve _separate_max_tries _separate_specular_color _seqgen _server _setup
-_shared_countE _sheet _shim_type_infoE _shininess _showaxes _shownames _si_class_type_infoE
-_side _sigma _sigma_ _sign _simplex _simult_primes _sin _single _single_color _sinh _size
-_size_t _sizeinbase _slug _smod _smooth _solutions _solve _solve_composite_ _solve_counter
-_solver _sort _sort_function _specular _specular_color _spot_cutoff _spot_direction
-_spot_exponent _spread _sq _sqrt _square _square_line _sr _src_alpha _st _stack _start
-_stdinbufIcEE _stdinbufIwEE _stdoutbufIcEE _stdoutbufIwEE _step _sto _storageIcEE _storageIwEE
-_str _str_raw _streambufIcNS_11char_traitsIcEEEE _streambufIwNS_11char_traitsIwEEEE _strict_sort
-_string _style _subtract _suite _sum _sum_x _sup _sur_C _switch _symbol _syr_ _systeme_lineaire
-_t _tEE _tail _tan _tangente _tanh _tbps _tbsp _tec _tep _tepC _tepcC _tepgC _tetrahedron _tex
-_texture _therm _ti _time _time_get_c_storageIcEE _time_get_c_storageIwEE _time_putE _timelimit
-_timeout _times _tiret _tiret_point _tiret_pointpoint _tk _tmp_ _tmpvar _to_inequation
-_to_member_type_infoE _to_print_tex _to_xp _toe _token _tolerance _ton _tonUK _too_large
-_too_large_for_display _tools_list _torr _tortue _total_revlex_is_greater _tr _trait_plein
-_traitsIcEEEE _traitsIcEEEEEE _traitsIcEENS_9allocatorIcEEEE _traitsIwEEEE _traitsIwEEEEEE
-_transcendant _triangle _triangule _tries _trig_solutions _trigo _true _tsp _turtle _two_side
-_twopi_ _type _type_infoE _type_population _typeinfo _u _ugamma _ui _unequal _union _unique
-_unit _unit_vector _unitaire_Ox_2d _unitaire_Ox_3d _unitaire_Oy_2d _unitaire_Oy_3d
-_unitaire_Oz_3d _unlock _unquote _upper _upper_incomplete_gamma _upper_parallel _uprec_t _userE
-_v _val _var _variable _variables _variablesmode _vars _varselect _vector _verbose _version
-_viewer _vmi_class_type_infoE _w _when _while _width _width_1 _width_2 _width_3 _width_4
-_width_5 _width_6 _width_7 _width_8 _width_n _x _x_axis_color _x_axis_name _x_axis_unit
-_x_solve_composite_ _xgcd _xk _xn _xor _xp _xtick _y _y_axis_color _y_axis_name _y_axis_unit _yd
-_yk _yr _ytick _z _z_axis_color _z_axis_name _z_axis_unit _zero _zero_extremum _ztick a2q abcuv
-about abs abscissa accumulate_head_tail acos acos2asin acos2atan acosh acot acoth acsc adaptive
-add add_autosimplify add_language additionally addr adjoint_matrix affix alg alg_ext_digits
-algebraic algsubs algvar all_trig_solutions alog10 alors altitude and andsto angle angle_radian
-angleat angleatraw animate animate3d animation ans append apply approx approx_mode arc arcLen
-arccos arccosh arccot arccsc archive arclen arcsec arcsin arcsinh arctan arctanh area areaat
-areaatraw areaplot arg args array array_sto as_function_of asc asec asin asin2acos asin2atan
-asinh assert assign assume at atan atan2 atan2acos atan2asin atanh atrig2ln augment augmente_de
-auto_assume autosimplify avance avgRC axes axesfont axis back background backquote backward
-baisse_crayon bar_plot bareiss barplot barycenter base basis batons begin berlekamp_massey
-bernoulli bernoulli_mod besselI besselJ besselK besselY betad betad_cdf betad_icdf betavariate
-bezier bezout_entiers bezoutian bin binomial binomial_cdf binomial_icdf binprint
-bisection_solver bisector bitand bitmap bitnot bitor bitxor black bloc blockmatrix
-blockmatrix_mult_size blue bool border bounded_function boxwhisker break breakpoint brent_solver
-by c1oc2 c1op2 cFactor cSolve cZeros cache_tortue calc_mode camembert canonical_form cap
-cap_flat_line cap_round_line cap_square_line cas_setup case caseval cat catch cauchy cauchy_cdf
-cauchy_icdf cauchyd cauchyd_cdf cauchyd_icdf cd cdf cdfplot ceil ceiling cell center
-center2interval centered_cube centered_tetrahedron cfactor cfsolve changebase char charpoly
-chinrem chisquare chisquare_cdf chisquare_icdf chisquared chisquared_cdf chisquared_icdf
-chisquaret choice cholesky choosebox chr chrem circle circumcenter circumcircle classes clear
-clearscreen click close coeff coeffs col colDim colNorm colSwap coldim collect colnorm color
-colormap colspace colswap comDenom comb combine comment common_perpendicular companion compare
-complement complex complex_mode complex_variables complexroot concat cond cone confidence
-confrac conic conj conjugate_gradient cont contains content continue contourplot convert
-convert3d convert_rootof convertir convexhull coordinates coords copy copysign correlation cos
-cos2sintan cosh cot cote coth count count_eq count_inf count_sup courbe_parametrique
-courbe_polaire covariance covariance_correlation cp cpartfrac cpp cprint crationalroot crayon
-critical cross crossP cross_point cross_ratio crossproduct csc csch csolve csv2gen cube cumSum
-cumsum cumulated_frequencies curl current_sheet curvature curve cyan cycle2perm cycleinv
-cycles2permu cyclotomic cylinder czeros dash_line dashdot_line dashdotdot_line dayofweek de
-deSolve debug debug_infolevel debut_enregistrement decrement default degree degrees del delcols
-delrows deltalist denom densityplot derive deriver desolve dessine_tortue det det_minor
-developper developper_transcendant dfc dfc2f diag diff dim diminue_de discreted discriminant
-display disque disque_centre distance distance2 distanceat distanceatraw div divcrement
-divergence divide divis division_point divisors divmod divpc dnewton_solver do dodecahedron
-domain dot dotP dot_line dot_paper dotprod downto draw_arc draw_circle draw_filled_arc
-draw_filled_circle draw_line draw_pixel draw_polygon draw_rectangle draw_string droit
-droite_tangente dsolve dtype e e2r ecart_type ecart_type_population ecm_factor ecris efface egcd
-egv egvl eigVc eigVl eigenvals eigenvalues eigenvectors eigenvects element elif eliminate
-ellipse else end end_case end_do end_for end_if end_proc end_while endfunc entry enumerate
-envelope epaisseur epaisseur_ligne_1 epaisseur_ligne_2 epaisseur_ligne_3 epaisseur_ligne_4
-epaisseur_ligne_5 epaisseur_ligne_6 epaisseur_ligne_7 epaisseur_ligne_8 epaisseur_point_1
-epaisseur_point_2 epaisseur_point_3 epaisseur_point_4 epaisseur_point_5 epaisseur_point_6
-epaisseur_point_7 epaisseur_point_8 epsilon epsilon2zero equal equal2diff equal2list equation
-equilateral_triangle erase erase3d erf erfc erfs error esac est_divise_par est_eleve_puissance
-est_multiplie_par et euler euler_gamma euler_mac_laurin eval eval_level evala evalb evalc evalf
-evalfa evalm even evolute exact exbisector excenter excircle execute exp exp2list exp2pow
-exp2trig expand expexpand expln expln2trig expm1 exponential exponential_cdf exponential_icdf
-exponential_regression exponential_regression_plot exponentiald exponentiald_cdf
-exponentiald_icdf export expovariate expr extend extract_measure extrema ezgcd f2nd fMax fMin
-fPart faces facteurs_premiers factor factor_xn factorial factoriser factoriser_entier
-factoriser_sur_C factoriser_xn factors fadeev faire false falsepos_solver faux fclose fcoeff
-fdistrib feuille ffaire ffonction fft fft_mult fft_mult_size fi fieldplot fill_rect filled
-filter fin_enregistrement find findhelp fisher fisher_cdf fisher_icdf fisherd fisherd_cdf
-fisherd_icdf flatten flatten1 float float2rational floor fmod fonction fonction_derivee font
-fopen for format forward fourier_an fourier_bn fourier_cn fpour fprint frac fracmod frame_2d
-frame_3d frames frenet frequencies frexp frobenius_norm from froot fsi fsolve ftantque
-fullparfrac func funcplot function_diff fxnd galoisconj gammad gammad_cdf gammad_icdf
-gammavariate gauche gauss gauss15 gauss_seidel_linsolve gaussjord gaussquad gbasis
+XOR XPON Zeta ZoomRcl ZoomSto a2q abcuv about abs abscissa accumulate_head_tail acos acos2asin
+acos2atan acosh acot acoth acsc adaptive add add_autosimplify add_language additionally addr
+adjoint_matrix affix alg alg_ext_digits algebraic algsubs algvar all_trig_solutions alog10 alors
+altitude and andsto angle angle_radian angleat angleatraw animate animate3d animation ans append
+apply approx approx_mode arc arcLen arccos arccosh arccot arccsc archive arclen arcsec arcsin
+arcsinh arctan arctanh area areaat areaatraw areaplot arg args array array_sto as_function_of
+asc asec asin asin2acos asin2atan asinh assert assign assume at atan atan2 atan2acos atan2asin
+atanh atrig2ln augment augmente_de auto_assume autosimplify avance avgRC axes axesfont axis back
+background backquote backward baisse_crayon bar_plot bareiss barplot barycenter base basis
+batons begin berlekamp_massey bernoulli bernoulli_mod besselI besselJ besselK besselY betad
+betad_cdf betad_icdf betavariate bezier bezout_entiers bezoutian bin binomial binomial_cdf
+binomial_icdf binprint bisection_solver bisector bitand bitmap bitnot bitor bitxor black bloc
+blockmatrix blockmatrix_mult_size blue bool border bounded_function boxwhisker break breakpoint
+brent_solver by c1oc2 c1op2 cFactor cSolve cZeros cache_tortue calc_mode camembert
+canonical_form cap cap_flat_line cap_round_line cap_square_line cas_setup case caseval cat catch
+cauchy cauchy_cdf cauchy_icdf cauchyd cauchyd_cdf cauchyd_icdf cd cdf cdfplot ceil ceiling cell
+center center2interval centered_cube centered_tetrahedron cfactor cfsolve changebase char
+charpoly chinrem chisquare chisquare_cdf chisquare_icdf chisquared chisquared_cdf
+chisquared_icdf chisquaret choice cholesky choosebox chr chrem circle circumcenter circumcircle
+classes clear clearscreen click close coeff coeffs col colDim colNorm colSwap coldim collect
+colnorm color colormap colspace colswap comDenom comb combine comment common_perpendicular
+companion compare complement complex complex_mode complex_variables complexroot concat cond cone
+confidence confrac conic conj conjugate_gradient cont contains content continue contourplot
+convert convert3d convert_rootof convertir convexhull coordinates coords copy copysign
+correlation cos cos2sintan cosh cot cote coth count count_eq count_inf count_sup
+courbe_parametrique courbe_polaire covariance covariance_correlation cp cpartfrac cpp cprint
+crationalroot crayon critical cross crossP cross_point cross_ratio crossproduct csc csch csolve
+csv2gen cube cumSum cumsum cumulated_frequencies curl current_sheet curvature curve cyan
+cycle2perm cycleinv cycles2permu cyclotomic cylinder czeros dash_line dashdot_line
+dashdotdot_line dayofweek de deSolve debug debug_infolevel debut_enregistrement decrement
+default degree degrees del delcols delrows deltalist denom densityplot derive deriver desolve
+dessine_tortue det det_minor developper developper_transcendant dfc dfc2f diag diff dim
+diminue_de discreted discriminant display disque disque_centre distance distance2 distanceat
+distanceatraw div divcrement divergence divide divis division_point divisors divmod divpc
+dnewton_solver do dodecahedron domain dot dotP dot_line dot_paper dotprod downto draw_arc
+draw_circle draw_filled_arc draw_filled_circle draw_line draw_pixel draw_polygon draw_rectangle
+draw_string droit droite_tangente dsolve dtype e e2r ecart_type ecart_type_population ecm_factor
+ecris efface egcd egv egvl eigVc eigVl eigenvals eigenvalues eigenvectors eigenvects element
+elif eliminate ellipse else end end_case end_do end_for end_if end_proc end_while endfunc entry
+enumerate envelope epaisseur epaisseur_ligne_1 epaisseur_ligne_2 epaisseur_ligne_3
+epaisseur_ligne_4 epaisseur_ligne_5 epaisseur_ligne_6 epaisseur_ligne_7 epaisseur_ligne_8
+epaisseur_point_1 epaisseur_point_2 epaisseur_point_3 epaisseur_point_4 epaisseur_point_5
+epaisseur_point_6 epaisseur_point_7 epaisseur_point_8 epsilon epsilon2zero equal equal2diff
+equal2list equation equilateral_triangle erase erase3d erf erfc erfs error esac est_divise_par
+est_eleve_puissance est_multiplie_par et euler euler_gamma euler_mac_laurin eval eval_level
+evala evalb evalc evalf evalfa evalm even evolute exact exbisector excenter excircle execute exp
+exp2list exp2pow exp2trig expand expexpand expln expln2trig expm1 exponential exponential_cdf
+exponential_icdf exponential_regression exponential_regression_plot exponentiald
+exponentiald_cdf exponentiald_icdf export expovariate expr extend extract_measure extrema ezgcd
+f2nd fMax fMin fPart faces facteurs_premiers factor factor_xn factorial factoriser
+factoriser_entier factoriser_sur_C factoriser_xn factors fadeev faire false falsepos_solver faux
+fclose fcoeff fdistrib feuille ffaire ffonction fft fft_mult fft_mult_size fi fieldplot
+fill_rect filled filter fin_enregistrement find findhelp fisher fisher_cdf fisher_icdf fisherd
+fisherd_cdf fisherd_icdf flatten flatten1 float float2rational floor fmod fonction
+fonction_derivee font fopen for format forward fourier_an fourier_bn fourier_cn fpour fprint
+frac fracmod frame_2d frame_3d frames frenet frequencies frexp frobenius_norm from froot fsi
+fsolve ftantque fullparfrac func funcplot function_diff fxnd galoisconj gammad gammad_cdf
+gammad_icdf gammavariate gauche gauss gauss15 gauss_seidel_linsolve gaussjord gaussquad gbasis
 gbasis_max_pairs gbasis_reinject gbasis_simult_primes gbasis_vars gcd gcdex genpoly geo2d geo3d
 geometric geometric_cdf geometric_icdf getDenom getKey getNum getType get_key get_pixel ggb_ang
 ggbalt ggbsort giac gl_ambient gl_ambient_and_diffuse gl_animate gl_back gl_blend
@@ -414,3 +225,12 @@ yellow ystep zeros zip znorder znprimroot zstep ztrans
 `;
 
 export const GIAC_RESERVED_NAMES: ReadonlySet<string> = new Set(NAMES.split(/\s+/).filter(Boolean));
+
+/**
+ * The non-ASCII letters the engine reads as plain symbols, from the Greek and
+ * Latin-1 blocks. Any other non-ASCII character in an equation is refused: `∑`
+ * and `Σ` are `sum` to the engine, `∫` is `int` and `∂` is `diff`.
+ */
+export const GIAC_FREE_GLYPHS: ReadonlySet<string> = new Set(
+  'ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖØÙÚÛÜÝÞßàáâãäåæçèéêëìíîïðñòóôõöøùúûüýþͰͱͲͳʹͶͷͺͻͼͽͿΆΈΉΊΌΎΏΐΑΒΓΕΖΗΘΙΚΛΜΝΞΟΠΡΤΥΦΧΨΩΪΫάέήΰαβγδεζηθικλμνξορςστυφχψωϊϋόύώϏϐϑϒϓϔϕϖϗϘϙϚϛϜϝϞϟϠϡϢϣϤϥϦϧϨϩϪϫϬϭϮϯϰϱϲϳϴϵϷϸϹϺϻϼϽϾϿ'
+);

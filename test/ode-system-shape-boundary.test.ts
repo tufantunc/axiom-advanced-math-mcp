@@ -42,6 +42,7 @@ const TEXT_ONLY = [
   'src/server/tools/ode-system-shape.ts',
   'src/server/tools/ode-condition-bounds.ts',
   'src/server/tools/ode-cost-bounds.ts',
+  'src/server/tools/ode-name-bounds.ts',
   'src/server/tools/ode-text-tokens.ts',
   'src/server/tools/ode-misreading.ts',
 ];
@@ -165,6 +166,7 @@ describe('the text-only halves evaluate nothing', () => {
       'src/server/tools/ode-system-shape.ts',
       'src/server/tools/ode-condition-bounds.ts',
       'src/server/tools/ode-cost-bounds.ts',
+      'src/server/tools/ode-name-bounds.ts',
       'src/server/tools/ode-text-tokens.ts',
       'src/server/tools/ode-misreading.ts',
       'src/server/tools/output-cleanup.ts',

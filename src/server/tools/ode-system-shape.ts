@@ -1,7 +1,8 @@
 import { stripEnclosingBrackets } from './compute/arg-parsing.js';
 import { escapeForRegExp, excerpt, splitTopLevel } from './output-cleanup.js';
 import { unicodeToAscii } from './unicode-normalize.js';
-import { DERIVATIVE_NAMES, odeCostError } from './ode-cost-bounds.js';
+import { odeCostError } from './ode-cost-bounds.js';
+import { DERIVATIVE_NAMES } from './ode-name-bounds.js';
 import { odeClauses } from './ode-clauses.js';
 import {
   conditionBoundError,

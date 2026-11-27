@@ -58,8 +58,9 @@ wrong answer, which is worse than no test. See CONTRIBUTING.md.
   recycled on timeout or crash. It keeps global state between calls, so every
   tool call runs inside a reset-and-locked session (`src/server/tools.ts`).
 - **Reserved names:** `src/server/tools/giac-reserved-names.ts` lists every name
-  the bundled Giac reads as a command, constant or keyword; the ODE cost bound
-  refuses those in an equation and admits any other name as the caller's own.
+  the bundled Giac reads as a command, constant or keyword, and the non-ASCII
+  letters it reads as plain symbols; `ode-name-bounds.ts` refuses the names and
+  every other glyph in an equation, and admits any other name as the caller's own.
   It is generated — after replacing `giac.wasm.js`, run `npm run build && node
   scripts/generate-giac-reserved-names.mjs`. `test/giac-reserved-names.test.ts`
   pins the engine's hash so a stale list fails.

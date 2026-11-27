@@ -2049,7 +2049,7 @@ describe("an ODE problem's cost is bounded before the engine sees it", () => {
   const calls = (name: string): RegExp =>
     new RegExp(
       `it calls ${escapeForRegExp(name)}, which the CAS runs as a command rather than ` +
-        'reading as part of an equation — an equation may use elementary functions'
+        'reading as part of an equation — (compute|write)'
     );
   const names = (name: string): RegExp =>
     new RegExp(`it names ${name}, which the CAS reserves for its own commands and syntax`);
@@ -2080,6 +2080,17 @@ describe("an ODE problem's cost is bounded before the engine sees it", () => {
       /it contains "\$", which an equation/,
     ],
     ['desolve(diff(y(x),x$(10^7))+y(x)=0, x, y)', 'this equation', /it contains "\$"/],
+    // Glyphs the engine reads as commands, and an operator spelling of a
+    // power: each held the worker 10s on this branch's first version.
+    ["desolve(y'=y+∑(1/(k^3+2),k,1,10^4), x, y)", 'this equation', /it contains "∑"/],
+    ["desolve([y'=z+∑(1/(k^3+2),k,1,10^4), z'=-y], x)", 'this system', /it contains "∑"/],
+    ["desolve(y'=y*((x+1)&^300), x, y)", 'this equation', /it contains "&"/],
+    // A reserved name as a condition's VALUE: no call, so the condition's own
+    // check admits it, and the folded text is where it is refused.
+    ["desolve([y'=z, z'=-y, y(0)=undef, z(0)=undef], x)", 'this system', names('undef')],
+    ["desolve([y'=z, z'=-y, y(0)=epsilon, z(0)=0], x)", 'this system', names('epsilon')],
+    ["desolve(y'=y, y(0)=restart, x, y)", 'this equation', names('restart')],
+    ["desolve(y'=y and y(0)=epsilon, x, y)", 'this equation', names('epsilon')],
   ])('refuses %s by name', async (problem, what, reason) => {
     await refusedQuickly(problem, new RegExp(`cannot solve ${what} — ${reason.source}`));
   });
@@ -2103,6 +2114,41 @@ describe("an ODE problem's cost is bounded before the engine sees it", () => {
     expect(r.isError, text(r)).toBe(false);
     expect(text(r)).toMatch(expected);
     expect(text(r)).toMatch(/Verified: ✓/);
+  });
+
+  // The allowlist's measurement, pinned: every function an equation may name
+  // of the CAS's own answers quickly on a 140-digit constant and as the
+  // forcing term of a second-order equation on 3^140+2, with a caller sharing
+  // the worker answered too.
+  it.each(['abs', 'sign', 'erf', 'Heaviside', 'Dirac', 'Si', 'Ci', 'Ei', 'floor', 'Gamma'])(
+    'admits %s on 140-digit arguments, inside the budget',
+    async (fn) => {
+      for (const problem of [
+        `desolve(y'=y+0*${fn}(10^140+7), x, y)`,
+        `desolve(y''+y=${fn}(3^140+2), x, y)`,
+      ]) {
+        victims += 1;
+        const started = Date.now();
+        const [r, victim] = await Promise.all([
+          computeHandler({ problem }),
+          computeHandler({ problem: `desolve(y'=2*y, y(0)=${victims + 2}, x, y)` }),
+        ]);
+        expect(text(r)).not.toMatch(/timed out|worker exited|RuntimeError|memory access/);
+        expect(text(r)).not.toMatch(/cannot solve this equation — it (calls|names)/);
+        expect(Date.now() - started).toBeLessThan(2_000);
+        expect(text(victim)).toMatch(new RegExp(`^Result: ${victims + 2}\\*exp\\(2\\*x\\)$`, 'm'));
+      }
+    }
+  );
+
+  it.each([
+    ["desolve(y'=y+0*max(10^140+7,3), x, y)", /^Result: c_0\*exp\(x\)$/m],
+    ["desolve(y''+y=min(3^140+2,x), x, y)", /^Result: /m],
+  ])('admits %s inside the budget', async (problem, expected) => {
+    const started = Date.now();
+    const r = await computeHandler({ problem });
+    expect(text(r)).toMatch(expected);
+    expect(Date.now() - started).toBeLessThan(2_000);
   });
 
   // Heaviside's answer is a piecewise the verifier does not mark; it answers.
