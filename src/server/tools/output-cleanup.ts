@@ -94,6 +94,122 @@ export function stripOrderTerm(expr: string): string {
   return stripped || expr;
 }
 
+/** `s` without one pair of parentheses that encloses all of it, and without spaces. */
+function unwrapParens(s: string): string {
+  const t = s.replaceAll(/\s+/g, '');
+  if (!t.startsWith('(') || !t.endsWith(')')) return t;
+  let depth = 0;
+  for (let i = 0; i < t.length - 1; i++) {
+    if (t[i] === '(') depth++;
+    else if (t[i] === ')') depth--;
+    if (depth === 0) return t; // the first `(` closes before the end: `(a)*(b)`
+  }
+  return t.slice(1, -1);
+}
+
+/** A name character, as unicode-normalize reads one: a letter, a digit or `_`. */
+function isNameChar(ch: string | undefined): boolean {
+  return ch !== undefined && /[\p{L}\p{N}_]/u.test(ch);
+}
+
+/**
+ * The longest base or argument a series remainder is read with. A remainder's
+ * base is `x`, `x-1`, `1/x`, `x-pi/2`; anything longer is not one, and the
+ * bound is what keeps every scan below proportional to the output's length.
+ */
+const MAX_REMAINDER_BASE = 256;
+
+/** Index of the `)` closing the `(` at `open`, within MAX_REMAINDER_BASE, or -1. */
+function closingParen(s: string, open: number): number {
+  let depth = 0;
+  const end = Math.min(s.length, open + MAX_REMAINDER_BASE + 2);
+  for (let i = open; i < end; i++) {
+    if (s[i] === '(') depth++;
+    else if (s[i] === ')' && --depth === 0) return i;
+  }
+  return -1;
+}
+
+/**
+ * The operand that ends at `end` (inclusive), read backwards within
+ * MAX_REMAINDER_BASE: a parenthesised group, or a run of name characters.
+ * undefined for anything else, and for a function's argument list (`cos(x)`),
+ * which is not an operand on its own.
+ */
+function operandEndingAt(s: string, end: number): string | undefined {
+  const floor = Math.max(0, end - MAX_REMAINDER_BASE - 1);
+  if (s[end] === ')') {
+    let depth = 0;
+    for (let i = end; i >= floor; i--) {
+      if (s[i] === ')') depth++;
+      else if (s[i] === '(' && --depth === 0) {
+        return isNameChar(s[i - 1]) ? undefined : s.slice(i, end + 1);
+      }
+    }
+    return undefined;
+  }
+  let i = end;
+  while (i >= floor && isNameChar(s[i])) i--;
+  return i === end ? undefined : s.slice(i + 1, end + 1);
+}
+
+/** Index of the last non-space character at or before `i`. */
+function skipSpacesBack(s: string, i: number): number {
+  let j = i;
+  while (j >= 0 && /\s/.test(s[j])) j--;
+  return j;
+}
+
+/**
+ * The order of each series remainder in a Giac answer: for every
+ * `order_size(B)` it prints, the k of the `B^k*` in front of it — the
+ * remainder is O(B^k). 0 when nothing in front of it is a power of B.
+ *
+ * Giac marks the place a series expansion broke down with the same token it
+ * uses for an ordinary remainder, so the token alone proves nothing: a
+ * successful expansion to order n ends `+x^(n+1)*order_size(x)`, and one that
+ * met an essential singularity is `order_size(x)` — O(1), no information at
+ * all — or stops early, `1+x*order_size(x)` for `1+x*exp(1/x)` to order 3.
+ * The exponent is what tells them apart, and stripOrderTerm, which cuts the
+ * remainder off, threw it away: `taylor(exp(1/x), x, 0, 3)` answered
+ * `order_size(x)` and `taylor(1+x*exp(1/x), x, 0, 3)` answered `1`.
+ *
+ * Linear in the output's length, because it runs on every engine answer on
+ * the main thread, outside the worker's timeout: each occurrence is read from
+ * the few characters around it, never by rescanning what precedes it. A first
+ * version matched `[\p{L}\p{N}_]+$` against the whole prefix once per
+ * occurrence, and `simplify(seq(x^4*order_size(x),k,1,10000))` — 42
+ * characters of input — held the event loop for 6.5 seconds.
+ */
+export function seriesRemainderOrders(expr: string): number[] {
+  const orders: number[] = [];
+  const marker = 'order_size(';
+  for (let at = expr.indexOf(marker); at !== -1; at = expr.indexOf(marker, at + 1)) {
+    if (isNameChar(expr[at - 1])) continue; // `my_order_size(`
+    const open = at + marker.length - 1;
+    const close = closingParen(expr, open);
+    const base = close === -1 ? undefined : unwrapParens(expr.slice(open + 1, close));
+    let order = 0;
+    let j = skipSpacesBack(expr, at - 1);
+    if (base !== undefined && expr[j] === '*') {
+      j = skipSpacesBack(expr, j - 1);
+      let digitsStart = j;
+      while (digitsStart >= 0 && j - digitsStart < 12 && /\d/.test(expr[digitsStart])) {
+        digitsStart--;
+      }
+      const caret = skipSpacesBack(expr, digitsStart);
+      const powered = digitsStart < j && expr[caret] === '^';
+      const operandEnd = powered ? skipSpacesBack(expr, caret - 1) : j;
+      const operand = operandEndingAt(expr, operandEnd);
+      if (operand !== undefined && unwrapParens(operand) === base) {
+        order = powered ? Number(expr.slice(digitsStart + 1, j + 1)) : 1;
+      }
+    }
+    orders.push(order);
+  }
+  return orders;
+}
+
 /**
  * Normalize Giac's `solve` list output into clean set/tuple notation.
  *   list[-2,2]    -> {-2, 2}
@@ -168,6 +284,30 @@ export function giacNumber(raw: string): number | null {
   // function answers only "is the reply a number".
   return Number.isNaN(value) ? null : value;
 }
+/**
+ * A Giac real as printed: a numeric literal, or `+infinity`/`-infinity` (and
+ * unsigned `infinity`, read as +Infinity); NaN for anything else. giacNumber
+ * with the infinities Giac prints for a bound or a limit.
+ */
+export function printedReal(printed: string): number {
+  const t = printed.trim();
+  if (t === '+infinity' || t === 'infinity') return Infinity;
+  if (t === '-infinity') return -Infinity;
+  return giacNumber(t) ?? Number.NaN;
+}
+
+/**
+ * The members of a list as Giac prints one, `[a,b]` or `list[a,b]`, or
+ * undefined when `printed` is not a list (or is missing).
+ */
+export function printedList(printed: string | undefined): string[] | undefined {
+  let t = printed?.trim();
+  if (t?.startsWith('list[')) t = t.slice(4);
+  if (!t?.startsWith('[') || !t.endsWith(']')) return undefined;
+  const inner = t.slice(1, -1).trim();
+  return inner === '' ? [] : splitTopLevel(inner, ',').map((m) => m.trim());
+}
+
 const COMPLEX_TERM = new RegExp(String.raw`^(.*?)([+-]?(?:${GIAC_NUMBER}\*?)?)i$`);
 
 /**

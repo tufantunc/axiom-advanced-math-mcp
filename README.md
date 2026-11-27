@@ -294,6 +294,19 @@ that depend on the independent variable; a derivative of order above one (rewrit
 `y''=z` as `y'=w, w'=z`); more than nine equations; and a system the CAS cannot
 finish.
 
+Calculus the CAS would answer wrongly is refused too. A definite integral across
+a pole inside its interval is checked piece by piece, because the CAS answers it
+with the Cauchy principal value — `integrate(1/(x-1), x, 0, 2)` was `0` — where
+the integral diverges. A Taylor series that breaks down or stops short of the
+order asked for at a finite point is refused rather than cut back to what looks
+like a polynomial (`taylor(exp(1/x), x, 0, 3)` was `order_size(x)`). With no
+variable named, `diff`, `integrate` and `taylor` refuse an expression with more
+than one symbol (`diff(2x+y)`) instead of picking one, and a variable the CAS
+holds a value in (`DIGITS`, `plus_inf`, `epsilon`) is refused. A derivative with
+respect to a list is bounded by its cost — the expression's length and function
+nesting, the number of variables, and the order — because its size, not its entry
+count, is what traps the engine.
+
 The infinite-result rule covers arithmetic evaluation. A symbolic `+infinity`
 from the CAS routes — a limit, a divergent integral — is a normal answer and
 carries no warning.
