@@ -3,7 +3,7 @@ import { formatErrorResponse } from './response-formatter.js';
 import { validateEquation } from './expression-validator.js';
 import { unicodeToAscii } from './unicode-normalize.js';
 import { evalWithLatex } from './giac-eval.js';
-import { listToSet, splitTopLevel } from './output-cleanup.js';
+import { isEngineFailure, listToSet, splitTopLevel } from './output-cleanup.js';
 import { verifySolveSet, verifySystem, type VerificationResult } from './self-verify.js';
 
 /** Parse a raw Giac solve result (list[...] / [] / [..]) into top-level member strings. */
@@ -46,25 +46,8 @@ export function parseTuples(result: string): string[][] {
   return [];
 }
 
-/**
- * A Giac answer that is no answer. Giac resolves with `GIAC_ERROR: ...` rather
- * than throwing, and answers a malformed input with `undef` INSIDE well-formed
- * output (`√(undef_+4)`), so testing for an exact `'undef'` misses both — and
- * either one, passed on, is printed as the solution set with exit status 0.
- *
- * The marker is matched as a whole token. Giac prints it two ways: `undef`
- * standing alone (`undef`, `x^2=undef`, `4=undef`) and `undef_` where `solve`
- * carries it into a symbolic answer (`√(undef_+4)`, `ln(undef_+4)`). No digit
- * ever follows — `undef_1` is a caller's symbol, echoed as written. A prefix
- * match (`/\bundef/`) also caught any identifier that merely starts with the
- * word: `x*undefined_k=2` was refused as unparseable, because the parse probe
- * runs this on the caller's own text.
- */
-const UNDEFINED_MARKER = /\bundef_?(?!\w)/;
-
-export function isEngineFailure(raw: string): boolean {
-  return raw.includes('GIAC_ERROR') || UNDEFINED_MARKER.test(raw);
-}
+/** Re-exported where it was first defined; it lives beside printedList now. */
+export { isEngineFailure };
 
 /**
  * Refuses an equation Giac cannot parse, by asking how it reads it without

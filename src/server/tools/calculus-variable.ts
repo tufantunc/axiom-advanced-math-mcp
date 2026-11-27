@@ -51,8 +51,8 @@ const MAX_DERIVATIVE_ENTRIES = 256;
  *
  * Only for a list of two or more variables. A single variable grows by much
  * less per order — `diff(exp(sin(x)), x, 100)` answers in under a second — and
- * this model would refuse it, so a single variable is bounded by
- * MAX_CALCULUS_ORDER alone.
+ * this model would refuse it, so a single variable is bounded by measuring the
+ * derivative on the way up (derivative-cost.ts).
  */
 export const MAX_DERIVATIVE_COST = 16_384;
 
@@ -82,9 +82,9 @@ const NAME_CHAR = new RegExp(NAME_CHAR_PATTERN, 'u');
 
 /**
  * The names a variable argument lists: the bracketed list differentiate takes
- * as Giac's gradient, `[x, y]`, or the one name.
+ * as Giac's gradient, `[x, y]`, or the one name. `[x]` is one name.
  */
-function variableNames(variable: unknown): string[] {
+export function variableNames(variable: unknown): string[] {
   const text = String(variable).trim();
   return text.startsWith('[') && text.endsWith(']')
     ? splitTopLevel(text.slice(1, -1), ',').map((n) => n.trim())
