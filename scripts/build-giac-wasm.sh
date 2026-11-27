@@ -11,7 +11,8 @@
 #
 # To update giac:
 #   GIAC_REF=master npm run build:giac:wasm
-#   git add src/server/giac/giac.wasm.js
+#   npm run build && node scripts/generate-giac-reserved-names.mjs
+#   git add src/server/giac/giac.wasm.js src/server/tools/giac-reserved-names.ts
 #   git commit -m "chore: update giac WASM build"
 
 set -euo pipefail

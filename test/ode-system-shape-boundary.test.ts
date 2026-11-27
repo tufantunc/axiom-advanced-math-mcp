@@ -55,6 +55,7 @@ const WALKED = [
   'src/server/tools/unicode-normalize.ts',
   'src/server/tools/compute/arg-parsing.ts',
   'src/server/tools/ode-clauses.ts',
+  'src/server/tools/giac-reserved-names.ts',
 ];
 
 describe('the text-only halves evaluate nothing', () => {
@@ -170,6 +171,7 @@ describe('the text-only halves evaluate nothing', () => {
       'src/server/tools/unicode-normalize.ts',
       'src/server/tools/compute/arg-parsing.ts',
       'src/server/tools/ode-clauses.ts',
+      'src/server/tools/giac-reserved-names.ts',
     ];
     expect(matches, 'overrides setting no-restricted-imports').toHaveLength(1);
     expect(matches[0]?.files, 'the no-restricted-imports override').toEqual(expected);

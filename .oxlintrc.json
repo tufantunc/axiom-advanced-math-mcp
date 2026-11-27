@@ -29,7 +29,8 @@
         "src/server/tools/output-cleanup.ts",
         "src/server/tools/unicode-normalize.ts",
         "src/server/tools/compute/arg-parsing.ts",
-        "src/server/tools/ode-clauses.ts"
+        "src/server/tools/ode-clauses.ts",
+        "src/server/tools/giac-reserved-names.ts"
       ],
       "rules": {
         "no-restricted-imports": [

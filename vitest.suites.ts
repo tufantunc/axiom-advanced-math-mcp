@@ -20,4 +20,5 @@ export const INTEGRATION_TESTS: string[] = [
   'test/http-contract.test.ts',
   'test/http-portability.test.ts',
   'test/cli-contract.test.ts',
+  'test/giac-reserved-names-current.test.ts',
 ];

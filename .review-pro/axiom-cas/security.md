@@ -33,6 +33,16 @@ expressions. Two independent evaluators sit behind the `compute`, `verify` and
   input that was well inside `MAX_EXPRESSION_LENGTH`. Treat a regex over caller
   input as an unauthenticated denial-of-service surface and measure it — the
   method and the threshold are in the performance pack.
+- **A text bound that judges CALLS only.** Giac runs code with no call in it:
+  `y'=y+0*(while 1 do 1 od)` and `…(for k from 1 to 10^9 do od)` held the
+  worker 10 s, `(k)$(k=1..10^7)` and `x$(10^7)` killed it, `(f->f(f))(f->f(f))`
+  recurses on free names, a bare `restart` runs, and `_seq(…)` is `seq` spelled
+  as a unit. A `quote(…)` is no shelter — `desolve` evaluates what it holds.
+  A bound over caller text that reaches Giac must judge every NAME, bare or
+  called, against `GIAC_RESERVED_NAMES` (generated from the engine by
+  `scripts/generate-giac-reserved-names.mjs`), plus the operators no name
+  shows. A hand-written list of "dangerous" names is a finding: the engine
+  reserves ~3,700.
 - **Error text echoed back to the caller** that contains a filesystem path, a
   stack frame, or raw engine internals. Tool errors and the JSON-RPC `-32603`
   envelope must stay opaque.

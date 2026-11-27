@@ -204,11 +204,119 @@ describe('the tree never throws and always bounds', () => {
   // sums and products were binary.
   it.each([
     ['a long chain of separators', `y'=y${'='.repeat(8_000)}`],
-    ['a long run of dots', `y'=y+${'.'.repeat(8_000)}`],
+    ['a long run of dots', `y'=y+${'. '.repeat(4_000)}`],
     ['unbalanced closers', "y'=y)))]]"],
     ['nothing at all', ''],
-    ['stray separators', "y'=$y;@#%"],
+    // Characters the tokenizer reads as separators and an equation may hold:
+    // the `&&` join and glyphs the CAS lexes as undef.
+    ['stray separators', "y'=y&&&§¶→"],
   ])('admits %s without throwing', (_shape, text) => {
+    expect(odeCostError(text)).toBeUndefined();
+  });
+
+  // Before the tree, the name check refuses what an equation is not written
+  // with: these two rows were admitted here before it.
+  it.each([
+    [`y'=y+${'.'.repeat(8_000)}`, 'contains a range "..", which an equation is not written with'],
+    ["y'=$y;@%", 'contains "$", which an equation is not written with'],
+    ["y'=y;@#%", 'holds #, which the CAS reads as a string, a comment'],
+  ])('refuses %#', (text, reason) => {
+    expect(odeCostError(text)).toContain(reason);
+  });
+});
+
+/**
+ * The NAMES the text gives the CAS (equationNameError, run first by
+ * odeCostError). The end-to-end rows, with timings and a concurrent caller,
+ * are in input-bounds.test.ts; this is the rule itself, on the texts the two
+ * paths hand it — the folded command of a single equation, and a system's
+ * right-hand sides and conditions in brackets.
+ */
+describe('the names an equation gives the CAS', () => {
+  const instead =
+    'an equation may use elementary functions such as sin, exp, ln, sqrt and Heaviside, ' +
+    'and parameters or functions of its own';
+  const calls = (name: string): string =>
+    `calls ${name}, which the CAS runs as a command rather than reading as part of an ` +
+    `equation — ${instead}; for a value ${name} computes, compute it on its own first and ` +
+    'write the value in';
+  const names = (name: string): string =>
+    `names ${name}, which the CAS reserves for its own commands and syntax — ${instead}; ` +
+    `rename a parameter spelled ${name}`;
+  const contains = (what: string): string =>
+    `contains ${what}, which an equation is not written with — ${instead}`;
+
+  it.each([
+    // The commands the task measured, in every position the folds put them.
+    ["y'=y+0*ifactor(2^257-1)", calls('ifactor')],
+    ["(y'=y+0*ifactor(2^257-1)) and (y(0)=1)", calls('ifactor')],
+    ["y'=y+0*ifactor(2^257-1) && y(0)=1", calls('ifactor')],
+    ["y'=y+0*ifactor(2^257-1) ∧ y(0)=1", calls('ifactor')],
+    ["[y'=y+0*ifactor(2^257-1), y(0)=1]", calls('ifactor')],
+    ['[z+0*ifactor(2^257-1),-y]', calls('ifactor')],
+    ["y'=y+0*nextprime(10^140)", calls('nextprime')],
+    ["y'=y+0*isprime(10^140+1)", calls('isprime')],
+    ["y'=y+0*ithprime(10^7)", calls('ithprime')],
+    ["y'=y+0*factor(x^200-1)", calls('factor')],
+    ["y'=y+0*sum(1/k,k,1,10^9)", calls('sum')],
+    ["y'=y+0*product(k,k,1,30000)", calls('product')],
+    ["y'=y+0*seq(k,k,1,10^7)", calls('seq')],
+    // A quote's contents are read like any other text.
+    ["y'=y+quote(ifactor(2^257-1))", calls('ifactor')],
+    ["y'=y+0*quote(quote(nextprime(10^140)))", calls('nextprime')],
+    // A list index is a call to the CAS too.
+    ["y'=y+0*ithprime[7]", calls('ithprime')],
+    // Bare names: a loop calls nothing, a group applies one, and a bare
+    // command runs.
+    ["y'=y+0*(while 1 do 1 od)", names('while')],
+    ["y'=y+0*(for k from 1 to 10^9 do od)", names('for')],
+    ["y'=y+0*(repeat 1 until 0)", names('repeat')],
+    ["y'=y+0*(ifactor)(2^257-1)", names('ifactor')],
+    ["y'=y+0*restart", names('restart')],
+    // A CAS variable with a value: main answered c_0*exp(x*1e-12).
+    ["y'=epsilon*y", names('epsilon')],
+    // A leading underscore is a unit, and `_seq(k,k,1,3)` runs seq.
+    ["y'=y+0*_seq(k,k,1,10^7)", calls('_seq')],
+    ["y'=y+0*_ifactor(2^257-1)", calls('_ifactor')],
+    // Operators no name shows.
+    ["y'=y+0*(k$(k=1..10^7))", contains('"$"')],
+    ['diff(y(x),x$(10^7))+y(x)=0', contains('"$"')],
+    ['diff(y(x),x$101)+y(x)=0', contains('"$"')],
+    ['diff(y(x),x$2^30)+y(x)=0', contains('"$"')],
+    ["y'=y+0*((f->f(f))(f->f(f)))", contains('">"')],
+    ["y'=y+0*(g(k):=g(k+1))", contains('":"')],
+    ["y'=y+0*(sin@@10)(x)", contains('"@"')],
+    ["y'=y+0*{1}", contains('"{"')],
+    ["y'=y+0*(1..10)", contains('a range ".."')],
+  ])('refuses %s', (text, reason) => {
+    expect(odeCostError(text)).toBe(reason);
+  });
+
+  it.each([
+    // The equations the task names, and the spellings they reach the CAS in.
+    "y'=r*y*(1-y/K)",
+    "y'=r*y*ln(K/y)",
+    "y'=y(ln(y))",
+    "y'+y=exp(-x)",
+    "y''+y=sin(2*x)",
+    "y''+4*y=Heaviside(x-1)",
+    "y''+y=Dirac(x-1)",
+    "(y'+2*y=Heaviside(x-pi)) and (y(0)=0)",
+    '[z+exp(x),-y]',
+    // The caller's own parameters and functions are inert symbols to the CAS.
+    "y'=f(x)*y+g(x)",
+    "D*y''=y",
+    "L*I'+R*I=V",
+    "y'=lambda*y+beta*gamma",
+    // Constants, joins and the derivative spellings.
+    "y'=pi*y+e+i*infinity",
+    "y'=y AND y(0)=1",
+    "y'=y or y(0)=1",
+    'diff(y(x),x)=y(x)',
+    'diff(y(x),x$2)+y(x)=0',
+    'diff(y(x),x$100)+y(x)=0',
+    "y'=abs(x)+sign(x)+erf(x)+max(x,1)+floor(x)+Gamma(3)",
+  ])('admits %s', (text) => {
     expect(odeCostError(text)).toBeUndefined();
   });
 });

@@ -1,3 +1,4 @@
+import { GIAC_RESERVED_NAMES } from './giac-reserved-names.js';
 import { excerpt } from './output-cleanup.js';
 import {
   MAGNITUDE_OPERATORS,
@@ -45,12 +46,14 @@ import { POWERED_FUNCTIONS, unicodeToAscii } from './unicode-normalize.js';
  *     `(x+1)^99*(x+2)^99*y` takes 6.4s, `((x+1)^14+1)^14*y` 6.4s, and
  *     `(x+a+1)^40*y` — a second symbol — times out.
  *
- * Not covered: a call in the EQUATION. `y'=y+0*ifactor(2^257-1)` still burns
- * the budget. An equation calls what it likes (`erf(x)`, `Heaviside(x-1)`,
- * `besselJ(0,x)`), so an allowlist there would refuse ordinary ODEs, and the
- * same call reaches the worker directly as `compute("ifactor(2^257-1)")` on
- * main, where nothing bounds it; that is the general compute-cost question,
- * not this channel's.
+ *   - NAMES in the equation itself. `desolve(y'=y+0*ifactor(2^257-1), x, y)`
+ *     burns the budget, and so does `[y'=z+0*ifactor(2^257-1), z'=-y]`. A
+ *     loop needs no call at all — `y'=y+0*(while 1 do 1 od)`,
+ *     `…(for k from 1 to 10^9 do od)` and `…(repeat 1 until 0)` each held the
+ *     worker 10s — and `y'=y+0*seq(k,k,1,10^7)` killed it ("RuntimeError:
+ *     unreachable") in 176ms. A quote is no shelter: `desolve` evaluates
+ *     what it holds, and `y'=y+quote(ifactor(2^257-1))` timed out the same.
+ *     equationNameError refuses all of them by name.
  */
 
 /**
@@ -153,6 +156,147 @@ const CONDITION_FUNCTIONS: ReadonlySet<string> = new Set([
   'pow',
   'round',
 ]);
+
+/**
+ * What an EQUATION may name of the CAS's own, besides what a condition may
+ * call: the step and impulse functions forcing terms are written with, the
+ * remaining special functions an equation states rather than computes, the
+ * derivative spellings, the constants, the `and`/`or` the single-equation
+ * path joins its conditions with, and `quote`.
+ *
+ * `quote` because what it holds is read here like the rest of the text, and
+ * that is the bound: a quote is no shelter — `desolve` evaluates what it
+ * holds, and `y'=y+quote(ifactor(2^257-1))` timed out on main — so
+ * `quote(ifactor(…))` is refused for its `ifactor`. A quote of free names is
+ * cheap and left to odeMisreadRefusal, which says what the quote does to y.
+ *
+ * Every function here was measured cheap in the three places an equation puts
+ * it, one input per fresh worker: as a forcing term (`y'=y+F(x)`), as a
+ * coefficient (`y'=F(x)*y`) and on a 140-digit constant (`y'=y+0*F(10^140+7)`),
+ * and as the right side of a second-order equation on `3^140+2` — each answered
+ * in under 100ms. CONDITION_FUNCTIONS is included whole, so a condition folded
+ * into the equation is never refused here for a call its own check admitted.
+ *
+ * An ALLOWLIST over the CAS's names, and only over them: a name the CAS does
+ * not reserve (GIAC_RESERVED_NAMES) is the caller's own — `r`, `K`, `lambda`,
+ * `f(x)`, `g(x)` — and is admitted, because to the CAS it is an inert symbol
+ * and costs nothing. That is the difference from the condition rule, which
+ * refuses `g(2)` because a condition is a number. What is refused is every
+ * other name the CAS gives a meaning to: `ifactor`, `nextprime`, `ithprime`,
+ * `factor`, `seq`, `sum`, `product`, `eval`, `apply`, and the loop
+ * keywords `for`, `while` and `repeat`, which hold the worker with no call at
+ * all. A denylist of those would have been the condition check's lesson again:
+ * the next name not thought of is the next escape, and the CAS has 3,700 of
+ * them. The cost is stated: an equation that writes `besselJ(0,x)`, `int(…)`
+ * or `sum(…)` is refused and told to write the forcing term in closed form.
+ */
+const EQUATION_NAMES: ReadonlySet<string> = new Set([
+  ...CONDITION_FUNCTIONS,
+  ...DERIVATIVE_NAMES,
+  'sign',
+  'Heaviside',
+  'Dirac',
+  'Si',
+  'Ci',
+  'Ei',
+  'max',
+  'min',
+  'pi',
+  'Pi',
+  'PI',
+  'e',
+  'i',
+  'infinity',
+  'inf',
+  'oo',
+  'euler_gamma',
+  'and',
+  'AND',
+  'or',
+  'quote',
+]);
+
+/**
+ * Giac's repeated-variable spelling of a derivative's order, `diff(y(x),x$2)`,
+ * admitted where every other `$` is refused: a NAME repeated a literal number
+ * of times, at most MAX_REPEATED_ORDER. `x$100` answers in 248ms as the
+ * hundredth-order `diff(y(x),x$100)+y(x)=0`; `x$(10^7)` killed the worker
+ * ("RuntimeError: unreachable"). The count must END the argument — `x$2^30`
+ * is `x$(2^30)` to the CAS, and `x$2*k` is not read here at all. The bound is
+ * calculus.ts's MAX_CALCULUS_ORDER, restated because this file imports no
+ * module that can reach the engine.
+ */
+const REPEATED_ORDER = /([A-Za-z_]\w*)\s*\$\s*(\d+)(?=\s*(?:[),\]]|$))/g;
+const MAX_REPEATED_ORDER = 100;
+
+/**
+ * Whether a character is one an EQUATION can be written with: the number
+ * characters, and `&` for the `&&` join. Every other ASCII character is an
+ * operator an equation does not need and a cost no name shows: `$` builds a
+ * sequence (`(k)$(k=1..10^7)` names nothing the CAS reserves, so only
+ * REPEATED_ORDER's `x$2` is admitted), `:=` assigns
+ * and `;` sequences, `->` builds a function (`(f->f(f))(f->f(f))` recurses
+ * forever with free names only), `@` composes and `@@` iterates, `{}` is a
+ * block and `|` substitutes. Only ASCII is read: a glyph unicodeToAscii
+ * leaves alone lexes as undef to the CAS, which odeMisreadRefusal answers.
+ */
+function isEquationCharacter(character: string): boolean {
+  return character > '\x7f' || character === '&' || isNumberCharacter(character);
+}
+
+/** The text with every admitted `x$2` written as its name alone. */
+function withoutRepeatedOrders(text: string): string {
+  return text.replaceAll(REPEATED_ORDER, (whole, name: string, order: string) =>
+    Number(order) <= MAX_REPEATED_ORDER ? name : whole
+  );
+}
+
+/**
+ * Why an ODE's text names something too costly to hand the CAS, or undefined.
+ * `text` is normalised; the phrase continues "cannot solve this … — it ".
+ *
+ * Over everything the solver will read — the single-equation path's folded
+ * command, a system's right-hand sides and conditions — so a name is judged
+ * wherever it stands: after an `and`, `&&` or `∧` join, in a condition written
+ * first, in a member list, or inside `quote(…)`.
+ *
+ * Judged by NAME, called or bare: `for k from 1 to 10^9 do od` calls nothing,
+ * `(ifactor)(N)` applies a group, and a bare `restart` runs. A name with a
+ * leading `_` is refused too: the CAS reads it as a unit, and `_seq(k,k,1,3)`
+ * runs `seq`.
+ */
+export function equationNameError(text: string): string | undefined {
+  const literal = odeLiteral(text);
+  if (literal !== undefined) return literalReason(literal);
+  const instead =
+    'an equation may use elementary functions such as sin, exp, ln, sqrt and ' +
+    'Heaviside, and parameters or functions of its own';
+  const stray = [...withoutRepeatedOrders(text)].find(
+    (character) => !isEquationCharacter(character)
+  );
+  if (stray !== undefined) {
+    return `contains "${stray}", which an equation is not written with — ${instead}`;
+  }
+  if (text.includes('..')) {
+    return `contains a range "..", which an equation is not written with — ${instead}`;
+  }
+  const tokens = foldPrimes(tokenizeMagnitude(text));
+  for (const [i, token] of tokens.entries()) {
+    if (token.kind !== 'name') continue;
+    const name = token.text.replace(/'+$/, '');
+    if (EQUATION_NAMES.has(name)) continue;
+    if (!GIAC_RESERVED_NAMES.has(name) && !name.startsWith('_')) continue;
+    const shown = excerpt(name, 30);
+    const next = tokens[i + 1]?.text;
+    return next === '(' || next === '['
+      ? `calls ${shown}, which the CAS runs as a command rather than reading as part of an ` +
+          `equation — ${instead}; for a value ${shown} computes, compute it on its own first ` +
+          'and write the value in'
+      : `names ${shown}, which the CAS reserves for its own commands and syntax — ${instead}; ` +
+          `rename a parameter spelled ${shown}`;
+  }
+  return undefined;
+}
 
 /**
  * Whether a character is one a number can be written with: digits, names for
@@ -817,10 +961,13 @@ function overExpansion(
  * Callers run it after every size bound, so a problem those refuse keeps their
  * wording, and it reads height before expansion for the same reason: a large
  * literal is a size, and naming it as an expansion would point the caller at
- * the wrong fix.
+ * the wrong fix. Names come first of all: what the text runs is the cause, and
+ * `nextprime(10^900)` is a command before it is a size.
  */
 export function odeCostError(text: string): string | undefined {
   const normalised = unicodeToAscii(text);
+  const named = equationNameError(normalised);
+  if (named !== undefined) return named;
   const { root, tooDeep } = parseCost(foldPrimes(tokenizeMagnitude(normalised)));
   if (tooDeep) {
     return (

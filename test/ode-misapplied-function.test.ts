@@ -102,9 +102,6 @@ describe('the function applied off the variable is refused', () => {
     ["y'=y(x-1)(0)", 'x-1'],
     // A derivative call at a point in the equation is y' there.
     ["y'=diff(y(x),x)(0)", '0'],
-    // hold and unquote print the application as written.
-    ["y'=hold(y(x-1))", 'x-1'],
-    ["y'=unquote(y(x-1))", 'x-1'],
     // With conditions beside it, in every joining.
     ["[y'=y(x-1), y(0)=1]", 'x-1'],
     ["y(0)=1, y'=y(x-1)", 'x-1'],
@@ -157,17 +154,41 @@ describe('an expression built from y and applied is refused', () => {
     ["y'=(y^2)(x^2)", '(y^2)(x^2)'],
     ["y'=x1(y)(x-1)", '(x1(y))(x-1)'],
     ["y'=[y](x-1)", '[y](x-1)'],
-    // Composition, apply, map and of.
-    ["y'=(y@(x->x-1))(x)", '(y@( (x)->x-1))(x)'],
-    ["y'=y@(x->x-1)", 'y@( (x)->x-1)'],
-    ["y'=y@@2", 'y@@2'],
-    ["y'=compose(y,x->x-1)(x)", '(compose(y, (x)->x-1))(x)'],
-    ["y'=apply(y,x-1)", 'apply(y,x-1)'],
-    ["desolve(y'=apply(y,x-1), x, y)", 'apply(y,x-1)'],
-    ["y'=map(x-1,y)", 'map(x-1,y)'],
-    ["y'=of(y,x-1)", "'of'(y,x-1)"],
   ])('%s', async (problem, expression) => {
     expect(await refused(problem)).toContain(builtRefusal(expression));
+  });
+});
+
+/**
+ * The spellings that build the application with the CAS's own commands or
+ * operators — composition, apply, map, of, hold, unquote, eval — never reach
+ * the printed-form reading: equationNameError (ode-cost-bounds.ts) refuses
+ * every command name and every operator an equation is not written with
+ * before any engine call, because the same names run `ifactor` or a loop.
+ * Each was refused on main as well, by the reading above.
+ */
+describe('an application built with a CAS command is refused by name', () => {
+  const instead =
+    'an equation may use elementary functions such as sin, exp, ln, sqrt and Heaviside, ' +
+    'and parameters or functions of its own';
+  it.each([
+    ["y'=(y@(x->x-1))(x)", 'contains "@", which an equation is not written with'],
+    ["y'=y@(x->x-1)", 'contains "@", which an equation is not written with'],
+    ["y'=y@@2", 'contains "@", which an equation is not written with'],
+    ["y'=compose(y,x->x-1)(x)", 'contains ">", which an equation is not written with'],
+    ["y'=apply(y,x-1)", 'calls apply, which the CAS runs as a command'],
+    ["desolve(y'=apply(y,x-1), x, y)", 'calls apply, which the CAS runs as a command'],
+    ["y'=map(x-1,y)", 'calls map, which the CAS runs as a command'],
+    ["y'=of(y,x-1)", 'calls of, which the CAS runs as a command'],
+    ["y'=hold(y(x-1))", 'calls hold, which the CAS runs as a command'],
+    ["y'=unquote(y(x-1))", 'calls unquote, which the CAS runs as a command'],
+    ["y'=y+eval(quote(y(x-1)))", 'calls eval, which the CAS runs as a command'],
+  ])('%s', async (problem, reason) => {
+    const evaluate = vi.spyOn(giacEngine, 'evaluate');
+    const text = await refused(problem);
+    expect(text).toContain(`solve_ode cannot solve this equation — it ${reason}`);
+    expect(text).toContain(instead);
+    expect(evaluate).not.toHaveBeenCalled();
   });
 });
 
@@ -215,7 +236,6 @@ describe('a quoted expression holding y is refused', () => {
   it.each([
     ["y'=quote(y(x-1))", "'y(x-1)'"],
     ["desolve(y'=quote(y(x-1)), x, y)", "'y(x-1)'"],
-    ["y'=y+eval(quote(y(x-1)))", "'y(x-1)'"],
     ["y'=quote(y)", "'y'"],
     ["[y'=quote(y), y(0)=1]", "'y'"],
     // Which quote closes is not readable off the print, so this takes in the
@@ -471,8 +491,15 @@ describe('a quote that fails adds no refusal', () => {
     expect(await refused("y'=y'y(x-1)")).toContain('the CAS returned Giac error');
   });
 
-  it('passes a statement separator to the CAS', async () => {
-    expect(await refused("y'=y; y(0)=1")).toContain('the CAS returned Giac error');
+  // A statement separator no longer reaches the CAS at all: equationNameError
+  // refuses `;` before any engine call, because it sequences statements. On
+  // main this came back "the CAS returned Giac error".
+  it('refuses a statement separator before the CAS', async () => {
+    const evaluate = vi.spyOn(giacEngine, 'evaluate');
+    expect(await refused("y'=y; y(0)=1")).toContain(
+      'solve_ode cannot solve this equation — it contains ";", which an equation is not written with'
+    );
+    expect(evaluate).not.toHaveBeenCalled();
   });
 
   it('solves as before when the quote throws', async () => {
