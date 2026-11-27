@@ -36,6 +36,13 @@ describe('integrate — a divergent integral is refused, not answered', () => {
       'integrate(1/ln(x), x, 0.5, 2)',
       diverges('at x = 1', '[0.5, 2]', '[4.99567743294,-0.342064447914]'),
     ],
+    // `singular` cannot read abs; the zeros of the denominator place the pole.
+    ['integrate(1/(x*abs(x)), x, -1, 1)', diverges('at x = 0', '[-1, 1]', '0')],
+    // An infinite bound, either way round: from inf the split used to land
+    // outside the interval, and the reversed integral answered -5.
+    ['integrate(1/(x*abs(x)), x, -1/5, inf)', diverges('at x = 0', '[-1/5, inf]', '5')],
+    ['integrate(1/(x*abs(x)), x, inf, -1/5)', diverges('at x = 0', '[inf, -1/5]', '-5')],
+    ['integrate(1/(x*abs(x)), x, -1, inf)', diverges('at x = 0', '[-1, inf]', '1')],
   ])('%s', async (problem, message) => {
     const r = await computeHandler({ problem });
     const text = allText(r);
@@ -51,8 +58,6 @@ describe('integrate — a divergent integral is refused, not answered', () => {
     ['integrate(tan(x), x, pi, 2*pi)', '[pi, 2*pi]'],
     ['integrate(1/cos(x), x, pi, 2*pi)', '[pi, 2*pi]'],
     ['integrate(tan(3*x), x, pi/3, 2*pi/3)', '[pi/3, 2*pi/3]'],
-    // `singular` cannot read abs here, so the split is the only check.
-    ['integrate(1/(x*abs(x)), x, -1, 1)', '[-1, 1]'],
   ])('%s is refused as unconfirmed', async (problem, interval) => {
     const r = await computeHandler({ problem });
     const text = allText(r);
@@ -63,6 +68,19 @@ describe('integrate — a divergent integral is refused, not answered', () => {
         'across a singularity inside the interval rather than the integral'
     );
     expect(text).not.toMatch(/^Result:/m);
+  });
+});
+
+describe('integrate — more singular points than are checked', () => {
+  it('refuses thirteen poles inside the interval rather than splitting at them', async () => {
+    const poles = Array.from({ length: 13 }, (_, k) => `(x-${k + 1})`).join('*');
+    const r = await computeHandler({ problem: `integrate(1/(${poles}), x, 0, 14)` });
+    const text = allText(r);
+    expect(r.isError, text).toBe(true);
+    expect(text).toContain(
+      'integrate cannot answer this — the integrand is singular at 13 points inside [0, 14], ' +
+        'more than the 12 this checks — split the integral at them'
+    );
   });
 });
 
@@ -90,6 +108,14 @@ describe('integrate — convergent and correctly divergent integrals still answe
     ['integrate(sin(x)/x, x, 0, inf)', 'pi/2'],
     ['integrate(1/(2+cos(x)), x, 0, 2*pi)', '2*pi/√3'],
     ['integrate(sin(x), x, 0, 10.5)', '1.475536928'],
+    // Fourier-type integrals Giac evaluates whole, by residues, and not in
+    // part: the off-centre split leaves a piece unevaluated, which is no
+    // evidence of a singularity. These were refused for it.
+    ['integrate(cos(x)/(1+x^2), x, -inf, inf)', 'pi/exp(1)'],
+    ['integrate(x*sin(x)/(1+x^2), x, -inf, inf)', 'pi/exp(1)'],
+    ['integrate(x*sin(x)/(x^2+1), x, 0, inf)', 'pi/(2*exp(1))'],
+    ['integrate(cos(2*x)/(x^2+1), x, 0, inf)', 'pi/(2*exp(2))'],
+    ['integrate(cos(3*x)/(x^2+4), x, -inf, inf)', 'pi/(2*exp(6))'],
     // A divergence the engine already reports is not refused.
     ['integrate(1/(x-1)^2, x, 0, 2)', '+infinity'],
     ['integrate(1/x^2, x, -1, 1)', '+infinity'],

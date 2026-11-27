@@ -118,7 +118,7 @@ describe('runCommand — compute', () => {
   // Each printed a number to stdout with exit 0: `order_size(x)`, the
   // principal value 0, a derivative in y, `diff(x^2,12)`, and a worker trap.
   it.each([
-    ['taylor(exp(1/x),x,0,3)', 'exp(1/x) has no Taylor series of order 3 at x = 0'],
+    ['taylor(exp(1/x),x,0,3)', 'expanding exp(1/x) to order 3 at x = 0'],
     ['integrate(1/(x-1),x,0,2)', 'the integral diverges'],
     ['diff(2x+y)', 'more than one symbol (x, y)'],
     // stderr carries the JSON envelope, so the quotes around the name are escaped.

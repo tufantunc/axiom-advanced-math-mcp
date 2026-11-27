@@ -9,6 +9,10 @@ import {
 } from '../unicode-normalize.js';
 import { rewriteCombinatorics } from '../combinatorics-rewrite.js';
 import { stripOrderTerm, seriesRemainderOrders } from '../output-cleanup.js';
+import { extractIntegrate, extractTaylor } from '../compute/extractors.js';
+import { definiteIntegralRefusal } from '../definite-integral.js';
+import { DEFAULT_TAYLOR_ORDER, seriesShortfall, shortfallReason } from '../taylor-answer.js';
+import { splitArgs, extractFnArgs } from '../compute/arg-parsing.js';
 
 export const verifySchema = z.object({
   claim: z
@@ -140,16 +144,67 @@ async function readsAsUndefined(expr: string): Promise<boolean> {
   }
 }
 
-/** One side of an identity claim, as it will be handed to the strategies. */
-interface SideReading {
-  /** The side itself, or its polynomial part when a series remainder was stripped. */
-  expr: string;
+/**
+ * One side of an identity claim: read, and handed to the strategies as `expr`
+ * (the side itself, or its polynomial part when a series remainder was
+ * stripped), or a reason it cannot be checked. One kind per side, because the
+ * reasons exclude each other.
+ */
+type SideReading =
+  | { kind: 'read'; expr: string }
   /** Giac's own reading of this side carries its undefined marker. */
-  readsUndefined: boolean;
+  | { kind: 'undefined'; expr: string }
   /** The reading never came back — the engine errored or answered nothing. */
-  unreadable: boolean;
-  /** The reading is a series that broke down: a remainder of order 0 (see seriesRemainderOrders). */
-  brokenSeries?: boolean;
+  | { kind: 'unreadable'; expr: string }
+  /** The side is a computation compute refuses; `reason` says why. */
+  | { kind: 'refused'; expr: string; reason: string; check: string };
+
+/** The side's single calculus call, when it is exactly one, as compute reads it. */
+const SERIES_CALL = /^\s*(?:taylor|series)\s*\(/;
+const INTEGRAL_CALL = /^\s*(?:integrate|int)\s*\(/;
+
+/**
+ * Why a side's reading is not the computation it names, judged by the rules
+ * compute applies to the same call, or undefined. Only a side that is exactly
+ * one call, read the way compute and Giac both read it: verify certified
+ * `integrate(1/(x-1),x,0,2) = 0` — Giac's principal value — and
+ * `taylor(1+x*exp(1/x),x=0,3) = 1`, a series that stops at order 0, both of
+ * which compute refuses.
+ */
+async function sideComputationRefusal(
+  side: string,
+  reading: string
+): Promise<{ reason: string; check: string } | undefined> {
+  if (INTEGRAL_CALL.test(side)) {
+    const { args } = extractIntegrate(side);
+    if (args.argument_refusal === undefined && args.lower_bound !== undefined) {
+      const reason = await definiteIntegralRefusal(args, reading);
+      if (reason !== undefined) return { reason, check: 'divergent_integral' };
+    }
+  }
+  // Only `taylor(f, x=a, n)`: Giac reads `taylor(f, x, a, n)` as a different
+  // expansion from compute's, so its order is not the one the reading has.
+  const parts = SERIES_CALL.test(side) ? splitArgs(extractFnArgs(side)) : [];
+  if (parts.length > 1 && parts[1].includes('=')) {
+    const { args } = extractTaylor(side);
+    const point = String(args.point ?? '').trim();
+    if (args.argument_refusal === undefined && !/^[+-]?(?:inf|infinity)$/.test(point)) {
+      const n = args.order === undefined ? DEFAULT_TAYLOR_ORDER : Number(args.order);
+      const shortfall = seriesShortfall(seriesRemainderOrders(reading), n);
+      if (shortfall !== undefined) {
+        return { reason: shortfallReason(shortfall, n), check: 'broken_series' };
+      }
+    }
+  }
+  // Wherever else a series sits, a remainder of order 0 is O(1): the
+  // expansion broke down where it started and says nothing about the
+  // function. The difference simplified to that remainder alone, which the
+  // symbolic check takes for zero: `taylor(exp(1/x), x=0, 3) = 0` was
+  // verified with high confidence.
+  if (seriesRemainderOrders(reading).includes(0)) {
+    return { reason: shortfallReason(0, DEFAULT_TAYLOR_ORDER), check: 'broken_series' };
+  }
+  return undefined;
 }
 
 /**
@@ -159,45 +214,74 @@ interface SideReading {
  * proceeding on it.
  */
 async function normalizeSide(side: string): Promise<SideReading> {
+  let r: string | undefined;
   try {
-    const r = await giacEngine.evaluate(side);
-    if (r) {
-      // A side whose reading carries the undefined marker was not understood,
-      // not evaluated: Giac answers `(f^(+))(x)` with `undef(x)` instead of an
-      // error. Refused here, before either strategy runs, because two
-      // identical undefined readings AGREE — the symbolic difference is 0 and
-      // every sampled point substitutes to 0 — and would certify the claim.
-      if (containsUndefinedMarker(r)) {
-        return { expr: side, readsUndefined: true, unreadable: false };
-      }
-      // A remainder of order 0 is O(1): the expansion broke down where it
-      // started, as at an essential singularity, and says nothing about the
-      // function. Read as a series it certified false claims:
-      // `taylor(exp(1/x), x=0, 3) = 0` was verified with high confidence,
-      // because the difference simplified to the remainder alone, which the
-      // symbolic check takes for zero. The order a caller asked for is not
-      // known here, so a series that stops early but not at once
-      // (`1+x*order_size(x)`) is not caught; compute refuses both.
-      if (seriesRemainderOrders(r).includes(0)) {
-        return { expr: side, readsUndefined: false, unreadable: false, brokenSeries: true };
-      }
-      if (r.includes('order_size')) {
-        const stripped = stripOrderTerm(r);
-        if (stripped && stripped !== r) {
-          return { expr: `(${stripped})`, readsUndefined: false, unreadable: false };
-        }
-      }
-    } else {
-      // An empty answer is not a clean reading; the worker resolved nothing.
-      return { expr: side, readsUndefined: false, unreadable: true };
-    }
+    r = await giacEngine.evaluate(side);
   } catch {
     // A side the engine could not read cannot be checked — and letting the
     // strategies run on it lets a transient failure (worker crash, IPC loss,
     // timeout) fabricate a verdict out of notation that was never read.
-    return { expr: side, readsUndefined: false, unreadable: true };
+    return { kind: 'unreadable', expr: side };
   }
-  return { expr: side, readsUndefined: false, unreadable: false };
+  // An empty answer is not a clean reading; the worker resolved nothing.
+  if (!r) return { kind: 'unreadable', expr: side };
+  // A side whose reading carries the undefined marker was not understood,
+  // not evaluated: Giac answers `(f^(+))(x)` with `undef(x)` instead of an
+  // error. Refused here, before either strategy runs, because two
+  // identical undefined readings AGREE — the symbolic difference is 0 and
+  // every sampled point substitutes to 0 — and would certify the claim.
+  if (containsUndefinedMarker(r)) return { kind: 'undefined', expr: side };
+  const refused = await sideComputationRefusal(side, r);
+  if (refused) return { kind: 'refused', expr: side, ...refused };
+  if (r.includes('order_size')) {
+    const stripped = stripOrderTerm(r);
+    if (stripped && stripped !== r) return { kind: 'read', expr: `(${stripped})` };
+  }
+  return { kind: 'read', expr: side };
+}
+
+/**
+ * The verdict for a claim with a side that cannot be checked, or undefined
+ * when both were read. Undefined readings first, then unreadable ones, then
+ * refused computations: the order the checks were added in, kept so a claim
+ * with two such sides keeps the verdict it had.
+ */
+function uncheckedSideResult(lhs: SideReading, rhs: SideReading): VerifyResult | undefined {
+  const claim = `${lhs.expr} = ${rhs.expr}`;
+  // Before either strategy runs: symbolic would simplify two identical
+  // undefined readings to 0 and numeric would sample them to 0, so neither
+  // may see a claim whose side reads undefined.
+  if (lhs.kind === 'undefined' || rhs.kind === 'undefined') {
+    return undefinedReadingResult(`a side of ${claim}`);
+  }
+  // A reading that never came back gets the same verdict class: nothing was
+  // read, so nothing can be checked. Proceeding instead would let a
+  // transient engine failure silently disable the guard above — the numeric
+  // strategy substitutes through the unread side and can report a
+  // refutation of notation that was never read.
+  if (lhs.kind === 'unreadable' || rhs.kind === 'unreadable') {
+    return {
+      verified: false,
+      evaluated: false,
+      confidence: 'low',
+      explanation:
+        `Could not read a side of ${claim}: ` + `the engine errored or returned no reading.`,
+      checks_performed: ['unreadable_side'],
+    };
+  }
+  const refused = lhs.kind === 'refused' ? lhs : rhs.kind === 'refused' ? rhs : undefined;
+  if (refused) {
+    return {
+      verified: false,
+      evaluated: false,
+      confidence: 'low',
+      explanation:
+        `Could not check the claim: its side ${refused.expr} is not what it computes — ` +
+        `${refused.reason}.`,
+      checks_performed: [refused.check],
+    };
+  }
+  return undefined;
 }
 
 /**
@@ -703,40 +787,8 @@ async function handleIdentityVerification(
   }
   const lhsReading = await normalizeSide(parsed.lhs ?? '');
   const rhsReading = await normalizeSide(parsed.rhs ?? '');
-  // Before either strategy runs: symbolic would simplify two identical
-  // undefined readings to 0 and numeric would sample them to 0, so neither
-  // may see a claim whose side reads undefined.
-  if (lhsReading.readsUndefined || rhsReading.readsUndefined) {
-    return undefinedReadingResult(`a side of ${lhsReading.expr} = ${rhsReading.expr}`);
-  }
-  // A reading that never came back gets the same verdict class: nothing was
-  // read, so nothing can be checked. Proceeding instead would let a
-  // transient engine failure silently disable the guard above — the numeric
-  // strategy substitutes through the unread side and can report a
-  // refutation of notation that was never read.
-  if (lhsReading.unreadable || rhsReading.unreadable) {
-    return {
-      verified: false,
-      evaluated: false,
-      confidence: 'low',
-      explanation:
-        `Could not read a side of ${lhsReading.expr} = ${rhsReading.expr}: ` +
-        `the engine errored or returned no reading.`,
-      checks_performed: ['unreadable_side'],
-    };
-  }
-  if (lhsReading.brokenSeries || rhsReading.brokenSeries) {
-    return {
-      verified: false,
-      evaluated: false,
-      confidence: 'low',
-      explanation:
-        `Could not check the claim: a side of ${lhsReading.expr} = ${rhsReading.expr} is a ` +
-        `series that breaks down — the CAS expands it to nothing but O(1), as at an ` +
-        `essential singularity, where there is no Taylor series to compare.`,
-      checks_performed: ['broken_series'],
-    };
-  }
+  const unchecked = uncheckedSideResult(lhsReading, rhsReading);
+  if (unchecked) return unchecked;
   const lhs = lhsReading.expr;
   const rhs = rhsReading.expr;
   const checks: string[] = [];

@@ -1,27 +1,25 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { giacEngine } from '../src/server/giac/index.js';
 import { computeHandler } from '../src/server/tools/compute/index.js';
-import { MAX_DERIVATIVE_COST } from '../src/server/tools/calculus.js';
+import { applicationDepth, MAX_DERIVATIVE_COST } from '../src/server/tools/calculus-variable.js';
 import { allText } from './helpers/all-text.js';
-import { resultLine } from './helpers/result-line.js';
+import { expectAnswer as answers, expectRefused as refused } from './helpers/compute-answer.js';
 
 beforeAll(async () => {
   await giacEngine.initialize();
 }, 60000);
 
-async function refused(problem: string, message: string): Promise<void> {
-  const r = await computeHandler({ problem });
-  const text = allText(r);
-  expect(r.isError, text).toBe(true);
-  expect(text).toContain(message);
-  expect(text).not.toMatch(/^Result:/m);
-}
-
-async function answers(problem: string, expected: string): Promise<void> {
+/** The text of an answer that is not an error. */
+async function expectNoError(problem: string): Promise<string> {
   const r = await computeHandler({ problem });
   const text = allText(r);
   expect(r.isError, text).toBe(false);
-  expect(text).toMatch(resultLine(expected));
+  return text;
+}
+
+/** The value of `expr` at (x, y, z) = (1, 2, 3), simplified by the engine. */
+async function at123(expr: string): Promise<string> {
+  return String(await giacEngine.evaluate(`simplify(subst(${expr},[x,y,z],[1,2,3]))`));
 }
 
 // With no variable named, each of these answered a derivative, integral or
@@ -86,6 +84,11 @@ describe('a variable the CAS holds a value in is refused', () => {
       'differentiate needs a variable, and "DIGITS" is a value — name the variable, such as x',
     ],
     ['diff(x^2*y, [x, DIGITS])', 'differentiate needs a variable, and "DIGITS" is a value'],
+    // In a list, past a first name that is a symbol: only the engine knows.
+    [
+      'diff(x^2*y, [x, epsilon])',
+      'differentiate needs a variable, and "epsilon" is a value to the CAS (1e-12)',
+    ],
     // Not listed by name: the engine is asked, and says what it holds.
     [
       'diff(x^2, epsilon)',
@@ -112,12 +115,13 @@ describe('a variable the CAS holds a value in is refused', () => {
 // large each grows; the second is what traps the worker.
 describe('a derivative tensor is bounded by its cost', () => {
   it('refuses the order that trapped the worker', async () => {
-    // 34 * 4^6 = 139,264: "RuntimeError: unreachable" on main.
+    // 34 * (2 * 5)^6: "RuntimeError: unreachable" on main.
     await refused(
       'diff(exp(sin(x*y))*cos(x+y)/(1+x^2+y^2), [x, y], 6)',
-      'differentiate with 2 variables to order 6 of an expression this long (34 characters) ' +
-        'is more than this computes: each order multiplies the size of all 2^6 entries — ' +
-        'lower the order, list fewer variables, or differentiate a shorter expression'
+      'differentiate with 2 variables to order 6 of this expression (34 characters, ' +
+        'functions nested 2 deep) is more than this computes: each order multiplies the size ' +
+        'of all 2^6 entries — lower the order, list fewer variables, or differentiate a ' +
+        'shorter expression'
     );
   });
 
@@ -125,12 +129,27 @@ describe('a derivative tensor is bounded by its cost', () => {
     'diff(tan(tan(tan(x*y))), [x, y], 6)',
     'diff(exp(sin(x*y))*cos(x+z)/(1+x^2+y^2+z^2), [x, y, z], 5)',
     'diff(x*y, [x, y], 7)',
+    // Short but deeply nested, under a cap on length alone: tan five deep
+    // trapped at order 4, eight deep returned 8 million characters at order 2.
+    'diff(tan(tan(tan(tan(tan(x*y))))), [x, y], 4)',
+    'diff(tan(tan(tan(tan(tan(tan(tan(tan(x*y)))))))), [x, y], 2)',
+    'diff(tan(tan(tan(tan(x*y)))), [x, y], 2)',
   ])('%s is refused', async (problem) => {
     await refused(problem, 'is more than this computes');
   });
 
-  // The cap is inclusive: 1024 characters, two variables, order 2 is
-  // 1024 * 4^2 = MAX_DERIVATIVE_COST exactly. Padded with `+0`, which the
+  it.each([
+    ['tan(tan(x))', 2],
+    ['(1+x)^2', 0],
+    ['exp(sin(x*y))*cos(x+y)/(1+x^2+y^2)', 2],
+    ['f(g(h(x)))+sin(x)', 3],
+    ['x*y', 0],
+  ])('the function nesting of %s is %i', (expr, depth) => {
+    expect(applicationDepth(expr)).toBe(depth);
+  });
+
+  // The cap is inclusive: 1024 characters of depth 1 (none, counted as 1),
+  // two variables, order 2 is 1024 * (2 * 2)^2 = MAX_DERIVATIVE_COST exactly. Padded with `+0`, which the
   // engine drops, so the Hessian is x^2*y^3's.
   const padded = (length: number) => {
     const base = 'x^2*y^3';
@@ -145,7 +164,7 @@ describe('a derivative tensor is bounded by its cost', () => {
     await answers(`diff(${atCap}, [x, y], 2)`, '[[2*y^3,6*x*y^2],[6*x*y^2,6*x^2*y]]');
     const past = padded(1025);
     expect(past.length).toBe(1025);
-    await refused(`diff(${past}, [x, y], 2)`, '(1025 characters) is more than this computes');
+    await refused(`diff(${past}, [x, y], 2)`, '(1025 characters, functions nested 1 deep) is more than this computes');
   });
 
   it.each([
@@ -159,27 +178,40 @@ describe('a derivative tensor is bounded by its cost', () => {
       'diff(x*y, [x, y], 5)',
       '[[[[[0,0],[0,0]],[[0,0],[0,0]]],[[[0,0],[0,0]],[[0,0],[0,0]]]],[[[[0,0],[0,0]],[[0,0],[0,0]]],[[[0,0],[0,0]],[[0,0],[0,0]]]]]',
     ],
-    // A single variable is bounded by the order alone.
-    ['diff(exp(sin(x)), x, 60)', ''],
-  ])('%s answers', async (problem, expected) => {
-    const r = await computeHandler({ problem });
-    const text = allText(r);
-    expect(r.isError, text).toBe(false);
-    if (expected) expect(text).toMatch(resultLine(expected));
+    // A tower of tans, one order below the bound's refusal.
+    [
+      'diff(tan(tan(x*y)), [x, y])',
+      '[y*(1+tan(x*y)^2)*(1+tan(tan(x*y))^2),x*(1+tan(x*y)^2)*(1+tan(tan(x*y))^2)]',
+    ],
+  ])('%s is %s', answers);
+
+  // A single variable is bounded by the order alone: an order the tensor
+  // model would refuse (13 * 2^20 is far past the cap) answers, and is the
+  // derivative — its value at 0 is the twentieth Taylor coefficient times 20!,
+  // computed independently by series.
+  it('answers diff(exp(sin(x)), x, 20) in full', async () => {
+    const text = await expectNoError('diff(exp(sin(x)), x, 20)');
+    const result = (text.match(/^Result: (.*)$/m) ?? [])[1];
+    expect(result).toBeTruthy();
+    expect(result).not.toContain('diff(');
+    const atZero = await giacEngine.evaluate(
+      `simplify(subst(${result},x,0) - 20!*coeff(taylor(exp(sin(x)),x=0,20,polynom),x,20))`
+    );
+    expect(atZero).toBe('0');
   });
 
   it('answers the Hessian of 1/r in three variables', async () => {
-    const r = await computeHandler({ problem: 'diff((x^2+y^2+z^2)^(-1/2), [x, y, z], 2)' });
-    expect(r.isError, allText(r)).toBe(false);
-    // ∂²(1/r)/∂x² = (2x²-y²-z²)/r^5: checked at (1, 2, 3), r² = 14.
-    const at = await giacEngine.evaluate(
-      `simplify(subst(${(allText(r).match(/^Result: (.*)$/m) ?? [])[1]}[0][0],[x,y,z],[1,2,3]) - (2-4-9)/14^(5/2))`
-    );
-    expect(at).toBe('0');
+    const text = await expectNoError('diff((x^2+y^2+z^2)^(-1/2), [x, y, z], 2)');
+    const hessian = (text.match(/^Result: (.*)$/m) ?? [])[1];
+    // At (1, 2, 3), r² = 14: ∂²(1/r)/∂x² = (2x²-y²-z²)/r^5 and
+    // ∂²(1/r)/∂x∂y = 3xy/r^5 — a diagonal and an off-diagonal entry.
+    expect(await at123(`(${hessian})[0][0] - (2-4-9)/14^(5/2)`)).toBe('0');
+    expect(await at123(`(${hessian})[0][1] - 6/14^(5/2)`)).toBe('0');
+    expect(await at123(`(${hessian})[1][0] - (${hessian})[0][1]`)).toBe('0');
   });
 
   // The entry cap still binds a wide list: 17 variables to order 2 is 289
-  // entries, though its cost, 3 * 34^2 = 3,468, is under the cost cap.
+  // entries, though its cost, 3 * (17 * 2)^2 = 3,468, is under the cost cap.
   const names = 'abcdfghjklmnopqrs'.split('');
   it('refuses 17 variables to order 2 on its entries, and answers 16', async () => {
     await refused(
