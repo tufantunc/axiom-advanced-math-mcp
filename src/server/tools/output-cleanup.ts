@@ -210,6 +210,93 @@ export function seriesRemainderOrders(expr: string): number[] {
   return orders;
 }
 
+/** The longest exponent read as an integer: `^-12`, `^(3)`. */
+const MAX_INTEGER_EXPONENT = 24;
+
+/**
+ * The first piece of a printed series that is not a power of `variable` with
+ * coefficients free of it, or undefined when there is none: an application
+ * whose argument names the variable (`sin(1/x)`, `ln(x)`, `exp(n*ln(x))`), a
+ * square root of it (`√x`), or a power of it that is not an integer
+ * (`x^(1/3)`, `x^n`, `x^x`). The remainder, `order_size(...)`, is skipped.
+ * A parenthesis left unclosed answers the rest of the text, so what cannot
+ * be read is never taken for a series.
+ *
+ * Read from the printed text rather than handed back to the engine: a series
+ * answer runs to half a million characters (`taylor(exp(x*y)*sin(x+y), x, 0,
+ * 100)`), and Giac's parser traps on far less. Linear in the text's length,
+ * because it runs on the main thread outside the worker's timeout: one pass
+ * pairs the parentheses, one counts where the variable occurs, and each name
+ * and exponent is read once.
+ */
+export function nonSeriesTerm(printed: string, variable: string): string | undefined {
+  const s = printed;
+  const match = new Int32Array(s.length).fill(-1);
+  const open: number[] = [];
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === '(') open.push(i);
+    else if (s[i] === ')') {
+      const o = open.pop();
+      if (o === undefined) return s;
+      match[o] = i;
+      match[i] = o;
+    }
+  }
+  if (open.length > 0) return s.slice(open[0]);
+  // occurrences[i]: how many times the variable is named in s[0, i).
+  const occurrences = new Int32Array(s.length + 1);
+  for (let i = 0; i < s.length;) {
+    let j = i;
+    while (j < s.length && isNameChar(s[j])) j++;
+    if (j === i) {
+      occurrences[i + 1] = occurrences[i];
+      i++;
+      continue;
+    }
+    const named = s.slice(i, j) === variable ? 1 : 0;
+    for (let k = i; k < j; k++) occurrences[k + 1] = occurrences[i] + (k === j - 1 ? named : 0);
+    i = j;
+  }
+  const names = (from: number, to: number) => occurrences[to] - occurrences[from] > 0;
+  /** The end (exclusive) of the operand starting at `at`: a group or a run of name characters. */
+  const operandEnd = (at: number): number => {
+    if (s[at] === '(') return match[at] + 1;
+    let j = at;
+    while (j < s.length && (isNameChar(s[j]) || s[j] === '.')) j++;
+    return j;
+  };
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === '(' && isNameChar(s[i - 1])) {
+      let start = i - 1;
+      while (start > 0 && isNameChar(s[start - 1])) start--;
+      const close = match[i];
+      if (s.slice(start, i) === 'order_size') {
+        i = close;
+      } else if (names(i, close)) {
+        return s.slice(start, close + 1);
+      }
+    } else if (ch === '√') {
+      const end = operandEnd(i + 1);
+      if (names(i + 1, end)) return s.slice(i, end);
+    } else if (ch === '^') {
+      const from = i + 1;
+      const end = operandEnd(s[from] === '-' ? from + 1 : from);
+      const exponent = s.slice(from, Math.min(end, from + MAX_INTEGER_EXPONENT + 1));
+      if (end - from <= MAX_INTEGER_EXPONENT && /^(?:-?\d+|\(-?\d+\))$/.test(exponent)) continue;
+      let start = i - 1;
+      if (s[start] === ')') {
+        start = match[start];
+        while (start > 0 && isNameChar(s[start - 1])) start--;
+      } else {
+        while (start > 0 && isNameChar(s[start - 1])) start--;
+      }
+      if (names(start, end)) return s.slice(start, end);
+    }
+  }
+  return undefined;
+}
+
 /**
  * Normalize Giac's `solve` list output into clean set/tuple notation.
  *   list[-2,2]    -> {-2, 2}

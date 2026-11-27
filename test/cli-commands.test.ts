@@ -125,6 +125,10 @@ describe('runCommand — compute', () => {
     ['diff(x^2, DIGITS)', String.raw`\"DIGITS\" is a value`],
     ['diff(x^2, plus_inf)', String.raw`\"plus_inf\" is a constant`],
     ['diff(exp(sin(x*y))*cos(x+y)/(1+x^2+y^2),[x,y],6)', 'is more than this computes'],
+    // Printed `x` and `sin(1/x)`; the third trapped the worker.
+    ['taylor(x+x^4*exp(1/x),x,0,3)', 'which has no finite limit there'],
+    ['taylor(sin(1/x),x,0,3)', 'which has no finite limit there'],
+    ['diff(exp(sin(x*y))*cos(x+y)/(1+x^2+y^2),x,15)', 'to order 15 of this expression is more'],
   ])('quiet %s is refused on stderr, with nothing on stdout', async (expression, message) => {
     capture();
     const code = await runCommand({ kind: 'compute', expression, output: 'quiet' });
@@ -167,6 +171,19 @@ describe('runCommand — verify', () => {
     expect(code).toBe(2);
     expect(out.join('').trim()).toBe('false');
   }, 30_000);
+
+  // Verified TRUE, exit 0, where compute refuses the series: the same
+  // reading on both surfaces, and an unchecked claim is exit 1.
+  it.each(['taylor(x+x^4*exp(1/x),x,0,3) = x', 'taylor(x+x^4*exp(1/x),x=0,3) = x'])(
+    '%s cannot be checked',
+    async (claim) => {
+      capture();
+      const code = await runCommand({ kind: 'verify', claim, output: 'quiet' });
+      expect(code).toBe(1);
+      expect(out.join('').trim()).not.toBe('true');
+    },
+    30_000
+  );
 
   it('text mode still reports the verdict through the exit code', async () => {
     capture();

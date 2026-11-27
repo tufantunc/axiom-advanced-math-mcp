@@ -299,13 +299,22 @@ a pole inside its interval is checked piece by piece, because the CAS answers it
 with the Cauchy principal value — `integrate(1/(x-1), x, 0, 2)` was `0` — where
 the integral diverges. A Taylor series that breaks down or stops short of the
 order asked for at a finite point is refused rather than cut back to what looks
-like a polynomial (`taylor(exp(1/x), x, 0, 3)` was `order_size(x)`). With no
+like a polynomial (`taylor(exp(1/x), x, 0, 3)` was `order_size(x)`), and so is
+one at a point where a function's argument has no finite limit, however the
+remainder looks (`taylor(x+x^4*exp(1/x), x, 0, 3)` was `x`), or whose answer is
+not a series at all (`taylor(sin(1/x), x, 0, 3)` was `sin(1/x)`, `ln(x)` at 0
+`ln(x)`). `verify` reads a `taylor` or `series` call exactly as `compute` does,
+`taylor(f, x, a, n)` included, and refuses one it does not. With no
 variable named, `diff`, `integrate` and `taylor` refuse an expression with more
 than one symbol (`diff(2x+y)`) instead of picking one, and a variable the CAS
 holds a value in (`DIGITS`, `plus_inf`, `epsilon`) is refused. A derivative with
 respect to a list is bounded by its cost — the expression's length and function
 nesting, the number of variables, and the order — because its size, not its entry
-count, is what traps the engine.
+count, is what traps the engine. A derivative with respect to one variable is
+bounded by its measured size: the derivative is computed at half the order, a
+quarter, and so on, and a high order is refused when its growth predicts more
+than half a million characters (`diff(exp(sin(x*y))*cos(x+y)/(1+x^2+y^2), x, 15)`
+used to crash the engine).
 
 The infinite-result rule covers arithmetic evaluation. A symbolic `+infinity`
 from the CAS routes — a limit, a divergent integral — is a normal answer and

@@ -38,6 +38,26 @@ const MAX_LATEX_DEPTH = MAX_ENGINE_DEPTH;
 const MAX_LATEX_INPUT = 6_000;
 
 /**
+ * The longest printed engine output handed back to the engine as input.
+ *
+ * Giac's parser traps on a long input ("RuntimeError: memory access out of
+ * bounds"), which recycles the worker every call shares, and where depends on
+ * the shape. Measured by bisection through `simplify((E)-(0))`: a digit string
+ * parses at 9,314 characters and traps at 9,752, a product of binomials at
+ * 12,820 and 13,250, a sum of rational multiples of powers at 27,698 and
+ * 28,132. A series or derivative the engine printed runs far past all three —
+ * `diff(exp(sin(x)), x, 100)` is 159,096 characters — so anything read back
+ * is bounded first, below the smallest of them. Nesting depth is bounded with
+ * it, as for latex (MAX_ENGINE_DEPTH).
+ */
+export const MAX_READBACK_LENGTH = 6_000;
+
+/** Whether printed engine output is short and shallow enough to hand back to the engine. */
+export function readableBack(printed: string): boolean {
+  return printed.length <= MAX_READBACK_LENGTH && nestingDepth(printed) <= MAX_ENGINE_DEPTH;
+}
+
+/**
  * Best-effort LaTeX rendering of a Giac result; undefined when Giac cannot
  * render it.
  *

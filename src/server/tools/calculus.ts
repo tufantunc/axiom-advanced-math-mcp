@@ -23,6 +23,7 @@ import { odeCostError } from './ode-cost-bounds.js';
 import { resolveVariable, takesVariable, variableRefusal } from './calculus-variable.js';
 import { DEFAULT_TAYLOR_ORDER, taylorAnswer } from './taylor-answer.js';
 import { definiteIntegralRefusal } from './definite-integral.js';
+import { derivativeCostRefusal } from './derivative-cost.js';
 
 /** Giac's spelling of a limit's direction: from the right, from the left, both sides. */
 type GiacLimitDirection = '1' | '-1' | '0';
@@ -161,7 +162,9 @@ async function buildGiacExpression(
  * `diff(1/x, x, 100000)` shipped "GIAC_ERROR: Polynomial exponent overflow" as
  * its Result. No ceiling makes every expression safe — the cost depends on the
  * expression as much as the order — but 100 keeps the worst shape measured
- * inside the timeout and is far past any series a caller reads.
+ * inside the timeout and is far past any series a caller reads. What a
+ * derivative grows to below this order is bounded on its own: by
+ * MAX_DERIVATIVE_COST for a list of variables, by MAX_DERIVATIVE_SIZE for one.
  */
 export const MAX_CALCULUS_ORDER = 100;
 
@@ -815,6 +818,24 @@ async function odeMisreadRefusal(args: Record<string, unknown>): Promise<string 
         `product with *, and ${fn} only at the variable ${variable}`;
 }
 
+/**
+ * What a derivative with respect to one variable would cost, measured on the
+ * engine (derivativeCostRefusal) — after the variable is resolved, so the
+ * probes differentiate by the variable the command will. A list of variables
+ * is bounded before any engine call, by variableRefusal.
+ */
+async function singleVariableCostRefusal(
+  args: Record<string, unknown>
+): Promise<string | undefined> {
+  const variable = unicodeToAscii(String(args.variable)).trim();
+  if (variable.startsWith('[') || args.order === undefined) return undefined;
+  return derivativeCostRefusal(
+    unicodeToAscii(String(args.expression)),
+    variable,
+    Number(String(args.order).trim())
+  );
+}
+
 export async function calculusHandler(input: Record<string, unknown>) {
   try {
     const operation = input.operation as string;
@@ -837,6 +858,11 @@ export async function calculusHandler(input: Record<string, unknown>) {
       const resolved = await resolveVariable(operation, args);
       if ('error' in resolved) return formatErrorResponse(resolved.error);
       args = resolved.args;
+    }
+
+    if (operation === 'differentiate') {
+      const costly = await singleVariableCostRefusal(args);
+      if (costly !== undefined) return formatErrorResponse(costly);
     }
 
     if (operation === 'solve_ode') {

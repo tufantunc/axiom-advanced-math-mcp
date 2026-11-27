@@ -51,8 +51,8 @@ const MAX_DERIVATIVE_ENTRIES = 256;
  *
  * Only for a list of two or more variables. A single variable grows by much
  * less per order — `diff(exp(sin(x)), x, 100)` answers in under a second — and
- * this model would refuse it, so a single variable is bounded by
- * MAX_CALCULUS_ORDER alone.
+ * this model would refuse it, so a single variable is bounded by measuring the
+ * derivative on the way up (derivative-cost.ts).
  */
 export const MAX_DERIVATIVE_COST = 16_384;
 

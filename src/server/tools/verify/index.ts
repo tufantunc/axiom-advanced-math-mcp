@@ -4,6 +4,7 @@ import { giacEngine } from '../../giac/index.js';
 import {
   caretExponentRefusal,
   functionPowerRefusal,
+  NAME_CHAR_PATTERN,
   superscriptRefusal,
   unicodeToAscii,
 } from '../unicode-normalize.js';
@@ -11,8 +12,9 @@ import { rewriteCombinatorics } from '../combinatorics-rewrite.js';
 import { stripOrderTerm, seriesRemainderOrders } from '../output-cleanup.js';
 import { extractIntegrate, extractTaylor } from '../compute/extractors.js';
 import { definiteIntegralRefusal } from '../definite-integral.js';
-import { DEFAULT_TAYLOR_ORDER, seriesShortfall, shortfallReason } from '../taylor-answer.js';
-import { splitArgs, extractFnArgs } from '../compute/arg-parsing.js';
+import { DEFAULT_TAYLOR_ORDER, shortfallReason } from '../taylor-answer.js';
+import { calculusHandler } from '../calculus.js';
+import { readableBack } from '../giac-eval.js';
 
 export const verifySchema = z.object({
   claim: z
@@ -162,14 +164,15 @@ type SideReading =
 /** The side's single calculus call, when it is exactly one, as compute reads it. */
 const SERIES_CALL = /^\s*(?:taylor|series)\s*\(/;
 const INTEGRAL_CALL = /^\s*(?:integrate|int)\s*\(/;
+/** taylor or series applied anywhere in a side — not `my_taylor(`, a name of its own. */
+const SERIES_APPLIED = new RegExp(`(?<!${NAME_CHAR_PATTERN})(?:taylor|series)\\s*\\(`, 'u');
 
 /**
  * Why a side's reading is not the computation it names, judged by the rules
  * compute applies to the same call, or undefined. Only a side that is exactly
  * one call, read the way compute and Giac both read it: verify certified
- * `integrate(1/(x-1),x,0,2) = 0` — Giac's principal value — and
- * `taylor(1+x*exp(1/x),x=0,3) = 1`, a series that stops at order 0, both of
- * which compute refuses.
+ * `integrate(1/(x-1),x,0,2) = 0` — Giac's principal value — which compute
+ * refuses.
  */
 async function sideComputationRefusal(
   side: string,
@@ -180,20 +183,6 @@ async function sideComputationRefusal(
     if (args.argument_refusal === undefined && args.lower_bound !== undefined) {
       const reason = await definiteIntegralRefusal(args, reading);
       if (reason !== undefined) return { reason, check: 'divergent_integral' };
-    }
-  }
-  // Only `taylor(f, x=a, n)`: Giac reads `taylor(f, x, a, n)` as a different
-  // expansion from compute's, so its order is not the one the reading has.
-  const parts = SERIES_CALL.test(side) ? splitArgs(extractFnArgs(side)) : [];
-  if (parts.length > 1 && parts[1].includes('=')) {
-    const { args } = extractTaylor(side);
-    const point = String(args.point ?? '').trim();
-    if (args.argument_refusal === undefined && !/^[+-]?(?:inf|infinity)$/.test(point)) {
-      const n = args.order === undefined ? DEFAULT_TAYLOR_ORDER : Number(args.order);
-      const shortfall = seriesShortfall(seriesRemainderOrders(reading), n);
-      if (shortfall !== undefined) {
-        return { reason: shortfallReason(shortfall, n), check: 'broken_series' };
-      }
     }
   }
   // Wherever else a series sits, a remainder of order 0 is O(1): the
@@ -208,12 +197,79 @@ async function sideComputationRefusal(
 }
 
 /**
+ * A side that holds a taylor or series call, read exactly as compute reads
+ * it, or undefined for a side that holds none.
+ *
+ * Through compute's own calculus handler, so the two surfaces share one
+ * reading and one set of checks. Giac reads `taylor(f, x, a, n)` as the
+ * expansion to order a at the point n, where compute reads the point a and
+ * the order n: `taylor(exp(x),x,1,2) = exp(1)+exp(1)*(x-1)+exp(1)/2*(x-1)^2`
+ * was refuted although compute answers exactly that, and
+ * `taylor(x+x^4*exp(1/x),x=0,3) = x` verified TRUE although compute refuses
+ * the series. The side checked is compute's answer, not the call: the
+ * strategies re-evaluate their text, which would read the call Giac's way
+ * again.
+ *
+ * Only a side that is the call alone. compute reads nothing else — it
+ * refuses `taylor(...)+1` — so a series inside a larger expression has no
+ * reading of compute's to check, and is refused rather than read Giac's way.
+ */
+async function seriesSideReading(side: string): Promise<SideReading | undefined> {
+  if (!SERIES_APPLIED.test(side)) return undefined;
+  if (!SERIES_CALL.test(side)) {
+    return {
+      kind: 'refused',
+      expr: side,
+      reason:
+        'it holds a taylor or series call inside a larger expression, which compute does ' +
+        'not read — write the series alone on one side of the claim',
+      check: 'series_computation',
+    };
+  }
+  const { args } = extractTaylor(side);
+  let response: Awaited<ReturnType<typeof calculusHandler>>;
+  try {
+    response = await calculusHandler(args);
+  } catch {
+    return { kind: 'unreadable', expr: side };
+  }
+  const text = response.content.map((c) => c.text).join('\n');
+  if (response.isError) {
+    return {
+      kind: 'refused',
+      expr: side,
+      reason: text.replace(/^Error:\s*/, ''),
+      check: 'series_computation',
+    };
+  }
+  const result = 'result' in response ? String(response.result).trim() : '';
+  if (!result) return { kind: 'unreadable', expr: side };
+  if (containsUndefinedMarker(result)) return { kind: 'undefined', expr: side };
+  const reading = stripOrderTerm(result);
+  // The strategies hand the reading back to the engine, whose parser traps on
+  // a long one; a series to order 100 can run to half a million characters.
+  if (!readableBack(reading)) {
+    return {
+      kind: 'refused',
+      expr: side,
+      reason:
+        `compute's answer for it has ${reading.length} characters, more than can be ` +
+        'checked — compare a lower order',
+      check: 'series_computation',
+    };
+  }
+  return { kind: 'read', expr: `(${reading})` };
+}
+
+/**
  * Pre-normalize one side of an identity claim: when it evaluates to a series
  * result carrying an order_size remainder, substitute the bare polynomial.
  * An evaluation problem marks the side unreadable rather than silently
  * proceeding on it.
  */
 async function normalizeSide(side: string): Promise<SideReading> {
+  const series = await seriesSideReading(side);
+  if (series !== undefined) return series;
   let r: string | undefined;
   try {
     r = await giacEngine.evaluate(side);
