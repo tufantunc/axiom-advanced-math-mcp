@@ -25,7 +25,8 @@
         "src/server/tools/ode-condition-bounds.ts",
         "src/server/tools/output-cleanup.ts",
         "src/server/tools/unicode-normalize.ts",
-        "src/server/tools/compute/arg-parsing.ts"
+        "src/server/tools/compute/arg-parsing.ts",
+        "src/server/tools/ode-clauses.ts"
       ],
       "rules": {
         "no-restricted-imports": [

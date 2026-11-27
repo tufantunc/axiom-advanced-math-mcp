@@ -11,6 +11,7 @@ import { verifyIntegrate, verifyOdeSystem, verifyOdeSolution } from './self-veri
 import {
   leibnizQuotients,
   misreadPrintedOde,
+  odeLiteral,
   odeEquationMembers,
   odeMembersToQuote,
   parseOdeSystem,
@@ -826,13 +827,28 @@ async function odeMisreadRefusal(args: Record<string, unknown>): Promise<string 
       `${excerpt(misread.call, 60)}, which the CAS drops — write it ${misread.primed}`
     );
   }
+  const atAPoint = `write a condition at a point, as ${fn}(0)=1 or ${fn}'(0)=0`;
+  if (misread.kind === 'condition argument') {
+    // `[y'=y, y(x=0)=1]` answered 0.
+    return (
+      `solve_ode cannot solve this equation — it gives a condition that applies ${fn} at ` +
+      `${excerpt(misread.argument, 60)} rather than at a point — ${atAPoint}`
+    );
+  }
+  if (misread.kind === 'quoted') {
+    // `y'=quote(y(x-1))` answered (2*c_0+x^2-2*x)/2, the solution of y'=x-1.
+    return (
+      `solve_ode cannot solve this equation — it quotes ${excerpt(misread.expression, 60)}, ` +
+      `which the CAS does not read as ${fn} — remove the quote` +
+      (misread.inCondition ? ` and ${atAPoint}` : '')
+    );
+  }
   return misread.inCondition
     ? `solve_ode cannot solve this equation — it gives a condition that applies ${fn} ` +
-        `through ${excerpt(misread.expression, 60)} — write a condition at a point, ` +
-        `as ${fn}(0)=1 or ${fn}'(0)=0`
+        `through ${excerpt(misread.expression, 60)} — ${atAPoint}`
     : `solve_ode cannot solve this equation — the CAS reads ${excerpt(misread.expression, 60)} ` +
-        `as an expression built from ${fn} applied as a function, which this does not solve ` +
-        `— write a product with *, and ${fn} only at the variable ${variable}`;
+        `as a function applied to an argument, with ${fn} in one or the other, which this ` +
+        `does not solve — write a product with *, and ${fn} only at the variable ${variable}`;
 }
 
 export async function calculusHandler(input: Record<string, unknown>) {
@@ -852,6 +868,16 @@ export async function calculusHandler(input: Record<string, unknown>) {
     if (validationError) return formatErrorResponse(validationError.message);
 
     if (operation === 'solve_ode') {
+      // Before the first engine call that embeds the text, quote( or desolve(:
+      // a bracket in a string or comment balances every count above and not
+      // Giac's parser, which would close the call early and run what follows.
+      const literal = odeLiteral(args.equation as string);
+      if (literal !== undefined) {
+        return formatErrorResponse(
+          `solve_ode cannot solve this equation — it holds ${literal}, which opens a string or ` +
+            'a comment, and an equation holds neither'
+        );
+      }
       const misread = await odeMisreadRefusal(args);
       if (misread !== undefined) return formatErrorResponse(misread);
     }

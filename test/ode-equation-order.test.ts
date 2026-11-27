@@ -47,6 +47,14 @@ describe('single-equation ODE spellings', () => {
     ["y'=y, y(0)=1", 'exp(x)', "desolve([y'=y, y(0)=1],x,y)"],
     // And with the verb, inside the brackets.
     ["desolve([y(0)=1, y'=y], x, y)", 'exp(x)', "desolve([y'=y, y(0)=1],x,y)"],
+    // Joined with a conjunction: `y'(x)` was left unevaluated, and the
+    // condition-first order read the condition as the equation.
+    ["desolve(y'(x)=y(x) and y(0)=1, x, y)", 'exp(x)', "desolve([y'=y(x), y(0)=1],x,y)"],
+    ["desolve(y'(x)=y(x) && y(0)=1, x, y)", 'exp(x)', "desolve([y'=y(x), y(0)=1],x,y)"],
+    ["desolve(y'(x)=y(x) ∧ y(0)=1, x, y)", 'exp(x)', "desolve([y'=y(x), y(0)=1],x,y)"],
+    ["y'(x)=y(x) and y(0)=1", 'exp(x)', "desolve([y'=y(x), y(0)=1],x,y)"],
+    ["y(0)=1 and y'=y", 'exp(x)', "desolve([y'=y, y(0)=1],x,y)"],
+    ["desolve(y(0)=1 && y'=y, x, y)", 'exp(x)', "desolve([y'=y, y(0)=1],x,y)"],
   ])('%s is the initial-value problem', async (problem, expected, command) => {
     const r = await computeHandler({ problem });
     const text = allText(r);
@@ -295,6 +303,49 @@ describe('verification gate on rewritten text', () => {
   );
 });
 
+/**
+ * A decimal condition on rewritten text. Giac answers `y'=y, y(1)=1.5` with
+ * 0.551819161757*exp(x), which meets y(1)=1.5 only to its twelve printed
+ * digits, so the exact check withheld the mark and the gate refused a correct
+ * answer. It now carries a mark that says the conditions hold to the rounding.
+ */
+describe('a decimal condition on rewritten text', () => {
+  const rounded = (equation: string): string =>
+    `Verified: ✓ (substitution: substitutes back into ${equation} exactly and meets the ` +
+    'conditions to the rounding of its decimals)';
+
+  it.each([
+    ["y'=y, y(1)=1.5", '0.551819161757*exp(x)', "desolve([y'=y, y(1)=1.5],x,y)", "y'=y"],
+    ["y(1)=1.5, y'=y", '0.551819161757*exp(x)', "desolve([y'=y, y(1)=1.5],x,y)", "y'=y"],
+    ["y(1)=1.5 && y'=y", '0.551819161757*exp(x)', "desolve([y'=y, y(1)=1.5],x,y)", "y'=y"],
+    ["y'=y, y(2)=1.5", '0.203002924855*exp(x)', "desolve([y'=y, y(2)=1.5],x,y)", "y'=y"],
+    ["y'=x*y, y(0.5)=2", '1.76499380517*exp(x^2/2)', "desolve([y'=x*y, y(0.5)=2],x,y)", "y'=x*y"],
+    [
+      "y'(x)=y(x), y(1)=0.5",
+      '0.183939720586*exp(x)',
+      "desolve([y'=y(x), y(1)=0.5],x,y)",
+      "y'=y(x)",
+    ],
+  ])('%s', async (problem, expected, command, equation) => {
+    const r = await computeHandler({ problem });
+    const text = allText(r);
+    expect(r.isError, text).toBe(false);
+    expect(text).toMatch(resultLine(expected));
+    expect(text).toContain(`Command: ${command}`);
+    expect(text).toContain(rounded(equation));
+  });
+
+  // An exact answer keeps the exact mark.
+  it('keeps the exact mark where the answer has no decimals', async () => {
+    const r = await computeHandler({ problem: "y'=y, y(0)=1.5" });
+    const text = allText(r);
+    expect(text).toMatch(resultLine('1.5*exp(x)'));
+    expect(text).toContain(
+      "Verified: ✓ (substitution: substitutes back into y'=y exactly and meets the conditions)"
+    );
+  });
+});
+
 describe('functionOccurrences', () => {
   it.each([
     [
@@ -345,6 +396,15 @@ describe('readSingleOde', () => {
     ['y(0)=1, diff(y(x),x)=y', { equation: 'diff(y(x),x)=y', conditions: ['y(0)=1'] }],
     ["y'(x)=y(x)", { equation: "y'=y(x)", conditions: [] }],
     ["y(L)=0, y''=-y", { equation: "y''=-y", conditions: ['y(L)=0'] }],
+    // A conjunction separates members as a comma does, in each spelling Giac
+    // takes for one.
+    ["y'(x)=y(x) and y(0)=1", { equation: "y'=y(x)", conditions: ['y(0)=1'] }],
+    ["y'(x)=y(x) && y(0)=1", { equation: "y'=y(x)", conditions: ['y(0)=1'] }],
+    ["y'(x)=y(x) ∧ y(0)=1", { equation: "y'=y(x)", conditions: ['y(0)=1'] }],
+    ["y'(x)=y(x) AND y(0)=1", { equation: "y'=y(x)", conditions: ['y(0)=1'] }],
+    ["(y'=y) and (y(0)=1)", { equation: "y'=y", conditions: ['y(0)=1'] }],
+    ["y(0)=1 and y'=y", { equation: "y'=y", conditions: ['y(0)=1'] }],
+    ["[y''=-y and y(0)=1, y'(0)=0]", { equation: "y''=-y", conditions: ['y(0)=1', "y'(0)=0"] }],
   ])('reads %s', (text, expected) => {
     expect(readSingleOde(text, 'y', 'x')).toEqual(expected);
   });
@@ -366,6 +426,11 @@ describe('readSingleOde', () => {
     ["y(0)=1, y'=y or 1"],
     ["y(0)=1, y'=y xor 1"],
     ["y(0)=1, y'=not(y)"],
+    // What is left of a join after the conjunctions are split off.
+    ["y'=y and y(0)=1 or y(1)=2"],
+    ["y'=y and (y(0)=1 or y(0)=2)"],
+    ["y'=y & y(0)=1"],
+    ["y'=y ∨ y(0)=1"],
     // 4. exactly one top-level `=`
     ["y(0)=1, y'=y=2"],
     ["y(0)=1, y'"],
@@ -414,6 +479,12 @@ describe('singleOdeText', () => {
     ["[y'=z, z'=-y]", "[y'=z, z'=-y]", false],
     ["y'=y, y(0)=factorial(10000", "y'=y, y(0)=factorial(10000", false],
     ["[y(0)=1, y''+y=0, y'+y=0]", "[y(0)=1, y''+y=0, y'+y=0]", false],
+    // Giac's own IVP spelling, equation first: as typed.
+    ["y'=y and y(0)=1", "y'=y and y(0)=1", false],
+    ["(y'=y) && (y(0)=1)", "(y'=y) && (y(0)=1)", false],
+    // A conjunction that needs the rewrite becomes the list.
+    ["y'(x)=y(x) and y(0)=1", "[y'=y(x), y(0)=1]", true],
+    ["y(0)=1 && y'=y", "[y'=y, y(0)=1]", true],
   ])('%s', (text, expected, rewritten) => {
     expect(singleOdeText(text, 'y', 'x')).toEqual({ text: expected, rewritten });
   });

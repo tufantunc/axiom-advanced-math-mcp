@@ -1,6 +1,7 @@
 import { stripEnclosingBrackets } from './compute/arg-parsing.js';
 import { escapeForRegExp, excerpt, splitTopLevel } from './output-cleanup.js';
 import { unicodeToAscii } from './unicode-normalize.js';
+import { odeClauses } from './ode-clauses.js';
 import {
   conditionBoundError,
   conditionsTogetherError,
@@ -30,7 +31,7 @@ import {
  *   - No `async` and no `await` in this file, and no engine symbol named in it.
  *     Both are text assertions in ode-system-shape-boundary.test.ts.
  *   - No path from this file, from the bounds module it imports, or from any of
- *     the three leaf modules either of them imports, to `src/server/giac`. That
+ *     the four leaf modules either of them imports, to `src/server/giac`. That
  *     is the real invariant, and only a walk of the import closure can state
  *     it — the same test does that walk, per guarded file.
  *   - An oxlint no-restricted-imports rule in .oxlintrc.json, which is a DENYLIST
@@ -597,20 +598,24 @@ function compositionOperand(text: string, at: number, side: 'left' | 'right'): s
 
 /**
  * Every application of something BUILT from `fn` in one printed operand, in
- * text order: a bracket group that mentions `fn` and is applied —
- * `(2*y)(x-1)`, `(y/2)(2-y)`, `(y(x))(0)`, `[y](x-1)`, `(sin(y))(y)` — a
- * composition with `fn` as an operand, and apply, map or of with `fn` among
- * the arguments. Giac prints every applied call wrapped, `(sin(y))(y)`, but
- * a derivative call, so a call's own arguments followed by a bracket —
- * `diff(y(t),t)(0)` in `x` — are read as applied too.
+ * text order: a bracket group that is applied, where the group or what it is
+ * applied to mentions `fn` — `(2*y)(x-1)`, `(y/2)(2-y)`, `(y(x))(0)`,
+ * `[y](x-1)`, `(sin(y))(y)`, and `(sin(x))(y)`, which Giac evaluates as
+ * sin(y), not sin(x)*y — a composition with `fn` as an operand, and apply,
+ * map or of with `fn` among the arguments. Giac prints every applied call
+ * wrapped, `(sin(y))(y)`, but a derivative call, so a call's own arguments
+ * followed by a bracket — `diff(y(t),t)(0)` in `x` — are read as applied too.
  */
 function builtApplications(operand: string, fn: string): { start: number; text: string }[] {
   const found: { start: number; text: string }[] = [];
   for (const group of operand.matchAll(/[([]/g)) {
     const open = group.index;
     const close = closingBracket(operand, open);
-    if (!mentions(operand.slice(open + 1, close), fn) || operand[close + 1] !== '(') continue;
-    found.push({ start: open, text: operand.slice(open, bracketChainEnd(operand, close + 1) + 1) });
+    if (operand[close + 1] !== '(') continue;
+    const end = bracketChainEnd(operand, close + 1);
+    const appliedTo = operand.slice(close + 1, end < 0 ? undefined : end + 1);
+    if (!mentions(operand.slice(open + 1, close), fn) && !mentions(appliedTo, fn)) continue;
+    found.push({ start: open, text: operand.slice(open, end + 1) });
   }
   for (const op of operand.matchAll(/@+/g)) {
     const left = compositionOperand(operand, op.index, 'left');
@@ -630,14 +635,32 @@ function builtApplications(operand: string, fn: string): { start: number; text: 
 }
 
 /**
+ * The first string literal or comment marker in an ODE's text — `"`, `#`,
+ * `//` or the opener of a block comment — or undefined.
+ *
+ * Every bracket count this text goes through (validateExpression's,
+ * bracketsBalance's, splitTopLevel's) counts a bracket inside a string or a
+ * comment, and Giac's parser does not. So `y'=y+"(")+ifactor(2^64+1)+(")"`
+ * balances for all of them, while Giac closes `quote(` — and `desolve(` — at
+ * the `)` after the string and evaluates what follows: the quote meant to read
+ * the text without evaluating it ran ifactor. Measured the same with a block
+ * comment holding `(`, and with `#` up to a newline. No equation holds any of
+ * them, so the text is refused rather than lexed a second time here.
+ */
+export function odeLiteral(text: string): string | undefined {
+  return /["#]|\/[*/]/.exec(text)?.[0];
+}
+
+/**
  * The members of a single ODE's text, each to be handed to Giac's `quote` on
  * its own: split at top-level `,` and `;` (a statement separator, which no
  * quote could hold), or null when the brackets do not balance — a member
- * with a stray `)` would close the quote early and evaluate what follows.
+ * with a stray `)` would close the quote early and evaluate what follows —
+ * or the text holds an odeLiteral, which hides a bracket from the count.
  */
 export function odeMembersToQuote(text: string): string[] | null {
   const ascii = unicodeToAscii(text);
-  if (!bracketsBalance(ascii)) return null;
+  if (!bracketsBalance(ascii) || odeLiteral(ascii) !== undefined) return null;
   return splitTopLevel(stripEnclosingBrackets(ascii), ',')
     .flatMap((m) => splitTopLevel(m, ';'))
     .map((m) => m.trim())
@@ -651,7 +674,11 @@ export type OdeMisreading =
   /** An application of something built from `fn`, in the equation or a condition. */
   | { kind: 'built'; expression: string; inCondition: boolean }
   /** A derivative call at a point, which Giac drops, and its primed spelling. */
-  | { kind: 'derivative call'; call: string; primed: string };
+  | { kind: 'derivative call'; call: string; primed: string }
+  /** A condition applies `fn` at `argument`, which is not a point: `y(x=0)=1`. */
+  | { kind: 'condition argument'; argument: string }
+  /** A quoted expression that holds `fn`, which Giac leaves unread: `'y(x-1)'`. */
+  | { kind: 'quoted'; expression: string; inCondition: boolean };
 
 /**
  * How Giac will MISREAD a single ODE, read off the form Giac itself prints
@@ -667,16 +694,22 @@ export type OdeMisreading =
  * its `*` — `y*(1-y)`, `(2*y)(x-1)` — so a name followed by a bracket IS an
  * application, and `(y')'` is `y''`.
  *
- * Four findings, in order:
+ * Seven findings, in order:
  *
  *   1. the EQUATION applies `fn` at anything but exactly the variable —
  *      `y(x-1)`, `y(x/2)`, `y(0)`, `y(f(y))` — a delay, pantograph or
  *      nonlocal equation, which Giac answers as something else
  *      (`y'=y(x-1)` gave `(2*c_0+x^2-2*x)/2`);
- *   2. the equation applies something built from `fn` (builtApplications);
- *   3. a derivative call at a point, `diff(y(x),x)(0)`, anywhere — Giac drops
+ *   2. the equation applies something built from `fn`, or applies something
+ *      to `fn` (builtApplications): `y'=sin(x)(y)` was solved as y'=sin(y);
+ *   3. the equation quotes an expression that holds `fn` (quotedWithFn):
+ *      `y'=quote(y(x-1))` was solved as y'=x-1;
+ *   4. a derivative call at a point, `diff(y(x),x)(0)`, anywhere — Giac drops
  *      the condition; read as `y'(0)` for 1 and 2;
- *   4. a condition applies something built from `fn`: `(2*y)(0)=1`.
+ *   5. a condition applies something built from `fn`: `(2*y)(0)=1`;
+ *   6. a condition applies `fn` at anything but a point: `[y'=y, y(x=0)=1]`
+ *      answered 0;
+ *   7. a condition quotes an expression that holds `fn`.
  *
  * An operand is the equation when, with its built applications taken out, it
  * holds `fn` bare or at the variable — its derivative prints as `y'` or
@@ -701,6 +734,8 @@ export function misreadPrintedOde(
     .flatMap((p) => splitTopLevel(stripEnclosingBrackets(p), ','))
     .flatMap(printedOperands);
   let inCondition: { start: number; text: string } | undefined;
+  let conditionOff: string | undefined;
+  let conditionQuote: string | undefined;
   for (const operand of operands) {
     let read = operand;
     for (const call of derivativeCallsAtPoints(read, fn, variable).reverse()) {
@@ -709,11 +744,13 @@ export function misreadPrintedOde(
     }
     const built = builtApplications(read, fn);
     const rest = built.reduce((t, b) => t.replace(b.text, '0'), read);
-    const isEquation = readOccurrences(rest, fn, variable).some(
-      (o) => o.at === 'bare' || o.at === 'variable'
-    );
+    const restOccurrences = readOccurrences(rest, fn, variable);
+    const quoted = quotedWithFn(read, fn);
+    const isEquation = restOccurrences.some((o) => o.at === 'bare' || o.at === 'variable');
     if (!isEquation) {
       inCondition ??= built[0];
+      conditionOff ??= restOccurrences.find((o) => o.at === 'other')?.argument;
+      conditionQuote ??= quoted;
       continue;
     }
     const off = readOccurrences(read, fn, variable).find(
@@ -721,6 +758,7 @@ export function misreadPrintedOde(
     );
     if (off?.argument !== undefined) return { kind: 'argument', argument: off.argument };
     if (built.length > 0) return { kind: 'built', expression: built[0].text, inCondition: false };
+    if (quoted !== undefined) return { kind: 'quoted', expression: quoted, inCondition: false };
   }
   for (const member of primesFolded) {
     const [call] = derivativeCallsAtPoints(member, fn, variable);
@@ -732,9 +770,42 @@ export function misreadPrintedOde(
       };
     }
   }
-  return inCondition === undefined
+  if (inCondition !== undefined) {
+    return { kind: 'built', expression: inCondition.text, inCondition: true };
+  }
+  if (conditionOff !== undefined) return { kind: 'condition argument', argument: conditionOff };
+  return conditionQuote === undefined
     ? undefined
-    : { kind: 'built', expression: inCondition.text, inCondition: true };
+    : { kind: 'quoted', expression: conditionQuote, inCondition: true };
+}
+
+/**
+ * The first quoted expression in printed text that holds `fn`, or undefined.
+ *
+ * Giac prints `quote(e)` as `'e'`, and the name inside is no occurrence to
+ * readOccurrences — a quote is not a prime, but both are `'`, and its
+ * lookbehind skips a name after either. Unread, `y'=quote(y(x-1))` was solved
+ * as y'=x-1. An OPENING quote follows no name, closing bracket or prime;
+ * `'of'` is Giac's composition and builtApplications' finding. Which `'`
+ * CLOSES a quote cannot be read off the print: `quote(x'*y)` prints `'x'*y'`
+ * and `quote(x)*y` prints `'x'*y`. So the expression runs to the end of its
+ * bracket group, which may take in more than the quote — `quote(x)*y` is
+ * refused too — and never less.
+ */
+function quotedWithFn(text: string, fn: string): string | undefined {
+  for (const quote of text.matchAll(/(?<![\w')\]}])'/g)) {
+    if (text.startsWith("of'", quote.index + 1)) continue;
+    let depth = 0;
+    let end = quote.index + 1;
+    for (; end < text.length; end++) {
+      const ch = text[end];
+      if ('([{'.includes(ch)) depth++;
+      else if (')]}'.includes(ch) && --depth < 0) break;
+    }
+    const expression = text.slice(quote.index, end).trim();
+    if (mentions(expression.slice(1), fn)) return expression;
+  }
+  return undefined;
 }
 
 /**
@@ -779,8 +850,12 @@ export interface SingleOde {
  *
  *   1. brackets balance (a system needs two equation members, so rule 7
  *      declines one without asking parseOdeSystem);
- *   2. nothing non-ASCII survives normalisation;
- *   3. no member holds `&`, `|`, `;`, `<`, `>`, `!`, or and/or/xor/not;
+ *   2. the members are odeClauses's: split at top-level commas and at the
+ *      conjunctions Giac reads as one, `and`, `&&` and `∧`, so
+ *      `y'(x)=y(x) and y(0)=1` is the same two members as the list spelling;
+ *      nothing non-ASCII survives in a member;
+ *   3. no member holds `&`, `|`, `;`, `<`, `>`, `!`, or and/or/xor/not — what
+ *      is left of a join after the split is a join this does not read;
  *   4. every member has exactly one top-level `=`;
  *   5. every appearance of `fn` is bare, at exactly the variable, or at a point
  *      that mentions neither the variable nor `fn` (functionOccurrences) —
@@ -800,11 +875,10 @@ export interface SingleOde {
 export function readSingleOde(text: string, fn: string, variable: string): SingleOde | null {
   const ascii = unicodeToAscii(text);
   if (!bracketsBalance(ascii)) return null;
-  if (/[^\x20-\x7E]/.test(ascii.replaceAll(/\s/g, ' '))) return null;
-  const members = splitTopLevel(stripEnclosingBrackets(ascii), ',').map((m) => m.trim());
   let equation: string | undefined;
   const conditions: string[] = [];
-  for (const member of members) {
+  for (const member of odeClauses(ascii).map((m) => m.trim())) {
+    if (/[^\x20-\x7E]/.test(member.replaceAll(/\s/g, ' '))) return null;
     if (/[&|;<>!]/.test(member) || /\b(?:and|or|xor|not)\b/i.test(member)) return null;
     if (splitTopLevel(member, '=').length !== 2) return null;
     const occurrences = functionOccurrences(member, fn, variable);
@@ -846,6 +920,11 @@ export function readSingleOde(text: string, fn: string, variable: string): Singl
  * caller typed: `[equation, condition, …]` when readSingleOde reads it and the
  * typed text is not already that, otherwise `text` exactly.
  *
+ * Already that means the equation comes first, needs no `y'(x)` rewrite, and
+ * the members are a bracketed list or one comma-free argument: `[y'=y,
+ * y(0)=1]`, and `y'=y and y(0)=1`, Giac's own IVP spelling, go through as
+ * typed. `y'=y, y(0)=1` unbracketed is two arguments, and is rewritten.
+ *
  * `rewritten` is what calculus.ts's fail-closed gate keys on: an answer to a
  * text this changed ships only with a verified substitution.
  */
@@ -856,12 +935,12 @@ export function singleOdeText(
 ): { text: string; rewritten: boolean } {
   const read = readSingleOde(text, fn, variable);
   if (read === null) return { text, rewritten: false };
-  const members = splitTopLevel(stripEnclosingBrackets(unicodeToAscii(text)), ',').map((m) =>
-    m.trim()
-  );
+  const ascii = unicodeToAscii(text);
+  const members = odeClauses(ascii).map((m) => m.trim());
+  const oneArgument = splitTopLevel(stripEnclosingBrackets(ascii), ',').length === 1;
   const unchanged =
     members[0] === read.equation &&
-    (members.length === 1 || text.trim().startsWith('[')) &&
+    (oneArgument || text.trim().startsWith('[')) &&
     members.slice(1).every((m, i) => m === read.conditions[i]);
   if (unchanged) return { text, rewritten: false };
   const solved =

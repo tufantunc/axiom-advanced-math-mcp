@@ -14,7 +14,7 @@ import { dirname, resolve } from 'node:path';
  *
  * The import half of the invariant IS here: the closure walk below is the only
  * mechanism that can express "no path to the engine". The oxlint
- * no-restricted-imports rule over the same five files is an editor-time backstop
+ * no-restricted-imports rule over the same six files is an editor-time backstop
  * that fires faster and proves less — see the comment on that test.
  */
 /**
@@ -51,6 +51,7 @@ const WALKED = [
   'src/server/tools/output-cleanup.ts',
   'src/server/tools/unicode-normalize.ts',
   'src/server/tools/compute/arg-parsing.ts',
+  'src/server/tools/ode-clauses.ts',
 ];
 
 describe('the text-only halves evaluate nothing', () => {
@@ -139,7 +140,7 @@ describe('the text-only halves evaluate nothing', () => {
     expect(engine).toEqual([]);
   });
 
-  // The walk list and the oxlint override are the same five files maintained
+  // The walk list and the oxlint override are the same six files maintained
   // by hand in two different files, which grew in lockstep so far only because
   // each author happened to edit both. This pin turns the lockstep into a
   // checked property: the expected set is spelled out HERE, independent of
@@ -162,6 +163,7 @@ describe('the text-only halves evaluate nothing', () => {
       'src/server/tools/output-cleanup.ts',
       'src/server/tools/unicode-normalize.ts',
       'src/server/tools/compute/arg-parsing.ts',
+      'src/server/tools/ode-clauses.ts',
     ];
     expect(matches, 'overrides setting no-restricted-imports').toHaveLength(1);
     expect(matches[0]?.files, 'the no-restricted-imports override').toEqual(expected);
