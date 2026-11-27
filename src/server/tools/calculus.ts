@@ -5,14 +5,14 @@ import type { VerificationResult } from './self-verify.js';
 import { detectFailure } from './compute/silent-failure.js';
 import { excerpt, splitTopLevel } from './output-cleanup.js';
 import { stripEnclosingBrackets } from './compute/arg-parsing.js';
-import { unicodeToAscii, NAME_PATTERN } from './unicode-normalize.js';
+import { unicodeToAscii } from './unicode-normalize.js';
 import { giacEngine } from '../giac/index.js';
 import { verifyIntegrate, verifyOdeSystem, verifyOdeSolution } from './self-verify.js';
+import { misreadPrintedOde, odeMembersToQuote } from './ode-misreading.js';
+import { literalReason, odeLiteral, quotedReason } from './ode-text-tokens.js';
 import {
   leibnizQuotients,
-  misreadPrintedOde,
   odeEquationMembers,
-  odeMembersToQuote,
   parseOdeSystem,
   replaceLeibnizQuotients,
   type LeibnizQuotient,
@@ -20,6 +20,9 @@ import {
 import { translateOdeSystem } from './ode-system.js';
 import { implausibleEquationMagnitude } from './ode-condition-bounds.js';
 import { odeCostError } from './ode-cost-bounds.js';
+import { resolveVariable, takesVariable, variableRefusal } from './calculus-variable.js';
+import { DEFAULT_TAYLOR_ORDER, taylorAnswer } from './taylor-answer.js';
+import { definiteIntegralRefusal } from './definite-integral.js';
 
 /** Giac's spelling of a limit's direction: from the right, from the left, both sides. */
 type GiacLimitDirection = '1' | '-1' | '0';
@@ -79,7 +82,7 @@ function buildSimpleCommand(operation: string, args: Record<string, unknown>): s
       const expr = args.expression as string;
       const v = args.variable as string;
       const pt = (args.point as string) ?? '0';
-      const n = args.order === undefined ? 5 : Number(args.order);
+      const n = args.order === undefined ? DEFAULT_TAYLOR_ORDER : Number(args.order);
       return `taylor(${expr},${v}=${pt},${n})`;
     }
     case 'solve_ode': {
@@ -163,80 +166,6 @@ async function buildGiacExpression(
 export const MAX_CALCULUS_ORDER = 100;
 
 /**
- * The most entries a derivative with respect to a list may have: k variables
- * to order n is a k^n tensor. Measured: `diff(exp(sin(x*y)), [x, y], 10)`
- * (1024 entries) traps the shared worker, and so do 3^7 and 4^6 of the same
- * shape, where 2^9 answers in 0.8 s. Even `diff(x*y, [x, y], 20)` traps, on
- * size alone. 256 keeps a fourfold margin under the smallest trap measured.
- */
-const MAX_DERIVATIVE_ENTRIES = 256;
-
-/**
- * Names Giac reads as constants: differentiating with respect to one is 0.
- * A pattern, not a Set literal — test/operation-coverage.test.ts reads every
- * `new Set([...])` in a handler as operation names it dispatches on. `π` is a
- * letter, so it passes the name check and is caught here; `∞` is not one.
- */
-const CONSTANT_NAME = /^(?:e|i|pi|π|infinity|inf|euler_gamma)$/u;
-
-/**
- * Names Giac reads as values rather than symbols: `diff(x^2, NULL)` answered
- * 2*x, `diff(x^2, undef)` 0, `diff(x^2, true)` stayed unevaluated.
- */
-const VALUE_NAME = /^(?:NULL|true|false|undef)$/u;
-
-/** A name as Giac reads one, `θ` included — the same rule as unicode-normalize. */
-const VARIABLE_NAME = new RegExp(`^${NAME_PATTERN}$`, 'u');
-
-function nameRefusal(operation: string, text: string): string | null {
-  if (!VARIABLE_NAME.test(text)) {
-    return `${operation} needs a variable that is a name, such as x — got "${excerpt(text, 60)}"`;
-  }
-  if (VALUE_NAME.test(text)) {
-    return `${operation} needs a variable, and "${text}" is a value — name the variable, such as x`;
-  }
-  if (CONSTANT_NAME.test(text)) {
-    return `${operation} needs a variable, and "${text}" is a constant — name the variable, such as x`;
-  }
-  return null;
-}
-
-/**
- * The variable must be a name. `diff(x, 2)` answered the unevaluated
- * `diff(x,2)`, `integrate(x, 2)` a GIAC_ERROR, `taylor(sin(x), 2, 0, 3)` the
- * value 2/3, and `diff(x^2, pi)` the number 0 — each with isError:false.
- *
- * differentiate also takes a bracketed list of names, Giac's gradient:
- * `diff(x^2*y^3, [x, y])`, and with an order the Hessian or higher tensor:
- * `diff(x^2*y^3, [x, y], 2)`. Each name is checked as a single variable is,
- * and the tensor's size is bounded — see MAX_DERIVATIVE_ENTRIES.
- */
-function variableRefusal(
-  operation: string,
-  variable: unknown,
-  order: unknown = undefined
-): string | null {
-  const text = String(variable).trim();
-  if (operation === 'differentiate' && text.startsWith('[') && text.endsWith(']')) {
-    const names = splitTopLevel(text.slice(1, -1), ',').map((n) => n.trim());
-    for (const name of names) {
-      const refusal = nameRefusal(operation, name);
-      if (refusal) return refusal;
-    }
-    const n = order === undefined ? 1 : Number(String(order).trim());
-    if (/^\d+$/.test(String(order ?? '1').trim()) && names.length ** n > MAX_DERIVATIVE_ENTRIES) {
-      return (
-        `differentiate with ${names.length} variables to order ${n} gives ` +
-        `${names.length}^${n} entries, more than the ${MAX_DERIVATIVE_ENTRIES} this computes — ` +
-        'lower the order or list fewer variables'
-      );
-    }
-    return null;
-  }
-  return nameRefusal(operation, text);
-}
-
-/**
  * The order must be a positive integer, bounded before the engine sees it.
  * Accepts the extractor's text or a number.
  */
@@ -261,7 +190,7 @@ function calculusArgsRefusal(operation: string, args: Record<string, unknown>): 
   if (typeof args.argument_refusal === 'string') return args.argument_refusal;
   if (!args.expression) return `'expression' is required for ${operation}`;
   if (!args.variable) return `'variable' is required for ${operation}`;
-  return variableRefusal(operation, args.variable, args.order);
+  return variableRefusal(operation, args.variable, args.order, args.expression);
 }
 
 function validateDifferentiate(args: Record<string, unknown>): string | null {
@@ -559,6 +488,30 @@ function unfinishedAnswerGuard(
   );
 }
 
+/**
+ * The answer one operation's own check puts in place of the engine's, or
+ * undefined to ship the engine's: run after the shared guards, on an answer
+ * they passed. Each check here returns a response, so the handler has one
+ * call to make whatever the operation.
+ */
+async function operationAnswer(
+  operation: string,
+  response: EvaluatedResponse,
+  args: Record<string, unknown>,
+  giacCommand: string
+): Promise<EvaluatedResponse | ReturnType<typeof formatErrorResponse> | undefined> {
+  switch (operation) {
+    case 'taylor':
+      return taylorAnswer(response, args, giacCommand);
+    case 'integrate': {
+      const refusal = await definiteIntegralRefusal(args, response.result);
+      return refusal === undefined ? undefined : formatErrorResponse(refusal);
+    }
+    default:
+      return undefined;
+  }
+}
+
 async function singleEquationGuard(
   response: EvaluatedResponse,
   args: Record<string, unknown>
@@ -787,8 +740,9 @@ function rewriteLeibniz(
 }
 
 /**
- * A refusal for a single ODE Giac would MISREAD, decided on the form Giac
- * prints for it, or undefined.
+ * Why a single ODE cannot be handed to Giac — it holds a lexical hazard
+ * (odeLiteral), or Giac would MISREAD it, decided on the form Giac prints for
+ * it — or undefined. The reason only: the caller adds the prefix.
  *
  * `quote(member)` asks Giac's own parser what the text is, without evaluating
  * it, and misreadPrintedOde reads that. Four rounds of rules over the caller's
@@ -811,6 +765,13 @@ async function odeMisreadRefusal(args: Record<string, unknown>): Promise<string 
   const equation = args.equation as string;
   const fn = (args.function_name as string) ?? 'y';
   const variable = (args.variable as string) ?? 'x';
+  // First, and for a system too: this is the last check before the first
+  // engine call that embeds the text, quote( here or desolve( and the system's
+  // probes after it, and a bracket hidden in a string or a comment balances
+  // every count above and not Giac's parser, which would close the call early
+  // and run what follows.
+  const literal = odeLiteral(equation);
+  if (literal !== undefined) return `it ${literalReason(literal)}`;
   if (parseOdeSystem(equation) !== null) return undefined;
   const members = odeMembersToQuote(equation);
   if (members === null) return undefined;
@@ -824,29 +785,34 @@ async function odeMisreadRefusal(args: Record<string, unknown>): Promise<string 
   }
   const misread = misreadPrintedOde(printed, fn, variable);
   if (misread === undefined) return undefined;
-  if (misread.kind === 'argument') {
-    return (
-      `solve_ode cannot solve this equation — it applies ${fn} at ` +
-      `${excerpt(misread.argument, 60)} rather than at the variable ${variable}, ` +
-      'a delay or functional equation, which this does not solve'
-    );
-  }
   if (misread.kind === 'derivative call') {
     // Giac drops a condition written this way: `[y''=-y, y(0)=1,
     // diff(y(x),x)(0)=0]` answered cos(x)+c_1*sin(x). The primed spelling
     // answers cos(x).
     return (
-      `solve_ode cannot solve this equation — it writes a derivative at a point as ` +
-      `${excerpt(misread.call, 60)}, which the CAS drops — write it ${misread.primed}`
+      `it writes a derivative at a point as ${excerpt(misread.call, 60)}, which the CAS ` +
+      `drops — write it ${misread.primed}`
     );
   }
-  return misread.inCondition
-    ? `solve_ode cannot solve this equation — it gives a condition that applies ${fn} ` +
-        `through ${excerpt(misread.expression, 60)} — write a condition at a point, ` +
-        `as ${fn}(0)=1 or ${fn}'(0)=0`
-    : `solve_ode cannot solve this equation — the CAS reads ${excerpt(misread.expression, 60)} ` +
-        `as an expression built from ${fn} applied as a function, which this does not solve ` +
-        `— write a product with *, and ${fn} only at the variable ${variable}`;
+  const atAPoint = `write a condition at a point, as ${fn}(0)=1 or ${fn}'(0)=0`;
+  if (misread.kind === 'quoted') {
+    // `y'=quote(y(x-1))` answered (2*c_0+x^2-2*x)/2, the solution of y'=x-1.
+    return `it ${quotedReason(excerpt(misread.expression, 60), fn, misread.inCondition)}`;
+  }
+  if (misread.inCondition) {
+    // `[y'=y, y(x=0)=1]` answered 0.
+    const how =
+      misread.kind === 'argument'
+        ? `at ${excerpt(misread.argument, 60)} rather than at a point`
+        : `through ${excerpt(misread.expression, 60)}`;
+    return `it gives a condition that applies ${fn} ${how} — ${atAPoint}`;
+  }
+  return misread.kind === 'argument'
+    ? `it applies ${fn} at ${excerpt(misread.argument, 60)} rather than at the variable ` +
+        `${variable}, a delay or functional equation, which this does not solve`
+    : `the CAS reads ${excerpt(misread.expression, 60)} as a function applied to an ` +
+        `argument, with ${fn} in one or the other, which this does not solve — write a ` +
+        `product with *, and ${fn} only at the variable ${variable}`;
 }
 
 export async function calculusHandler(input: Record<string, unknown>) {
@@ -858,16 +824,26 @@ export async function calculusHandler(input: Record<string, unknown>) {
 
     const leibniz = operation === 'solve_ode' ? rewriteLeibniz(input) : { args: input };
     if ('error' in leibniz) return formatErrorResponse(leibniz.error);
-    const { args } = leibniz;
+    let { args } = leibniz;
 
     const exprToValidate =
       operation === 'solve_ode' ? (args.equation as string) : (args.expression as string);
     const validationError = validateExpression(exprToValidate);
     if (validationError) return formatErrorResponse(validationError.message);
 
+    // The variable as the engine reads it — after every synchronous check, so
+    // text those refuse never reaches the engine.
+    if (takesVariable(operation)) {
+      const resolved = await resolveVariable(operation, args);
+      if ('error' in resolved) return formatErrorResponse(resolved.error);
+      args = resolved.args;
+    }
+
     if (operation === 'solve_ode') {
       const misread = await odeMisreadRefusal(args);
-      if (misread !== undefined) return formatErrorResponse(misread);
+      if (misread !== undefined) {
+        return formatErrorResponse(`solve_ode cannot solve this equation — ${misread}`);
+      }
     }
 
     const { expr: giacExpr, functions, system } = await buildGiacExpression(operation, args);
@@ -897,6 +873,8 @@ export async function calculusHandler(input: Record<string, unknown>) {
     } else if (operation !== 'limit' && !response.isError) {
       const refusal = unfinishedAnswerGuard(operation, response.result);
       if (refusal) return refusal;
+      const answer = await operationAnswer(operation, response, args, giacExpr);
+      if (answer) return answer;
     }
     return response;
   } catch (error) {

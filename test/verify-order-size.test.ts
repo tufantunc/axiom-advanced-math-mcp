@@ -68,10 +68,12 @@ describe('verify: "EXPR at x=a = b" claims', () => {
     expect(t).toContain('Substitution:');
   }, 30000);
 
-  it('a mixed residue+constant diff is not zero: 1 = order_size(3) stays FALSE', async () => {
+  it('a mixed residue+constant diff is not zero: 1 = x*order_size(x) stays FALSE', async () => {
     // The residue-only predicate requires EVERY term to carry order_size;
-    // `some` would accept -order_size(3)+1 and certify this false claim.
-    const t = text(await verifyHandler({ claim: '1 = order_size(3)', method: 'symbolic' }));
+    // `some` would accept -x*order_size(x)+1 and certify this false claim.
+    // A remainder of order 1, because one of order 0 (`order_size(3)`) is a
+    // series that broke down and is refused before this predicate runs.
+    const t = text(await verifyHandler({ claim: '1 = x*order_size(x)', method: 'symbolic' }));
     expect(t).toContain('Verified: FALSE');
   }, 30000);
 });

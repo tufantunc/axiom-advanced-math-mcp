@@ -269,6 +269,47 @@ describe('verifyOdeSolution', () => {
     }
   );
 
+  /**
+   * An answer printed in decimals meets a condition only to its rounding:
+   * `0.551819161757*exp(x)` is 1.5 at x=1 to twelve digits and never exactly.
+   * The mark says so, and is given only for an answer that carries a decimal
+   * and a finite real residual within 1e-9 of the value.
+   */
+  it.each([
+    ["y'=y", '0.551819161757*exp(x)', "[y'=y, y(1)=1.5]"],
+    ["y'=y", '0.551819161757*exp(x)', "(y'=y) and (y(1)=3/2)"],
+    [
+      "y''=-y",
+      '-0.992055324278*cos(x)+1.23118895121*sin(x)',
+      "(y''=-y) and (y(1)=0.5) and (y'(1)=1.5)",
+    ],
+    ["y'=y*(1-y)", '[1/(2.71828182846*exp(-x)+1)]', "[y'=y*(1-y), y(1)=0.5]"],
+    // The extreme case everyConditionHolds records: 3.7e-4 absolute, 3.7e-14
+    // relative.
+    ["y'=y", '9048374180.36*exp(x)', "(y'=y) and (y(0.1)=1e10)"],
+  ])('verifies %s answered %s to the rounding of %s', async (equation, answer, source) => {
+    const out = await verifyOdeSolution(equation, 'y', 'x', answer, evaluate, source);
+    expect(out).toMatchObject({ verified: true });
+    expect(out?.detail).toMatch(/and meets the conditions to the rounding of its decimals$/);
+  });
+
+  it.each([
+    // A wrong coefficient, and one right to six digits only.
+    ["y'=y", '0.55*exp(x)', "[y'=y, y(1)=1.5]"],
+    ["y'=y", '0.551819*exp(x)', "[y'=y, y(1)=1.5]"],
+    // The other condition missed while one holds to its rounding.
+    ["y''=-y", '-0.992055324278*cos(x)+1.23118895121*sin(x)', "[y''=-y, y(1)=0.5, y'(1)=2]"],
+    // No decimal in the answer: nothing was rounded, so 1e-10 is a miss.
+    ["y'=y", 'exp(x)', "[y'=y, y(0)=1.0000000001]"],
+    // The slack is relative, so a zero value leaves none.
+    ["y'=y", '0.000000000001*exp(x)', "[y'=y, y(0)=0]"],
+    // A family is not a number, however small its rounding.
+    ["y'=y", 'c_0*0.551819161757*exp(x)', "[y'=y, y(1)=1.5]"],
+  ])('withholds the mark from %s answered %s under %s', async (equation, answer, source) => {
+    const out = await verifyOdeSolution(equation, 'y', 'x', answer, evaluate, source);
+    expect(out).toBeUndefined();
+  });
+
   it('says in the detail that the conditions were checked, not only the equation', async () => {
     // The mark's own words have to distinguish the two claims, because a ✓ that
     // reads the same whether or not the conditions were looked at is how this
@@ -361,12 +402,12 @@ describe('verifyOdeSolution', () => {
       // Undefined, NOT verified:false. A missed condition is never a disproof
       // here: measured, the CORRECT answer to `desolve(y'=y, y(0.1)=1e10, x, y)`
       // is `9048374180.36*exp(x)`, whose condition residual is 3.7e-4 — four
-      // orders above the 1e-6 the equation's disproof uses, and 3.7e-14 relative
-      // — so an absolute threshold would refuse a correct answer and a relative
-      // one is the scoring this file already records as unable to tell correct
-      // from wrong. And an under-determined answer's `c_1` is not evidence
-      // either. So the certificate is withdrawn and the answer still ships,
-      // which is exactly verifyOdeSystem's rule for the same question.
+      // orders above the 1e-6 the equation's disproof uses — so a threshold
+      // would refuse a correct answer. A relative one only ever GRANTS the
+      // rounded mark (above), never refuses. And an under-determined answer's
+      // `c_1` is not evidence either. So the certificate is withdrawn and the
+      // answer still ships, which is exactly verifyOdeSystem's rule for the
+      // same question.
       expect(out, `${equation} / ${answer} / ${conditionSource}`).toBeUndefined();
     }
   );

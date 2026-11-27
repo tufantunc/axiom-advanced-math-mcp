@@ -1,4 +1,5 @@
 import { GIAC_NUMBER } from './output-cleanup.js';
+import { unicodeToAscii } from './unicode-normalize.js';
 
 /**
  * The lexer every ODE text bound reads with, and the factorial arithmetic they
@@ -126,4 +127,68 @@ export function foldPrimes(tokens: MagnitudeToken[]): MagnitudeToken[] {
     } else folded.push(token);
   }
   return folded;
+}
+
+/**
+ * Every ASCII spelling that hides text from a bracket count: a string `"`, a
+ * quoted name `` ` ``, a comment `#`, `//` or a block-comment opener, an escape
+ * `\`, and a control character (Giac's reader stops at NUL).
+ */
+// Control characters are what this matches, on purpose.
+// oxlint-disable-next-line no-control-regex
+const LEXICAL_HAZARD = /["#`\\]|\/[*/]|[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/;
+
+/**
+ * The first lexical hazard in an ODE's text as the engine will read it — after
+ * unicodeToAscii — or undefined.
+ *
+ * Every bracket count this text goes through (validateExpression's,
+ * bracketsBalance's, splitTopLevel's) counts a bracket inside a string, a
+ * quoted name or a comment, and Giac's parser does not. So
+ * `y'=y+"(")+ifactor(2^64+1)+(")"` balances for all of them, while Giac closes
+ * `quote(` — and `desolve(` — at the `)` after the string and evaluates what
+ * follows: the quote meant to read the text without evaluating it ran ifactor.
+ * Measured the same with `` `(` ``, a block comment holding `(`, and `#` up to a
+ * newline.
+ *
+ * Read on the NORMALISED text, because that is what reaches the engine:
+ * unicodeToAscii maps `÷` to `/` and `×` to `*`, so `÷*…*÷` is a block comment
+ * by the time Giac reads it, and a check on the raw text answered
+ * `y'=y(x-1)+0÷*c*÷` as y'=x-1. The ASCII set is closed: every other printable
+ * character is an operator, a bracket or a name character to Giac. A glyph
+ * unicodeToAscii leaves alone lexes as `undef`, which hides nothing.
+ */
+export function odeLiteral(text: string): string | undefined {
+  return LEXICAL_HAZARD.exec(unicodeToAscii(text))?.[0];
+}
+
+/**
+ * How a hazard odeLiteral finds is named to the caller, without the leading
+ * "it ". Shared by the two places that refuse one before any engine call — the
+ * handler's odeMisreadRefusal over the whole equation, and the condition call
+ * check in ode-cost-bounds.ts, which reaches a condition first — so both say
+ * the same thing about the same character.
+ */
+export function literalReason(literal: string): string {
+  const code = literal.codePointAt(0) ?? 0;
+  const shown = code < 0x20 || code === 0x7f ? 'a control character' : literal;
+  return (
+    `holds ${shown}, which the CAS reads as a string, a comment, a quoted name or an ` +
+    'escape, and an equation holds none of them'
+  );
+}
+
+/**
+ * How a quoted expression is named to the caller, without the leading "it ":
+ * Giac does not read `quote(y(1))` as y, so the expression is solved as a
+ * constant. Shared like literalReason, by odeMisreadRefusal (which finds the
+ * quote in what the engine prints) and the condition call check (which finds
+ * it in the text, before any engine call).
+ */
+export function quotedReason(expression: string, fn: string, inCondition: boolean): string {
+  const atAPoint = `write a condition at a point, as ${fn}(0)=1 or ${fn}'(0)=0`;
+  return (
+    `quotes ${expression}, which the CAS does not read as ${fn} ` +
+    `— remove the quote${inCondition ? ` and ${atAPoint}` : ''}`
+  );
 }

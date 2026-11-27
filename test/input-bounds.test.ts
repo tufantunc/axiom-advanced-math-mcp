@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { isFatalWasmTrap } from '../src/server/giac/fatal-trap.js';
 import { computeHandler } from '../src/server/tools/compute/index.js';
 import { hypothesisTestingHandler } from '../src/server/tools/hypothesis-testing.js';
@@ -1866,6 +1866,52 @@ describe("an ODE problem's cost is bounded before the engine sees it", () => {
       problem,
       new RegExp(`gives a condition on ${name}\\(…\\), but the function solved for is y`)
     );
+  });
+
+  // An and-joined IVP is a third way to write a condition, and every
+  // per-condition bound reaches it: the bounds read members cut at commas
+  // only, so `y'=y and y(0)=ifactor(2^257-1)` burned the 10s budget, and the
+  // size bound was skipped the same way.
+  it.each([
+    ["y'=y and y(0)=ifactor(2^257-1)", /calls ifactor — an initial condition is a number/],
+    ["y'=y && y(0)=ifactor(2^257-1)", /calls ifactor — an initial condition is a number/],
+    ["y'=y ∧ y(0)=ifactor(2^257-1)", /calls ifactor — an initial condition is a number/],
+    ["desolve(y'=y and y(0)=ifactor(2^257-1), x, y)", /calls ifactor/],
+    ["y'=y and y(0)=50000!", /a factorial of 50000, which denotes a 213237-digit number/],
+  ])('refuses the and-joined %s', async (problem, reason) => {
+    await refusedQuickly(problem, reason);
+  });
+
+  // A quote or a string in a condition is refused in the words
+  // odeMisreadRefusal uses for the same thing in the equation, and refused
+  // here, before any engine call: that check reads a quote off what the engine
+  // prints, and a quote can as well hold ifactor(…). One row per path — the
+  // single equation through the extractor, a system through
+  // validateSystemShape.
+  it.each([
+    [
+      "desolve(y'=y, y(0)=quote(ifactor(2^257-1)), x, y)",
+      "this equation — it quotes 'ifactor(2^257-1)', which the CAS does not read as y — " +
+        "remove the quote and write a condition at a point, as y(0)=1 or y'(0)=0",
+    ],
+    [
+      "desolve([y'=z, z'=-y, y(0)=quote(ifactor(2^257-1)), z(0)=0], x)",
+      "this system — it quotes 'ifactor(2^257-1)', which the CAS does not read as y",
+    ],
+    [
+      'desolve(y\'=y, y(0)="ifactor(2^257-1)", x, y)',
+      'this equation — it holds ", which the CAS reads as a string, a comment',
+    ],
+  ])('refuses %s without an engine call', async (problem, reason) => {
+    const evaluate = vi.spyOn(giacEngine, 'evaluate');
+    try {
+      const result = await computeHandler({ problem });
+      expect(result.isError, text(result)).toBe(true);
+      expect(text(result)).toContain(reason);
+      expect(evaluate).not.toHaveBeenCalled();
+    } finally {
+      evaluate.mockRestore();
+    }
   });
 
   it.each([

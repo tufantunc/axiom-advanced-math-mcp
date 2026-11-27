@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import { giacEngine } from '../src/server/giac/index.js';
 import { computeHandler } from '../src/server/tools/compute/index.js';
-import { misreadPrintedOde, odeMembersToQuote } from '../src/server/tools/ode-system-shape.js';
+import { misreadPrintedOde, odeMembersToQuote } from '../src/server/tools/ode-misreading.js';
+import { odeLiteral } from '../src/server/tools/ode-text-tokens.js';
 import { allText } from './helpers/all-text.js';
 import { resultLine } from './helpers/result-line.js';
 
@@ -16,6 +17,9 @@ import { resultLine } from './helpers/result-line.js';
  *   y'=2y(x-1)           c_0+x^2-2*x         — Giac reads (2*y)(x-1)
  *   y'=(y/2)(2-y)        c_0*exp(-x/2)+2     — Giac applies, not multiplies
  *   y'=apply(y,x-1)      c_0
+ *   y'=sin(x)(y)         [2*atan(exp(x)/c_0)+2*n_0*pi] — Giac reads sin(y)
+ *   y'=quote(y(x-1))     (2*c_0+x^2-2*x)/2   — the solution of y'=x-1
+ *   [y'=y, y(x=0)=1]     0
  *
  * Whether `A(B)` is a product or an application is Giac's parser's call, and
  * four rounds of rules over the caller's text missed it in both directions —
@@ -35,9 +39,23 @@ const refusal = (at: string, variable = 'x'): string =>
   `variable ${variable}, a delay or functional equation, which this does not solve`;
 
 const builtRefusal = (expression: string): string =>
-  `solve_ode cannot solve this equation — the CAS reads ${expression} as an expression ` +
-  'built from y applied as a function, which this does not solve — write a product with *, ' +
-  'and y only at the variable x';
+  `solve_ode cannot solve this equation — the CAS reads ${expression} as a function applied ` +
+  'to an argument, with y in one or the other, which this does not solve — write a product ' +
+  'with *, and y only at the variable x';
+
+const atAPoint = "write a condition at a point, as y(0)=1 or y'(0)=0";
+
+const conditionArgumentRefusal = (at: string): string =>
+  `solve_ode cannot solve this equation — it gives a condition that applies y at ${at} ` +
+  `rather than at a point — ${atAPoint}`;
+
+const quoteRefusal = (expression: string, inCondition = false): string =>
+  `solve_ode cannot solve this equation — it quotes ${expression}, which the CAS does not ` +
+  `read as y — remove the quote${inCondition ? ` and ${atAPoint}` : ''}`;
+
+const literalRefusal = (literal: string): string =>
+  `solve_ode cannot solve this equation — it holds ${literal}, which the CAS reads as a ` +
+  'string, a comment, a quoted name or an escape, and an equation holds none of them';
 
 const callRefusal = (call: string, primed: string): string =>
   `solve_ode cannot solve this equation — it writes a derivative at a point as ${call}, ` +
@@ -45,7 +63,7 @@ const callRefusal = (call: string, primed: string): string =>
 
 const conditionRefusal = (expression: string): string =>
   `solve_ode cannot solve this equation — it gives a condition that applies y through ` +
-  `${expression} — write a condition at a point, as y(0)=1 or y'(0)=0`;
+  `${expression} — ${atAPoint}`;
 
 async function refused(problem: string): Promise<string> {
   const r = await computeHandler({ problem });
@@ -84,6 +102,9 @@ describe('the function applied off the variable is refused', () => {
     ["y'=y(x-1)(0)", 'x-1'],
     // A derivative call at a point in the equation is y' there.
     ["y'=diff(y(x),x)(0)", '0'],
+    // hold and unquote print the application as written.
+    ["y'=hold(y(x-1))", 'x-1'],
+    ["y'=unquote(y(x-1))", 'x-1'],
     // With conditions beside it, in every joining.
     ["[y'=y(x-1), y(0)=1]", 'x-1'],
     ["y(0)=1, y'=y(x-1)", 'x-1'],
@@ -151,6 +172,139 @@ describe('an expression built from y and applied is refused', () => {
 });
 
 /**
+ * A call applied to y as its argument. Giac reads `sin(x)(y)` as the function
+ * sin(x) applied at y — sin(y) — and answered the solution of another
+ * equation: `y'=sin(x)(y)` gave [2*atan(exp(x)/c_0)+2*n_0*pi], the solution of
+ * y'=sin(y), and `y'=(x/2)(y)` gave c_0*exp(x/2) with a Verified mark, because
+ * the residual substituted into the same misread text.
+ */
+describe('a call applied to y is refused', () => {
+  it.each([
+    ["y'=sin(x)(y)", '(sin(x))(y)'],
+    ["desolve(y'=sin(x)(y), x, y)", '(sin(x))(y)'],
+    ["y'=sqrt(x)(y)", '(sqrt(x))(y)'],
+    ["y'=sin(x)(1-y)", '(sin(x))(1-y)'],
+    ["y'=(x+1)(y)", '(x+1)(y)'],
+    ["y'=(x/2)(y)", '(x/2)(y)'],
+    ["y'=[sin(x)](y)", '[sin(x)](y)'],
+    ["[y'=exp(x)(y), y(0)=1]", '(exp(x))(y)'],
+    ["y'=exp(x)(y) and y(0)=1", '(exp(x))(y)'],
+  ])('%s', async (problem, expression) => {
+    expect(await refused(problem)).toContain(builtRefusal(expression));
+  });
+
+  // The product, with its `*`, is what the caller meant, and still solves.
+  it.each([
+    ["y'=sin(x)*y", 'c_0*exp(-cos(x))'],
+    ["y'=sqrt(x)*y", 'c_0*exp(2*x*√x/3)'],
+  ])('the product %s solves', async (problem, expected) => {
+    const r = await computeHandler({ problem });
+    const text = allText(r);
+    expect(r.isError, text).toBe(false);
+    expect(text).toMatch(resultLine(expected));
+    expect(text).toMatch(/^Verified: ✓/m);
+  });
+});
+
+/**
+ * A quoted expression holding y: Giac prints `'y(x-1)'`, the name inside is
+ * no occurrence of y, and `y'=quote(y(x-1))` was answered (2*c_0+x^2-2*x)/2,
+ * the solution of y'=x-1.
+ */
+describe('a quoted expression holding y is refused', () => {
+  it.each([
+    ["y'=quote(y(x-1))", "'y(x-1)'"],
+    ["desolve(y'=quote(y(x-1)), x, y)", "'y(x-1)'"],
+    ["y'=y+eval(quote(y(x-1)))", "'y(x-1)'"],
+    ["y'=quote(y)", "'y'"],
+    ["[y'=quote(y), y(0)=1]", "'y'"],
+    // Which quote closes is not readable off the print, so this takes in the
+    // product too, and refuses.
+    ["y'=quote(x)*y", "'x'*y"],
+  ])('%s quotes %s', async (problem, expression) => {
+    expect(await refused(problem)).toContain(quoteRefusal(expression));
+  });
+
+  it('refuses a quote in a condition as the condition’s fault', async () => {
+    expect(await refused("[y'=y, y(0)=quote(y(1))]")).toContain(quoteRefusal("'y(1)'", true));
+  });
+});
+
+/** `[y'=y, y(x=0)=1]` answered 0: Giac does not read `y(x=0)` as y at 0. */
+describe('a condition that applies y off a point is refused', () => {
+  it.each([
+    ["[y'=y, y(x=0)=1]", 'x=0'],
+    ["desolve([y'=y, y(x=0)=1], x, y)", 'x=0'],
+    ["y'=y, y(x=0)=1", 'x=0'],
+    ["y'=y and y(x=0)=1", 'x=0'],
+    ["[y''=-y, y(0)=1, y'(x=0)=0]", 'x=0'],
+    ["[y'=y, y(y(0))=1]", 'y(0)'],
+    ["[y'=y, y(0,1)=1]", '0,1'],
+  ])('%s', async (problem, at) => {
+    expect(await refused(problem)).toContain(conditionArgumentRefusal(at));
+  });
+
+  // As a separate argument it never reaches the engine: the extractor refuses
+  // a condition that mentions the variable.
+  it('leaves a separate argument to the extractor', async () => {
+    expect(await refused("desolve(y'=y, y(x=0)=1, x, y)")).toContain(
+      'solve_ode does not understand the argument "y(x=0)=1"'
+    );
+  });
+});
+
+/**
+ * A string or a comment hides a bracket from every count the text goes
+ * through, and not from Giac's parser, which closed `quote(` and `desolve(` at
+ * the hidden bracket and ran what followed: `ifactor(2^64+1)` was evaluated by
+ * the call meant to read the text without evaluating it.
+ */
+describe('a string or comment in the text is refused before the engine sees it', () => {
+  it.each([
+    ['y\'=y+"(")+ifactor(2^64+1)+(")"', '"'],
+    ['desolve(y\'=y+"(")+ifactor(2^64+1)+(")", x, y)', '"'],
+    ["y'=y /* ( */ )+ifactor(2^64+1)+( /* ) */", '/*'],
+    ["y'=y # (\n)+ifactor(2^64+1)", '#'],
+    ["y'=y // (\n)+ifactor(2^64+1)", '//'],
+    ['y\'="a"', '"'],
+    ['desolve(y\'=y, y(1)="a", x, y)', '"'],
+    // A system's text reaches the engine through its own probes.
+    ['[y\'=z, z\'=-y+"("+")"]', '"'],
+    // A quoted name hides a bracket the same way.
+    ["y'=y+`(`)+ifactor(2^64+1)+(`)`", '`'],
+    // Spelled in glyphs the normaliser turns into a comment: checked on the
+    // raw text, `y'=y(x-1)+0÷*c*÷` was answered as y'=x-1.
+    ["y'=y(x-1)+0÷*c*÷", '/*'],
+    ["desolve(y'=y÷*(*÷)+ifactor(2^64+1)+(0÷*)*÷, x, y)", '/*'],
+    ["y'=y(x-1)÷÷", '//'],
+    ["y'=y/×(×/)+ifactor(2^64+1)+(0/·)·/", '/*'],
+    // An escape, and NUL, where Giac's reader stops.
+    ["y'=y+\\(1)", '\\'],
+  ])('%s', async (problem, literal) => {
+    const evaluate = vi.spyOn(giacEngine, 'evaluate');
+    expect(await refused(problem)).toContain(literalRefusal(literal));
+    expect(evaluate.mock.calls.map(([expression]) => expression)).toEqual([]);
+  });
+
+  it('names a control character rather than printing it', async () => {
+    const evaluate = vi.spyOn(giacEngine, 'evaluate');
+    expect(await refused("y'=y\u0000+1")).toContain(literalRefusal('a control character'));
+    expect(evaluate).not.toHaveBeenCalled();
+  });
+
+  // The control: the same spy sees the engine calls of an ordinary solve, so
+  // the empty lists above mean the engine was not reached.
+  it('sees the engine calls of an equation with no hazard', async () => {
+    const evaluate = vi.spyOn(giacEngine, 'evaluate');
+    const r = await computeHandler({ problem: "y'=y+1" });
+    expect(allText(r)).toMatch(resultLine('c_0*exp(x)-1'));
+    const calls = evaluate.mock.calls.map(([expression]) => expression);
+    expect(calls).toContain("quote(y'=y+1)");
+    expect(calls.some((c) => c.startsWith('desolve('))).toBe(true);
+  });
+});
+
+/**
  * Products as Giac reads them, each answered exactly as on main — 15fc328
  * through 2031883 refused one family or another of them as delay equations.
  */
@@ -201,6 +355,15 @@ describe("Giac's products still solve", () => {
     ["y'=y(+x)", 'c_0*exp(x)', undefined],
     ["desolve(y'=y((x)), x, y)", 'c_0*exp(x)', undefined],
     ["y'=2(y)", 'c_0*exp(2*x)', "y'=2(y) exactly)"],
+    // With a condition, in each joining.
+    ["[y'=y(1-y), y(0)=1/2]", '[1/(exp(-x)+1)]', undefined],
+    ["desolve(y'=y(1-y), y(0)=1/2, x, y)", '[1/(exp(-x)+1)]', undefined],
+    ["y'=y(1-y) and y(0)=1/2", '[1/(exp(-x)+1)]', undefined],
+    [
+      "[y'=-y*ln(y), y(0)=2]",
+      '[exp(exp(-x+ln(ln(2))))]',
+      "y'=-y*ln(y) exactly and meets the conditions)",
+    ],
   ])('%s', async (problem, expected, verified) => {
     const r = await computeHandler({ problem });
     const text = allText(r);
@@ -209,6 +372,23 @@ describe("Giac's products still solve", () => {
     if (verified !== undefined) {
       expect(text).toContain(`Verified: ✓ (substitution: substitutes back into ${verified}`);
     }
+  });
+
+  /**
+   * Condition first with a product the reader cannot classify, so it is not
+   * reordered and reaches Giac as typed, which reads the first member as the
+   * equation. Refused, as on main, never answered: readSingleOde reads
+   * `y(1-y)` as y applied at 1-y, and these flip to solving only if it learns
+   * Giac's product rule — which is the printed form's job, not the text's.
+   */
+  it.each([
+    ["y(0)=1/2 and y'=y(1-y)"],
+    ["y(0)=1/2, y'=y(1-y)"],
+    ["[y(0)=1/2, y'=y(1-y)]"],
+    ["y(0)=2, y'=y(ln(y))"],
+    ["y(0)=2 && y'=y(ln(y))"],
+  ])('%s is refused, condition first', async (problem) => {
+    await refused(problem);
   });
 
   it.each([
@@ -327,8 +507,16 @@ describe('odeMembersToQuote', () => {
     expect(odeMembersToQuote(text)).toEqual(members);
   });
 
-  // A stray bracket would close the quote early and evaluate what follows.
-  it.each(["y'=y), purge(x", "y'=y(", "[y'=y"])('%s is not quoted', (text) => {
+  // A stray bracket would close the quote early and evaluate what follows, and
+  // so would one a string or comment hides from the count.
+  it.each([
+    "y'=y), purge(x",
+    "y'=y(",
+    "[y'=y",
+    'y\'=y+"(")+purge(x)+(")"',
+    "y'=y /* ( */ )+purge(x)+( /* ) */",
+    "y'=y # (\n)+purge(x)",
+  ])('%s is not quoted', (text) => {
     expect(odeMembersToQuote(text)).toBeNull();
   });
 });
@@ -358,15 +546,22 @@ describe('misreadPrintedOde', () => {
     // Never printed so, but read: a chained application names its brackets.
     [["y'=y(x-1)(0)"], '(x-1)(0)'],
   ])('%j applies y at %s', (printed, argument) => {
-    expect(read(printed)).toEqual({ kind: 'argument', argument });
+    expect(read(printed)).toEqual({ kind: 'argument', argument, inCondition: false });
   });
 
   it('reads the variable it is given', () => {
-    expect(read(["y'=(y(x))"], 't')).toEqual({ kind: 'argument', argument: 'x' });
+    expect(read(["y'=(y(x))"], 't')).toEqual({
+      kind: 'argument',
+      argument: 'x',
+      inCondition: false,
+    });
     expect(read(["y'=(y(t))"], 't')).toBeUndefined();
   });
 
   it.each([
+    [["y'=((sin(x))(y))"], '(sin(x))(y)'],
+    [["y'=((x+1)(y))"], '(x+1)(y)'],
+    [["y'=(y*(sin(x))(1-y))"], '(sin(x))(1-y)'],
     [["y'=((2*y)(x-1))"], '(2*y)(x-1)'],
     [["y'=((y(x))(0))"], '(y(x))(0)'],
     [["y'=((y*(1-y))(x))"], '(y*(1-y))(x)'],
@@ -402,6 +597,12 @@ describe('misreadPrintedOde', () => {
     [["((y'=y) and (y(0)=1))"]],
     [["[y'=y,y(0)=1,y'(0)=0,2*y(0)=1,y(0)+y'(0)=1,y(L)=0,y(1)=(2*y(0))]"]],
     [["y'=y", '(y(0)=1) and (y(1)=2)']],
+    // An application that does not involve y, a quote that does not hold it,
+    // and Giac's own quoted names in a composition.
+    [["y'=(y*(sin(x))(2))"]],
+    [["y'=('x')"]],
+    [["y'=(('sin')@sin+y)"]],
+    [["y'=('of'(f,g)+y)"]],
   ])('%j is read as written', (printed) => {
     expect(read(printed)).toBeUndefined();
   });
@@ -426,6 +627,31 @@ describe('misreadPrintedOde', () => {
     expect(read(printed)).toEqual({ kind: 'built', expression, inCondition: true });
   });
 
+  it.each([
+    [["y'=('y(x-1)')"], "'y(x-1)'"],
+    [["y'=(y+eval('y(x-1)'))"], "'y(x-1)'"],
+    [["y'=('x'*y)"], "'x'*y"],
+    [["y'=(('y')')"], "'y'"],
+  ])('%j quotes %s', (printed, expression) => {
+    expect(read(printed)).toEqual({ kind: 'quoted', expression, inCondition: false });
+  });
+
+  it('reads a quote in a condition', () => {
+    expect(read(["y'=y", "y(0)=('y(1)')"])).toEqual({
+      kind: 'quoted',
+      expression: "'y(1)'",
+      inCondition: true,
+    });
+  });
+
+  it.each([
+    [["[y'=y,y(x=0)=1]"], 'x=0'],
+    [["y'=y", "y'(x+1)=0"], 'x+1'],
+    [["y'=y", 'y(y(0))=1'], 'y(0)'],
+  ])('%j applies y in a condition at %s', (printed, argument) => {
+    expect(read(printed)).toEqual({ kind: 'argument', argument, inCondition: true });
+  });
+
   // The equation's is reported, wherever it stands.
   it('reports the equation ahead of a condition', () => {
     expect(read(['(2*y)(0)=1', "y'=((-y)(x-1))"])).toEqual({
@@ -433,5 +659,28 @@ describe('misreadPrintedOde', () => {
       expression: '(-y)(x-1)',
       inCondition: false,
     });
+  });
+});
+
+describe('odeLiteral', () => {
+  it.each([
+    ['y\'=y+"a"', '"'],
+    ["y'=y # c", '#'],
+    ["y'=y // c", '//'],
+    ["y'=y /* c */", '/*'],
+    ["y'=y+`a`", '`'],
+    ["y'=y+\\a", '\\'],
+    ["y'=y\u0007", '\u0007'],
+    // Read as the engine reads it, after normalisation.
+    ["y'=y ÷÷ c", '//'],
+    ["y'=y ÷* c *÷", '/*'],
+    ["y'=y /× c", '/*'],
+  ])('%s holds %s', (text, literal) => {
+    expect(odeLiteral(text)).toBe(literal);
+  });
+
+  // Division, a product and a prime are not comment markers.
+  it.each(["y'=y/2", "y'=y/(2*x)", "y'=x*y/x", "y''=-y'"])('%s holds none', (text) => {
+    expect(odeLiteral(text)).toBeUndefined();
   });
 });

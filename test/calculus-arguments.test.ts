@@ -59,8 +59,9 @@ describe('calculus arguments — the correct spellings answer', () => {
     // With an order, the Hessian and higher tensors, as Giac computes them.
     ['diff(x^2*y^3, [x, y], 2)', '[[2*y^3,6*x*y^2],[6*x*y^2,6*x^2*y]]'],
     ['diff(x^3*y, [x, y], 3)', '[[[6*y,6*x],[6*x,0]],[[6*x,0],[0,0]]]'],
-    // The entry cap is inclusive: 2^8 = 256 answers (x*y's eighth derivatives are all 0).
-    ['diff(x*y, [x, y], 8)', zeroTensor(8)],
+    // Six orders of two variables, the most the cost cap allows x*y
+    // (3 * 4^6 = 12,288; see MAX_DERIVATIVE_COST): all 0.
+    ['diff(x*y, [x, y], 6)', zeroTensor(6)],
     // A Greek PARAMETER before the ASCII variable does not take its place: a
     // single any-script guess answered t*cos(ω*t) and 2/x.
     ['diff(sin(ω*t))', 'ω*cos(ω*t)'],

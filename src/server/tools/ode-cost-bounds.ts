@@ -3,6 +3,9 @@ import {
   MAGNITUDE_OPERATORS,
   factorialLog10,
   foldPrimes,
+  literalReason,
+  odeLiteral,
+  quotedReason,
   tokenizeMagnitude,
   type MagnitudeToken,
 } from './ode-text-tokens.js';
@@ -184,6 +187,11 @@ export function conditionCallError(
   condition: string,
   unknowns: readonly string[]
 ): string | undefined {
+  // A string, comment or escape first, worded as odeMisreadRefusal words it
+  // over the whole equation: this check reaches a condition before that one
+  // does, and the same character should not be named two ways.
+  const literal = odeLiteral(condition);
+  if (literal !== undefined) return literalReason(literal);
   const stray = [...condition].find((character) => !isNumberCharacter(character));
   const asNumber = 'give the value itself, as in y(0)=1';
   if (stray !== undefined)
@@ -207,6 +215,27 @@ export function conditionCallError(
       `${solved} — write it as ${unknowns[0] ?? 'y'}(0)=1`
     );
   }
+  // A quote is refused as odeMisreadRefusal refuses one it finds in what the
+  // engine prints — `y(0)=quote(y(1))` is not y at 1 to Giac — and here, before
+  // any engine call, because the quote could as well hold `ifactor(…)`.
+  const quoted = (open: number): string => {
+    let depth = 0;
+    let close = open;
+    for (; close < tokens.length; close += 1) {
+      if (tokens[close]?.text === '(') depth += 1;
+      else if (tokens[close]?.text === ')' && --depth === 0) break;
+    }
+    const inner = tokens
+      .slice(open + 1, close)
+      .map((t) => t.text)
+      .join('');
+    const fn = subject?.kind === 'name' ? subject.text.replace(/'+$/, '') : '';
+    return quotedReason(
+      excerpt(`'${inner}'`, 60),
+      unknowns.includes(fn) ? fn : (unknowns[0] ?? 'y'),
+      true
+    );
+  };
   const calls = (name: string): string =>
     `calls ${excerpt(name, 30)} — an initial condition is a number, so compute ` +
     `${excerpt(name, 30)}(…) on its own first and give the value it returns`;
@@ -214,6 +243,7 @@ export function conditionCallError(
     if (token.kind !== 'op' || (token.text !== '(' && token.text !== '[')) continue;
     const before = tokens[i - 1];
     if (before?.kind === 'name') {
+      if (before.text === 'quote') return quoted(i);
       if (!admits(before.text)) return calls(before.text);
       continue;
     }

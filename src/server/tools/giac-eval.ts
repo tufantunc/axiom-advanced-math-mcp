@@ -1,7 +1,13 @@
 import { giacEngine } from '../giac/index.js';
 import { formatToolResponse, formatErrorResponse } from './response-formatter.js';
 import { evaluationCache, isCacheable } from '../giac/cache.js';
-import { stripQuotes, stripDisplayMode, stripOrderTerm, nestingDepth } from './output-cleanup.js';
+import {
+  stripQuotes,
+  stripDisplayMode,
+  stripOrderTerm,
+  nestingDepth,
+  seriesRemainderOrders,
+} from './output-cleanup.js';
 import type { VerificationResult } from './self-verify.js';
 import { unicodeToAscii } from './unicode-normalize.js';
 
@@ -96,6 +102,13 @@ export interface EvaluatedResponse {
   isError: boolean;
   verification?: VerificationResult;
   result: string;
+  /**
+   * The order of each series remainder the engine printed, read before
+   * stripOrderTerm cut it off — present only when it printed one. The cut
+   * keeps the answer readable and loses the one fact that says whether the
+   * expansion reached the order asked for (see seriesRemainderOrders).
+   */
+  seriesRemainderOrders?: number[];
 }
 
 export async function evalWithLatex(options: EvalOptions): Promise<EvaluatedResponse> {
@@ -118,12 +131,14 @@ export async function evalWithLatex(options: EvalOptions): Promise<EvaluatedResp
   let result: string;
   let latex: string | undefined;
   let verification: VerificationResult | undefined;
+  let remainderOrders: number[] | undefined;
 
   const cached = cacheable ? evaluationCache.get(cacheKey) : undefined;
   if (cached) {
     result = cached.result;
     latex = cached.latex;
     verification = cached.verification;
+    remainderOrders = cached.seriesRemainderOrders;
   } else {
     let raw = await giacEngine.evaluate(giacExpr);
     if (!raw || raw === 'undef') {
@@ -137,6 +152,8 @@ export async function evalWithLatex(options: EvalOptions): Promise<EvaluatedResp
 
     // Strip the series big-O remainder BEFORE computing latex — the cleaned
     // polynomial re-parses in Giac and yields clean latex.
+    const orders = seriesRemainderOrders(raw);
+    if (orders.length > 0) remainderOrders = orders;
     raw = stripOrderTerm(raw);
 
     latex = await toLatex(raw);
@@ -148,7 +165,14 @@ export async function evalWithLatex(options: EvalOptions): Promise<EvaluatedResp
 
     if (verify) verification = await verify(result);
 
-    if (cacheable) evaluationCache.set(cacheKey, { result, latex, verification });
+    if (cacheable) {
+      evaluationCache.set(cacheKey, {
+        result,
+        latex,
+        verification,
+        ...(remainderOrders ? { seriesRemainderOrders: remainderOrders } : {}),
+      });
+    }
   }
 
   // The structured values ride along beside the formatted content. Without them
@@ -167,6 +191,6 @@ export async function evalWithLatex(options: EvalOptions): Promise<EvaluatedResp
       methodNote,
       ...(notes ? { notes } : {}),
     }),
-    { verification, result }
+    { verification, result, ...(remainderOrders ? { seriesRemainderOrders: remainderOrders } : {}) }
   );
 }

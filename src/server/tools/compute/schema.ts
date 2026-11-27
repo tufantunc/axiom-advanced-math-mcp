@@ -73,6 +73,13 @@ export const computeSchema = z.object({
         'than with a number\n' +
         '  - a result nested more deeply than the evaluator can certify as free of ' +
         'undefined values\n' +
+        '  - calculus the CAS would answer wrongly: a definite integral across a pole ' +
+        '(the CAS gives the principal value; the integral diverges), a taylor series ' +
+        'that breaks down or stops short of its order at a finite point, diff/integrate/' +
+        'taylor with no variable when the expression has more than one symbol, a ' +
+        'variable the CAS holds a value in (DIGITS, plus_inf), and a derivative with ' +
+        'respect to a list whose cost — length, nesting, variables and order — would ' +
+        'trap the engine\n' +
         '  - a system of differential equations that this rewrite cannot express as a ' +
         'constant matrix. Linear constant-coefficient systems ARE solved: ' +
         "desolve([y'=z, z'=-y], x) returns every function, and the envelope's " +
