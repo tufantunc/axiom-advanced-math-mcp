@@ -11,11 +11,33 @@ import { odeCostError } from '../src/server/tools/ode-cost-bounds.js';
  */
 describe('the expansion estimate', () => {
   // The calibration: `y'=(x+1)^n*y` is the costliest position measured. 97 is
-  // the largest n admitted (about 1.5s), 99 the smallest refused.
-  it('admits (x+1)^97 as a coefficient and refuses (x+1)^99', () => {
+  // the largest n admitted (about 1.5s), 98 the smallest refused.
+  it('admits (x+1)^97 as a coefficient and refuses (x+1)^98', () => {
     expect(odeCostError("y'=(x+1)^97*y")).toBeUndefined();
-    expect(odeCostError("y'=(x+1)^99*y")).toMatch(
-      /expands too far \(\(x\+1\)\^99\): its terms times their digits come to about 3,080, above the 3,000/
+    expect(odeCostError("y'=(x+1)^98*y")).toMatch(
+      /expands too far \(\(x\+1\)\^98\): its terms times their digits come to about 3,020, above the 3,000/
+    );
+  });
+
+  // The figures MAX_EXPANSION's docblock quotes, so they cannot go stale.
+  it.each([
+    [150, '6,969'],
+    [200, '12,302'],
+  ])('estimates (x+1)^%i*y at %s', (n, estimate) => {
+    expect(odeCostError(`y'=(x+1)^${n}*y`)).toContain(`come to about ${estimate},`);
+  });
+
+  // An exponent Giac evaluates to an integer expands like the literal: each of
+  // these timed out on this branch's first version, which read only literals.
+  // One it cannot evaluate is charged as unbounded once the base is a sum.
+  it.each([
+    ["y'=pow(x+1,200)*y", 'pow(x+1,200)', 'about 12,302'],
+    ["y'=(x+1)^abs(200)*y", '(x+1)^abs(200)', 'about 12,302'],
+    ["y'=(x+1)^(5!*2)*y", '(x+1)^(5!*2)', 'about 17,653'],
+    ["y'=(x+1)^foo(3)*y", '(x+1)^foo(3)', 'too many to count'],
+  ])('refuses %s, whose exponent is a constant expression', (equation, culprit, estimate) => {
+    expect(odeCostError(equation)).toContain(
+      `expands too far (${culprit}): its terms times their digits come to ${estimate}`
     );
   });
 
@@ -58,12 +80,32 @@ describe('the expansion estimate', () => {
   });
 
   // A sum is as large as the parts the caller wrote; only a product or a power
-  // creates expansion. A long polynomial is admitted, and a condition folded
-  // in with `and` is not multiplied by the equation it is joined to.
-  it('charges products and powers, not sums or the `and` join', () => {
-    const polynomial = Array.from({ length: 300 }, (_, k) => `x^${k}`).join('+');
-    expect(odeCostError(`y'=y+${polynomial}`)).toBeUndefined();
+  // creates expansion. This sum's own estimate is about 4,500 — 32 terms of a
+  // 140-digit norm — and it is admitted because it is a sum; the same numbers
+  // multiplied are refused.
+  it('charges products and powers, not sums', () => {
+    const powers = Array.from({ length: 30 }, (_, k) => `x^${k + 1}`);
+    expect(odeCostError(`y'=y+10^140+${powers.join('+')}`)).toBeUndefined();
+    expect(odeCostError(`y'=y+10^140*(${powers.join('+')})`)).toMatch(/expands too far/);
     expect(odeCostError("(y'=(x+1)^90*y) and (y(0)=1)")).toBeUndefined();
+  });
+
+  // A decimal base is a float to Giac and is not raised: `1.0001^1000` is a
+  // coefficient of about 1.105, answered in 21ms on main.
+  it('does not expand a power of a decimal', () => {
+    expect(odeCostError("y''+1.0001^1000*y=0")).toBeUndefined();
+  });
+
+  // Linear in the tree: an 8 KB sum or product of distinct symbols took
+  // 250ms of event-loop time when every node copied its degree map.
+  it.each([
+    ['sum', '+'],
+    ['product', '*'],
+  ])('reads an 8 KB %s of distinct symbols quickly', (_shape, operator) => {
+    const names = Array.from({ length: 2_700 }, (_, i) => `a${i.toString(36)}`);
+    const started = performance.now();
+    odeCostError(`y'=${names.join(operator)}`);
+    expect(performance.now() - started).toBeLessThan(50);
   });
 });
 
@@ -90,8 +132,19 @@ describe('the height of the problem’s numbers', () => {
     ["y''+(10^80+1)/(10^80+3)*y'+y=0", 161],
     // The condition counts with the equation, because they are solved together.
     ["(y''+10^80*y=0) and (y(0)=10^80)", 160],
-    // A power of a number is charged its exponent times over.
+    // A power of a number is charged its exponent times over, whatever its sign
+    // or spelling.
     ["y'=y*2^4096", 1234],
+    ["(y'=y) and (y(0)=pow(10,400)+1)", 400],
+    ["(y'=y) and (y(0)=10^-400)", 400],
+    // A decimal literal is an exact rational to height: 1e-400 is 1/10^400.
+    ["(y'=y) and (y(0)=1e-400)", 400],
+    // A factorial of a constant counts the digits of its value, rounded up.
+    ["(y'=y) and (y(0)=(1/2+100)!)", 160],
+    // Giac's hexadecimal and binary literals are exact integers too: 340 hex
+    // digits is 410 decimal ones, and this held the worker 10s.
+    [`y''+(0x${'F'.repeat(340)}+2)*y=0`, 410],
+    [`y''+(0b${'1'.repeat(1200)}+2)*y=0`, 362],
   ])('refuses %s at %i digits', (text, digits) => {
     expect(odeCostError(text)).toMatch(
       new RegExp(`numbers that come to ${digits} digits together .*above the 150`)
@@ -105,6 +158,10 @@ describe('the height of the problem’s numbers', () => {
     "(y'=y) and (y(0)=20!)",
     "(y'=y) and (y(L)=pi/2)",
     "y'=0.001*y+1e-5",
+    "(y'=y) and (y(0)=0xFF)",
+    // Floats raised: compound growth, which main answered.
+    "y'=y*1.01^100",
+    "y'=0.05*y*(1+0.07/12)^360",
   ])('admits %s', (text) => {
     expect(odeCostError(text)).toBeUndefined();
   });
@@ -132,14 +189,26 @@ describe('the tree never throws and always bounds', () => {
     expect(odeCostError(shallow)).toBeUndefined();
   });
 
+  // Nesting of every kind counts against the bound — brackets, signs, powers
+  // and `!` — so the folds can never recurse past it.
   it.each([
     ['a long chain of signs', `y'=${'-'.repeat(8_000)}y`],
     ['a long chain of powers', `y'=${'x^'.repeat(2_000)}2`],
+    ['a long chain of factorials', `y'=x${'!'.repeat(8_000)}`],
     ['juxtaposed brackets past the depth bound', `y'=${'('.repeat(150)}1)(2)(3`],
+  ])('refuses %s as nested too deep', (_shape, text) => {
+    expect(odeCostError(text)).toMatch(/nested more than 100 deep/);
+  });
+
+  // FLAT chains are one level, however long: these overflowed the stack when
+  // sums and products were binary.
+  it.each([
+    ['a long chain of separators', `y'=y${'='.repeat(8_000)}`],
+    ['a long run of dots', `y'=y+${'.'.repeat(8_000)}`],
     ['unbalanced closers', "y'=y)))]]"],
     ['nothing at all', ''],
     ['stray separators', "y'=$y;@#%"],
-  ])('returns a verdict on %s', (_shape, text) => {
-    expect(() => odeCostError(text)).not.toThrow();
+  ])('admits %s without throwing', (_shape, text) => {
+    expect(odeCostError(text)).toBeUndefined();
   });
 });

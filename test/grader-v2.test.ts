@@ -86,11 +86,9 @@ describe('gradeV2 — symbolic equivalence', () => {
     const bridge = fakeBridge({
       'simplify((cos(x)*x^2+sin(x)*2*x) - (2*x*sin(x)+x^2*cos(x)))': '0',
     });
-    const r = await gradeV2Async(
-      'cos(x)*x^2+sin(x)*2*x',
-      '2*x*sin(x)+x^2*cos(x)',
-      { giacEval: bridge.evaluate }
-    );
+    const r = await gradeV2Async('cos(x)*x^2+sin(x)*2*x', '2*x*sin(x)+x^2*cos(x)', {
+      giacEval: bridge.evaluate,
+    });
     expect(r.match).toBe(true);
     expect(r.method).toBe('symbolic');
   });
@@ -118,21 +116,19 @@ describe('gradeV2 — symbolic equivalence', () => {
     const bridge = fakeBridge({
       'simplify((cos(x)*x^2+sin(x)*2*x) - (2*x*sin(x)+x^2*cos(x)))': '0.0',
     });
-    const r = await gradeV2Async(
-      'cos(x)*x^2+sin(x)*2*x',
-      '2*x*sin(x)+x^2*cos(x)',
-      { giacEval: bridge.evaluate }
-    );
+    const r = await gradeV2Async('cos(x)*x^2+sin(x)*2*x', '2*x*sin(x)+x^2*cos(x)', {
+      giacEval: bridge.evaluate,
+    });
     expect(r.match).toBe(true);
     expect(r.method).toBe('symbolic');
   });
 
   it('falls back to sync when giacEval throws', async () => {
-    const r = await gradeV2Async(
-      'cos(x)*x^2+sin(x)*2*x',
-      '2*x*sin(x)+x^2*cos(x)',
-      { giacEval: async () => { throw new Error('boom'); } }
-    );
+    const r = await gradeV2Async('cos(x)*x^2+sin(x)*2*x', '2*x*sin(x)+x^2*cos(x)', {
+      giacEval: async () => {
+        throw new Error('boom');
+      },
+    });
     expect(r.match).toBe(false);
     expect(r.method).toBe('none');
   });
@@ -147,20 +143,14 @@ describe('gradeV2 — symbolic equivalence', () => {
 describe('gradeV2 — v3 equation-RHS stage', () => {
   it('matches when predicted is equation-form and ground is plain RHS', () => {
     process.env.AXIOM_GRADER_V3 = '1';
-    const r = gradeV2(
-      '\\sin(x) = x - x^3/6 + x^5/120',
-      'x - x^3/6 + x^5/120'
-    );
+    const r = gradeV2('\\sin(x) = x - x^3/6 + x^5/120', 'x - x^3/6 + x^5/120');
     expect(r.match).toBe(true);
     delete process.env.AXIOM_GRADER_V3;
   });
 
   it('matches when ground is equation-form and predicted is plain RHS', () => {
     process.env.AXIOM_GRADER_V3 = '1';
-    const r = gradeV2(
-      '2*x+1',
-      'f(x) = 2*x+1'
-    );
+    const r = gradeV2('2*x+1', 'f(x) = 2*x+1');
     expect(r.match).toBe(true);
     delete process.env.AXIOM_GRADER_V3;
   });
@@ -178,10 +168,7 @@ describe('gradeV2 — v3 equation-RHS stage', () => {
 
   it('does not fire when AXIOM_GRADER_V3 is unset', () => {
     delete process.env.AXIOM_GRADER_V3;
-    const r = gradeV2(
-      '\\sin(x) = x - x^3/6 + x^5/120',
-      'x - x^3/6 + x^5/120'
-    );
+    const r = gradeV2('\\sin(x) = x - x^3/6 + x^5/120', 'x - x^3/6 + x^5/120');
     // Without the flag, this should NOT match (the strings are different,
     // and v2's other stages don't extract RHS).
     expect(r.match).toBe(false);

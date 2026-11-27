@@ -305,9 +305,13 @@ function validateSolveOde(args: Record<string, unknown>): string | null {
   // bounds"), where the same right-hand side in a system is refused. First,
   // because the equation is argument zero. A system is left to its own check,
   // which words the refusal for a system.
+  // Two texts, read for two questions: the caller's own equation for its
+  // members' magnitude, and the folded command — the equation with every
+  // condition joined on — for what solving it all together costs.
   const equationText =
     typeof args.original_equation === 'string' ? args.original_equation : String(args.equation);
-  if (parseOdeSystem(equationText) === null) {
+  const isSystem = parseOdeSystem(equationText) !== null;
+  if (!isSystem) {
     for (const member of odeEquationMembers(equationText)) {
       // `d^2y/dx^2` is an order, not a power: a quotient's order is bounded by
       // rewriteLeibniz, which names it, so it is not read as a magnitude here.
@@ -337,12 +341,13 @@ function validateSolveOde(args: Record<string, unknown>): string | null {
       "and the function, as in desolve(y'=y, y(0)=1, x, y)"
     );
   }
-  // COST, last, so every size refusal keeps its wording. Over the folded
-  // command — the equation and every condition together — because the roots
-  // the solver takes combine them. A system is bounded the same way inside
-  // validateSystemShape, after its own size checks.
-  if (parseOdeSystem(equationText) === null) {
-    const costly = odeCostError(replaceLeibnizQuotients(String(args.equation), (q) => q.fn));
+  // COST, last, so every size refusal keeps its wording, and before any engine
+  // call. Over the folded command because the roots the solver takes combine
+  // the equation's numbers with the conditions'. A system is bounded the same
+  // way at the end of validateSystemShape, before its first engine call.
+  if (!isSystem) {
+    const folded = replaceLeibnizQuotients(String(args.equation), (q) => q.fn);
+    const costly = odeCostError(folded);
     if (costly !== undefined) return `solve_ode cannot solve this equation — it ${costly}`;
   }
   return null;

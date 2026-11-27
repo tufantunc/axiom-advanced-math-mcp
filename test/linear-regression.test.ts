@@ -12,7 +12,9 @@ describe('linear_regression', () => {
       const x = [1, 2, 3, 4, 5];
       const y = [2, 4, 6, 8, 10]; // y = 2x
       const result = await linearRegressionHandler({
-        x, y, model: 'linear',
+        x,
+        y,
+        model: 'linear',
       });
       expect(result.isError).toBe(false);
       const t = result.content[0].text;
@@ -28,7 +30,9 @@ describe('linear_regression', () => {
       const x = [0, 1, 2, 3, 4];
       const y = [1, 3, 5, 7, 9]; // y = 1 + 2x
       const result = await linearRegressionHandler({
-        x, y, model: 'linear',
+        x,
+        y,
+        model: 'linear',
       });
       expect(result.isError).toBe(false);
       const text = result.content[0].text;
@@ -43,7 +47,10 @@ describe('linear_regression', () => {
       const x = [1, 2, 3, 4, 5];
       const y = [1, 4, 9, 16, 25];
       const result = await linearRegressionHandler({
-        x, y, model: 'polynomial', degree: 2,
+        x,
+        y,
+        model: 'polynomial',
+        degree: 2,
       });
       expect(result.isError).toBe(false);
       expect(result.content[0].text).toContain('R²');
@@ -57,7 +64,9 @@ describe('linear_regression', () => {
       const x = [0, 1, 2, 3];
       const y = x.map(Math.exp);
       const result = await linearRegressionHandler({
-        x, y, model: 'exponential',
+        x,
+        y,
+        model: 'exponential',
       });
       expect(result.isError).toBe(false);
       expect(result.content[0].text).toContain('Exponential');
@@ -72,7 +81,9 @@ describe('linear_regression', () => {
       ['zero y (the boundary)', [0, 2, 3]],
     ])('should reject %s', async (_name, y) => {
       const result = await linearRegressionHandler({
-        x: [1, 2, 3], y, model: 'exponential',
+        x: [1, 2, 3],
+        y,
+        model: 'exponential',
       });
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('y > 0');
@@ -84,7 +95,9 @@ describe('linear_regression', () => {
       const x = [1, 2, 3, 4];
       const y = x.map(Math.log);
       const result = await linearRegressionHandler({
-        x, y, model: 'logarithmic',
+        x,
+        y,
+        model: 'logarithmic',
       });
       expect(result.isError).toBe(false);
       expect(result.content[0].text).toContain('Logarithmic');
@@ -97,7 +110,9 @@ describe('linear_regression', () => {
       ['zero x (the boundary)', [0, 2, 3]],
     ])('should reject %s', async (_name, x) => {
       const result = await linearRegressionHandler({
-        x, y: [1, 2, 3], model: 'logarithmic',
+        x,
+        y: [1, 2, 3],
+        model: 'logarithmic',
       });
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('x > 0');
@@ -109,7 +124,9 @@ describe('linear_regression', () => {
       const x = [1, 2, 3, 4, 5];
       const y = x.map((xi) => xi ** 2);
       const result = await linearRegressionHandler({
-        x, y, model: 'power',
+        x,
+        y,
+        model: 'power',
       });
       expect(result.isError).toBe(false);
       expect(result.content[0].text).toContain('Power');
@@ -122,7 +139,9 @@ describe('linear_regression', () => {
       ['zero y (the boundary)', [1, 2, 3], [0, 2, 3]],
     ])('should reject %s', async (_name, x, y) => {
       const result = await linearRegressionHandler({
-        x, y, model: 'power',
+        x,
+        y,
+        model: 'power',
       });
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('x > 0 and y > 0');
@@ -132,7 +151,9 @@ describe('linear_regression', () => {
   describe('error handling', () => {
     it('should reject mismatched x and y lengths', async () => {
       const result = await linearRegressionHandler({
-        x: [1, 2, 3], y: [1, 2], model: 'linear',
+        x: [1, 2, 3],
+        y: [1, 2],
+        model: 'linear',
       });
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('same length');
@@ -175,4 +196,3 @@ describe('linear_regression', () => {
     });
   });
 });
-

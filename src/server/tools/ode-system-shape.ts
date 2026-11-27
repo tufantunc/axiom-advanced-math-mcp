@@ -1,8 +1,8 @@
 import { stripEnclosingBrackets } from './compute/arg-parsing.js';
 import { escapeForRegExp, excerpt, splitTopLevel } from './output-cleanup.js';
 import { unicodeToAscii } from './unicode-normalize.js';
+import { DERIVATIVE_NAMES, odeCostError } from './ode-cost-bounds.js';
 import {
-  DERIVATIVE_NAMES,
   conditionBoundError,
   conditionsTogetherError,
   implausibleMagnitude,
@@ -30,8 +30,8 @@ import {
  *
  *   - No `async` and no `await` in this file, and no engine symbol named in it.
  *     Both are text assertions in ode-system-shape-boundary.test.ts.
- *   - No path from this file, from the bounds module it imports, or from any of
- *     the three leaf modules either of them imports, to `src/server/giac`. That
+ *   - No path from this file, from the bounds modules it imports, or from any
+ *     text-only leaf they import, to `src/server/giac`. That
  *     is the real invariant, and only a walk of the import closure can state
  *     it — the same test does that walk, per guarded file.
  *   - An oxlint no-restricted-imports rule in .oxlintrc.json, which is a DENYLIST
@@ -1073,12 +1073,12 @@ export function validateSystemShape(
   // refusal, and the next unrelated call came back as "Giac worker exited (code
   // 1)".
   //
-  // SIZE is bounded here — length, depth and magnitude — and that much is a
-  // property of the call graph rather than a claim. COST is not: a condition
-  // value is `(.+)`, so `y(0)=ifactor(2^257-1)` is twenty-one characters, depth
-  // one, and still wedges the shared worker for its whole budget. main does the
-  // same, so it is not a regression — but this channel is bounded, not closed,
-  // and saying otherwise is how the last four of these were missed.
+  // SIZE is bounded here — length, depth and magnitude — and so is COST, both
+  // as properties of the call graph rather than claims: what a condition CALLS
+  // through conditionBoundError (`y(0)=ifactor(2^257-1)` is twenty-one
+  // characters, depth one, and burned the shared worker's whole budget on
+  // main), and what the right-hand sides and conditions cost TOGETHER through
+  // odeCostError below, before any engine call.
   const parsedConditions: RegExpExecArray[] = [];
   for (const condition of system.conditions) {
     // Matched once, and the match is what readConditions consumes. Checking the
@@ -1106,10 +1106,20 @@ export function validateSystemShape(
   const together = conditionsTogetherError(system.conditions);
   if (together !== undefined) return { error: together };
 
-  if (parsedConditions.length === 0) return { functions, rhss };
-  const read = readConditions(parsedConditions, functions);
-  if ('error' in read) return read;
-  return { functions, rhss, conditions: read };
+  const read =
+    parsedConditions.length === 0 ? undefined : readConditions(parsedConditions, functions);
+  if (read !== undefined && 'error' in read) return read;
+
+  // COST, after every check above so each keeps its wording, and still before
+  // the probe — the first engine call — because a cost bound that runs after
+  // the engine has seen the text is not one. Over the right-hand sides and the
+  // conditions together, as the single-equation path bounds its folded
+  // command: `[y'=(10^400+1)*z, z'=-y]` held the worker 10s on main finding
+  // eigenvalues.
+  const costly = odeCostError(`[${[...rhss, ...system.conditions].join(',')}]`);
+  if (costly !== undefined) return { error: costly };
+
+  return read === undefined ? { functions, rhss } : { functions, rhss, conditions: read };
 }
 
 /**

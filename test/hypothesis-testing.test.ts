@@ -167,7 +167,12 @@ describe('hypothesis_testing', () => {
     it('refuses an empty contingency table instead of finding dependence', async () => {
       const r = await hypothesisTestingHandler({
         test: 'chi_square_independence',
-        data: { contingency_table: [[0, 0], [0, 0]] },
+        data: {
+          contingency_table: [
+            [0, 0],
+            [0, 0],
+          ],
+        },
       });
       expect(r.isError).toBe(true);
       // Pins WHICH guard is expected to win. Asserting only 'no observations'
@@ -181,7 +186,12 @@ describe('hypothesis_testing', () => {
       // [[10,-2],[3,4]] reported "✗ Reject H₀ — evidence of dependence".
       const r = await hypothesisTestingHandler({
         test: 'chi_square_independence',
-        data: { contingency_table: [[10, -2], [3, 4]] },
+        data: {
+          contingency_table: [
+            [10, -2],
+            [3, 4],
+          ],
+        },
       });
       expect(r.isError).toBe(true);
       expect(allText(r)).toMatch(/cannot be negative/);
@@ -191,7 +201,12 @@ describe('hypothesis_testing', () => {
     it('refuses a contingency table with an empty row', async () => {
       const r = await hypothesisTestingHandler({
         test: 'chi_square_independence',
-        data: { contingency_table: [[0, 0], [5, 7]] },
+        data: {
+          contingency_table: [
+            [0, 0],
+            [5, 7],
+          ],
+        },
       });
       expect(r.isError).toBe(true);
       expect(allText(r)).toMatch(/row 1 .* no observations/);
@@ -201,7 +216,12 @@ describe('hypothesis_testing', () => {
     it('refuses a contingency table with an empty column', async () => {
       const r = await hypothesisTestingHandler({
         test: 'chi_square_independence',
-        data: { contingency_table: [[0, 5], [0, 7]] },
+        data: {
+          contingency_table: [
+            [0, 5],
+            [0, 7],
+          ],
+        },
       });
       expect(r.isError).toBe(true);
       expect(allText(r)).toMatch(/column 1 .* no observations/);
@@ -210,7 +230,13 @@ describe('hypothesis_testing', () => {
     it('refuses ANOVA when no group varies', async () => {
       const r = await hypothesisTestingHandler({
         test: 'one_way_anova',
-        data: { groups: [[5, 5, 5], [5, 5, 5], [5, 5, 5]] },
+        data: {
+          groups: [
+            [5, 5, 5],
+            [5, 5, 5],
+            [5, 5, 5],
+          ],
+        },
       });
       expect(r.isError).toBe(true);
       expect(allText(r)).toContain('zero variance');
@@ -221,7 +247,13 @@ describe('hypothesis_testing', () => {
       // ss_within is 0 while ss_between is not, so F is Infinity rather than NaN.
       const r = await hypothesisTestingHandler({
         test: 'one_way_anova',
-        data: { groups: [[1, 1], [2, 2], [3, 3]] },
+        data: {
+          groups: [
+            [1, 1],
+            [2, 2],
+            [3, 3],
+          ],
+        },
       });
       expect(r.isError).toBe(true);
       expect(allText(r)).toContain('zero variance');
@@ -231,7 +263,13 @@ describe('hypothesis_testing', () => {
       // The guard must not swallow working input: this is the control.
       const r = await hypothesisTestingHandler({
         test: 'one_way_anova',
-        data: { groups: [[1, 2, 3], [4, 5, 6], [7, 8, 9]] },
+        data: {
+          groups: [
+            [1, 2, 3],
+            [4, 5, 6],
+            [7, 8, 9],
+          ],
+        },
       });
       expect(r.isError).toBe(false);
       expect(allText(r)).toContain('Reject H₀');
@@ -240,7 +278,12 @@ describe('hypothesis_testing', () => {
     it('still reports a real verdict on a populated table', async () => {
       const r = await hypothesisTestingHandler({
         test: 'chi_square_independence',
-        data: { contingency_table: [[10, 20], [30, 40]] },
+        data: {
+          contingency_table: [
+            [10, 20],
+            [30, 40],
+          ],
+        },
       });
       expect(r.isError).toBe(false);
       expect(allText(r)).toContain('Fail to reject H₀');
@@ -251,7 +294,13 @@ describe('hypothesis_testing', () => {
       // answer, not a degenerate one.
       const r = await hypothesisTestingHandler({
         test: 'one_way_anova',
-        data: { groups: [[1, 2, 3], [1, 2, 3], [1, 2, 3]] },
+        data: {
+          groups: [
+            [1, 2, 3],
+            [1, 2, 3],
+            [1, 2, 3],
+          ],
+        },
       });
       expect(r.isError).toBe(false);
       expect(allText(r)).toContain('Fail to reject H₀');
@@ -308,7 +357,12 @@ describe('hypothesis_testing', () => {
       // check could catch it.
       const r = await hypothesisTestingHandler({
         test: 'chi_square_independence',
-        data: { contingency_table: [[1, 2], [3, 4, 5]] },
+        data: {
+          contingency_table: [
+            [1, 2],
+            [3, 4, 5],
+          ],
+        },
       });
       expect(r.isError).toBe(true);
       expect(allText(r)).toMatch(/row 2 has 3 entries but row 1 has 2/);
@@ -349,7 +403,13 @@ describe('hypothesis_testing', () => {
       // cleared an F-only check and reported "✓ Fail to reject H₀".
       const r = await hypothesisTestingHandler({
         test: 'one_way_anova',
-        data: { groups: [[1e200, -1e200], [1, 2], [3, 4]] },
+        data: {
+          groups: [
+            [1e200, -1e200],
+            [1, 2],
+            [3, 4],
+          ],
+        },
       });
       expect(r.isError).toBe(true);
       expect(allText(r)).toMatch(/overflow/);
@@ -359,7 +419,12 @@ describe('hypothesis_testing', () => {
     it('refuses a chi-square table whose counts overflow', async () => {
       const r = await hypothesisTestingHandler({
         test: 'chi_square_independence',
-        data: { contingency_table: [[1e308, 1e308], [1e308, 1e308]] },
+        data: {
+          contingency_table: [
+            [1e308, 1e308],
+            [1e308, 1e308],
+          ],
+        },
       });
       expect(r.isError).toBe(true);
       expect(allText(r)).toMatch(/overflow/);
@@ -388,7 +453,12 @@ describe('hypothesis_testing', () => {
       // Pins `v < 0` against a drift to `v <= 0`.
       const r = await hypothesisTestingHandler({
         test: 'chi_square_independence',
-        data: { contingency_table: [[0, 5], [7, 3]] },
+        data: {
+          contingency_table: [
+            [0, 5],
+            [7, 3],
+          ],
+        },
       });
       expect(r.isError).toBe(false);
       expect(allText(r)).toContain('Reject H₀');
@@ -428,7 +498,12 @@ describe('hypothesis_testing', () => {
     it('chi-square refuses counts large enough to overflow', async () => {
       const r = await hypothesisTestingHandler({
         test: 'chi_square_independence',
-        data: { contingency_table: [[1e308, 1], [1, 1e308]] },
+        data: {
+          contingency_table: [
+            [1e308, 1],
+            [1, 1e308],
+          ],
+        },
       });
       expect(r.isError).toBe(true);
       expect(allText(r)).toMatch(/overflow/);
@@ -437,7 +512,13 @@ describe('hypothesis_testing', () => {
     it('ANOVA refuses groups large enough to overflow', async () => {
       const r = await hypothesisTestingHandler({
         test: 'one_way_anova',
-        data: { groups: [[1e200, -1e200], [1, 2], [3, 4]] },
+        data: {
+          groups: [
+            [1e200, -1e200],
+            [1, 2],
+            [3, 4],
+          ],
+        },
       });
       expect(r.isError).toBe(true);
       expect(allText(r)).toMatch(/overflow/);
@@ -492,11 +573,28 @@ describe('hypothesis_testing', () => {
     it.each([
       [
         'chi_square_independence',
-        { test: 'chi_square_independence', data: { contingency_table: [[10, 20], [30, 40]] } },
+        {
+          test: 'chi_square_independence',
+          data: {
+            contingency_table: [
+              [10, 20],
+              [30, 40],
+            ],
+          },
+        },
       ],
       [
         'one_way_anova',
-        { test: 'one_way_anova', data: { groups: [[1, 2, 3], [4, 5, 6], [7, 8, 9]] } },
+        {
+          test: 'one_way_anova',
+          data: {
+            groups: [
+              [1, 2, 3],
+              [4, 5, 6],
+              [7, 8, 9],
+            ],
+          },
+        },
       ],
     ])('%s reports a failure rather than a result', async (_name, args) => {
       vi.spyOn(giacEngine, 'evaluate').mockRejectedValue(new Error('engine unavailable'));
@@ -651,7 +749,13 @@ describe('hypothesis_testing', () => {
       const spy = vi.spyOn(giacEngine, 'evaluate').mockRejectedValue(new Error('engine down'));
       const result = await hypothesisTestingHandler({
         test: 'chi_square_independence',
-        data: { contingency_table: [[10, 20], [30, 40]], significance: 0.05 },
+        data: {
+          contingency_table: [
+            [10, 20],
+            [30, 40],
+          ],
+          significance: 0.05,
+        },
       });
       expect(spy).toHaveBeenCalled();
       expect(result.isError).toBe(true);
@@ -662,7 +766,13 @@ describe('hypothesis_testing', () => {
       const spy = vi.spyOn(giacEngine, 'evaluate').mockResolvedValue('undef');
       const result = await hypothesisTestingHandler({
         test: 'chi_square_independence',
-        data: { contingency_table: [[10, 20], [30, 40]], significance: 0.05 },
+        data: {
+          contingency_table: [
+            [10, 20],
+            [30, 40],
+          ],
+          significance: 0.05,
+        },
       });
       expect(spy).toHaveBeenCalled();
       expect(result.isError).toBe(true);
@@ -676,7 +786,14 @@ describe('hypothesis_testing', () => {
       // the CAS; it was removed upstream, so every F now reports the refusal.
       const result = await hypothesisTestingHandler({
         test: 'one_way_anova',
-        data: { groups: [[1, 2, 3], [4, 5, 6], [10, 11, 12]], significance: 0.05 },
+        data: {
+          groups: [
+            [1, 2, 3],
+            [4, 5, 6],
+            [10, 11, 12],
+          ],
+          significance: 0.05,
+        },
       });
       expect(spy).toHaveBeenCalled();
       expect(result.isError).toBe(true);
@@ -685,4 +802,3 @@ describe('hypothesis_testing', () => {
     });
   });
 });
-

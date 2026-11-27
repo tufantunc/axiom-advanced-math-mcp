@@ -2,7 +2,6 @@ import { isPrintedZero, splitTopLevel } from './output-cleanup.js';
 import { stripEnclosingBrackets } from './compute/arg-parsing.js';
 import type { GiacEngineLike } from './compute/hygiene.js';
 import { validateSystemShape, type OdeSystem } from './ode-system-shape.js';
-import { odeCostError } from './ode-cost-bounds.js';
 
 /**
  * Translating a list-form ODE system into the form this CAS actually solves.
@@ -498,22 +497,7 @@ export async function translateOdeSystem(
   const refused = constantCoefficientRefusal(matrix, functions, variable);
   if (refused) return refused;
 
-  const translation = await assembleCommand({
-    system,
-    variable,
-    functions,
-    conditions,
-    matrix,
-    constants,
-    evaluate,
-  });
-  if ('error' in translation) return translation;
-  // COST, last, so every size bound keeps its wording, and before the
-  // command is solved — where `[y'=(10^400+1)*z, z'=-y]` held the worker 10s
-  // on main finding eigenvalues. Over the caller's own right-hand sides and
-  // conditions, as the single-equation path bounds its folded command.
-  const costly = odeCostError(`[${[...rhss, ...system.conditions].join(',')}]`);
-  return costly === undefined ? translation : { error: costly };
+  return assembleCommand({ system, variable, functions, conditions, matrix, constants, evaluate });
 }
 
 /**

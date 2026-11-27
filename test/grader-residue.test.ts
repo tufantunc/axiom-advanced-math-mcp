@@ -11,8 +11,12 @@ import {
 } from '../benchmark/graders/answer-residue.js';
 
 describe('grader residue patterns (v3-gated)', () => {
-  beforeAll(() => { process.env.AXIOM_GRADER_V3 = '1'; });
-  afterAll(() => { delete process.env.AXIOM_GRADER_V3; });
+  beforeAll(() => {
+    process.env.AXIOM_GRADER_V3 = '1';
+  });
+  afterAll(() => {
+    delete process.env.AXIOM_GRADER_V3;
+  });
 
   it('strips a trailing ≠ constraint (x + 1, \\quad x \\neq 1 vs x+1)', () => {
     expect(gradeV2('x + 1, \\quad x \\neq 1', 'x+1').match).toBe(true);

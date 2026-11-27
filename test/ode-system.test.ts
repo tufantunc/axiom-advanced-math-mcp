@@ -224,7 +224,15 @@ describe('translateOdeSystem refusals', () => {
     const capturing = (reply: string, degree = '[0,0]') => {
       const base = stub(reply, degree);
       const seen: string[] = [];
-      return { seen, engine: { evaluate: (expr: string) => { seen.push(expr); return base.evaluate(expr); } } };
+      return {
+        seen,
+        engine: {
+          evaluate: (expr: string) => {
+            seen.push(expr);
+            return base.evaluate(expr);
+          },
+        },
+      };
     };
 
     it('sends the three-part probe exactly as built', async () => {

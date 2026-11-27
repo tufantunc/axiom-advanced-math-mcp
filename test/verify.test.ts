@@ -257,17 +257,16 @@ describe('Verify Tool', () => {
     // `2^100000 = 2^100000` as NOT verified with high confidence (numeric
     // parseFloat of the huge side poisoned the combination), and UNKNOWN is
     // this product's preferred failure over a might-be-wrong verdict.
-    it.each([
-      '10000!*x = 10000!*x',
-      '10000!*x = 10000!*x + 1',
-      '2^100000 = 2^100000',
-    ])('knowingly refuses the huge-side claim: %s', async (claim) => {
-      const res = await verifyHandler({ claim, format: 'json' });
-      const parsed = JSON.parse(getText(res));
-      expect(parsed.verified).toBe(false);
-      expect(parsed.evaluated).toBe(false);
-      expect(parsed.checks_performed).toContain('unreadable_side');
-    });
+    it.each(['10000!*x = 10000!*x', '10000!*x = 10000!*x + 1', '2^100000 = 2^100000'])(
+      'knowingly refuses the huge-side claim: %s',
+      async (claim) => {
+        const res = await verifyHandler({ claim, format: 'json' });
+        const parsed = JSON.parse(getText(res));
+        expect(parsed.verified).toBe(false);
+        expect(parsed.evaluated).toBe(false);
+        expect(parsed.checks_performed).toContain('unreadable_side');
+      }
+    );
 
     it('a chained equation is refused with zero engine calls', async () => {
       // The contract this pins: a chained equation never reaches the engine
@@ -407,16 +406,16 @@ describe('Verify Tool', () => {
     // the verdict). Comparison-only and comparison-mixed shapes are refused
     // alike — the equation_shape invariant is uniform: exactly one top-level
     // `=`, nothing else.
-    it.each([
-      'x=1 satisfies y == y',
-      'x=1 satisfies x^2-4=0, x >= 0',
-    ])('stays UNKNOWN for the comparison-bearing equation: %s', async (claim) => {
-      const res = await verifyHandler({ claim, format: 'json' });
-      const parsed = JSON.parse(getText(res));
-      expect(parsed.verified).toBe(false);
-      expect(parsed.evaluated).toBe(false);
-      expect(parsed.checks_performed).toContain('equation_shape');
-    });
+    it.each(['x=1 satisfies y == y', 'x=1 satisfies x^2-4=0, x >= 0'])(
+      'stays UNKNOWN for the comparison-bearing equation: %s',
+      async (claim) => {
+        const res = await verifyHandler({ claim, format: 'json' });
+        const parsed = JSON.parse(getText(res));
+        expect(parsed.verified).toBe(false);
+        expect(parsed.evaluated).toBe(false);
+        expect(parsed.checks_performed).toContain('equation_shape');
+      }
+    );
 
     // An `=` nested inside the equation's own sides cannot be split apart
     // by the solution check: the naive split used to break INSIDE it and
@@ -452,12 +451,15 @@ describe('Verify Tool', () => {
     // refusal comes from the strategies (the difference simplifies to whole
     // `undef`, numeric samples are NaN), while `x^(-1)y`'s sides read bare
     // `undef` and now refuse at the reading guard. Both must stay UNKNOWN.
-    it.each(['1/0 = 1/0', 'x^(-1)y = x^(-1)z'])('keeps refusing undefined sides: %s', async (claim) => {
-      const res = await verifyHandler({ claim, format: 'json' });
-      const parsed = JSON.parse(getText(res));
-      expect(parsed.verified).toBe(false);
-      expect(parsed.evaluated).toBe(false);
-    });
+    it.each(['1/0 = 1/0', 'x^(-1)y = x^(-1)z'])(
+      'keeps refusing undefined sides: %s',
+      async (claim) => {
+        const res = await verifyHandler({ claim, format: 'json' });
+        const parsed = JSON.parse(getText(res));
+        expect(parsed.verified).toBe(false);
+        expect(parsed.evaluated).toBe(false);
+      }
+    );
 
     // A claim genuinely about `undef` keeps its verdict: the limit side reads
     // bounded_function(1), the `undef` side now trips the same reading guard
@@ -500,7 +502,11 @@ describe('Verify Tool', () => {
     );
 
     it('a huge identity still verifies with method=symbolic alone', async () => {
-      const res = await verifyHandler({ claim: '2^1100 = 2^1100', method: 'symbolic', format: 'json' });
+      const res = await verifyHandler({
+        claim: '2^1100 = 2^1100',
+        method: 'symbolic',
+        format: 'json',
+      });
       const parsed = JSON.parse(getText(res));
       expect(parsed.verified).toBe(true);
       expect(parsed.evaluated).toBe(true);
@@ -571,7 +577,11 @@ describe('Verify Tool', () => {
     });
 
     it('numeric-only on a no-number claim stays UNKNOWN', async () => {
-      const res = await verifyHandler({ claim: '2^1100 = 2^1100', method: 'numeric', format: 'json' });
+      const res = await verifyHandler({
+        claim: '2^1100 = 2^1100',
+        method: 'numeric',
+        format: 'json',
+      });
       const parsed = JSON.parse(getText(res));
       expect(parsed.verified).toBe(false);
       expect(parsed.evaluated).toBe(false);
@@ -664,17 +674,17 @@ describe('Verify Tool', () => {
 
   describe('Comparison-operator claims', () => {
     it('a bracketed identity still finds its main equals', async () => {
-    // trackDepth's paren/bracket bookkeeping: swapping the counters makes
-    // any '[' before the '=' swallow the depth and the claim degrades to
-    // UNKNOWN (evaluated:false) with the suite green. Whether [1,2]=[1,2]
-    // VERIFIES is a different question (simplify answers [0,0], not 0) —
-    // the pin is that the claim parses and gets checked at all.
-    const res = await verifyHandler({ claim: '[1,2] = [1,2]', format: 'json' });
-    const parsed = JSON.parse(getText(res));
-    expect(parsed.evaluated).toBe(true);
-  });
+      // trackDepth's paren/bracket bookkeeping: swapping the counters makes
+      // any '[' before the '=' swallow the depth and the claim degrades to
+      // UNKNOWN (evaluated:false) with the suite green. Whether [1,2]=[1,2]
+      // VERIFIES is a different question (simplify answers [0,0], not 0) —
+      // the pin is that the claim parses and gets checked at all.
+      const res = await verifyHandler({ claim: '[1,2] = [1,2]', format: 'json' });
+      const parsed = JSON.parse(getText(res));
+      expect(parsed.evaluated).toBe(true);
+    });
 
-  it('a bare == comparison has no main equals: 5 == 5 stays UNKNOWN', async () => {
+    it('a bare == comparison has no main equals: 5 == 5 stays UNKNOWN', async () => {
       // The == skip must consume BOTH characters: a single-char version
       // leaves the second '=' as the main equals, and a true comparison
       // reports as refuted. This regression shipped once and was caught

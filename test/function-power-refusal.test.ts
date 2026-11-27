@@ -102,12 +102,15 @@ describe('function powers', () => {
 
 describe('superscript letters', () => {
   // `ˣ ʸ` are spacing modifier letters, `ᵃ` a phonetic one.
-  it.each(['diff(eˣ, x)', 'integrate(x·eˣ, x)', 'simplify(xʸ)', 'diff(eᵃ, x)'])('%s is refused', async (problem) => {
-    const r = await computeHandler({ problem });
-    const text = allText(r);
-    expect(r.isError, text).toBe(true);
-    expect(text).toContain('is not read as an exponent — write the exponent with ^ instead');
-  });
+  it.each(['diff(eˣ, x)', 'integrate(x·eˣ, x)', 'simplify(xʸ)', 'diff(eᵃ, x)'])(
+    '%s is refused',
+    async (problem) => {
+      const r = await computeHandler({ problem });
+      const text = allText(r);
+      expect(r.isError, text).toBe(true);
+      expect(text).toContain('is not read as an exponent — write the exponent with ^ instead');
+    }
+  );
 
   it('leaves eˣ=2 unevaluated in verify', async () => {
     const text = allText(await verifyHandler({ claim: 'eˣ=2' }));

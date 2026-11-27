@@ -1,19 +1,30 @@
 import { excerpt } from './output-cleanup.js';
-import { factorialLog10, tokenizeMagnitude, type MagnitudeToken } from './ode-condition-bounds.js';
-import { unicodeToAscii } from './unicode-normalize.js';
+import {
+  MAGNITUDE_OPERATORS,
+  factorialLog10,
+  foldPrimes,
+  tokenizeMagnitude,
+  type MagnitudeToken,
+} from './ode-text-tokens.js';
+import { POWERED_FUNCTIONS, unicodeToAscii } from './unicode-normalize.js';
 
 /**
- * The COST bounds on a whole ODE problem — the equation and every condition the
- * solver will see together — as opposed to the SIZE bounds in
- * ode-condition-bounds.ts, which read one piece of text at a time.
+ * The COST bounds on ODE text — what solving it would cost the shared worker —
+ * as opposed to the SIZE bounds in ode-condition-bounds.ts (length, depth, the
+ * digits a condition denotes). Every rule about cost is here: what an initial
+ * condition may CALL (conditionCallError, applied per condition through
+ * conditionBoundError) and what a whole problem's numbers and powers cost
+ * (odeCostError, applied to the equation and its conditions together).
  *
- * Text-only, like the two files it sits beside: no `async`, no engine symbol,
- * and no import path to `src/server/giac`. ode-system-shape-boundary.test.ts
- * checks all three for this file as it does for those.
+ * Text-only, like ode-condition-bounds.ts and ode-text-tokens.ts: no `async`,
+ * no engine symbol, and no import path to `src/server/giac`.
+ * ode-system-shape-boundary.test.ts checks all three for this file.
  *
- * Two axes, each measured on main with one input per fresh worker and the
- * default 10s budget:
+ * Measured on main, one input per fresh worker, default 10s budget:
  *
+ *   - CALLS. `desolve(y'=y, y(0)=ifactor(2^257-1), x, y)` burns the budget, and
+ *     in a system the replacement worker then failed to start for the next
+ *     caller; `nextprime(10^900)` holds the worker 11s and then answers.
  *   - HEIGHT, the size of the exact numbers. An exact root of an integer past
  *     the largest double does not finish: `sqrt(17*10^307)` answers in the
  *     single-equation fold in 20ms, `sqrt(18*10^307+1)` times out, and the step
@@ -22,18 +33,21 @@ import { unicodeToAscii } from './unicode-normalize.js';
  *     defence: `y''+(10^400+1)*y=0` (a characteristic root),
  *     `y''+(10^160+1)*y'+y=0` (a discriminant that squares the coefficient),
  *     `y'=y+1/(x^2+10^400+1)` (an `atan` integral), `y'=(10^400+1)*y^2+1` (a
- *     Riccati equation) and `y'=2*sqrt(y), y(0)=10^400+1` (a constant solved
- *     from a square) each burn the full budget, and every one of them was
- *     inside the 3,000-digit magnitude bound.
+ *     Riccati equation), `y'=2*sqrt(y), y(0)=10^400+1` (a constant solved from
+ *     a square) and `[y'=(10^400+1)*z, z'=-y]` (eigenvalues) each burn the full
+ *     budget, and every one of them was inside the 3,000-digit magnitude bound.
  *   - EXPANSION, the size of the polynomial a power of a sum expands to.
  *     `y'=(x+1)^n*y` takes 0.2s at n=50, 1.6s at 100, 6.7s at 150 and times out
  *     at 200, all in desolve itself; `y'=x^5000*y` is 25ms. The cost composes:
  *     `(x+1)^99*(x+2)^99*y` takes 6.4s, `((x+1)^14+1)^14*y` 6.4s, and
  *     `(x+a+1)^40*y` — a second symbol — times out.
  *
- * Both are read off one small expression tree built from the same tokens the
- * magnitude reader uses, so the three bounds agree about where every number,
- * name, bracket and operator is.
+ * Not covered: a call in the EQUATION. `y'=y+0*ifactor(2^257-1)` still burns
+ * the budget. An equation calls what it likes (`erf(x)`, `Heaviside(x-1)`,
+ * `besselJ(0,x)`), so an allowlist there would refuse ordinary ODEs, and the
+ * same call reaches the worker directly as `compute("ifactor(2^257-1)")` on
+ * main, where nothing bounds it; that is the general compute-cost question,
+ * not this channel's.
  */
 
 /**
@@ -56,6 +70,10 @@ import { unicodeToAscii } from './unicode-normalize.js';
  * A product of three numbers can still reach it; none of the shapes measured
  * forms one.
  *
+ * A DECIMAL is charged as written but not raised: `1.01^100` is a float to
+ * Giac, which roots it in floating point, so `y'=y*1.01^100` (143ms on main)
+ * and compound-interest shapes such as `(1+0.07/12)^360` are admitted.
+ *
  * The cost: a number that is never rooted is refused all the same.
  * `y'=y*2^4096` answers in 17ms, and `y'=y*10^200` in about as long, because a
  * first-order linear equation forms no root — but `y''+(2^4096+1)*y=0` traps,
@@ -68,28 +86,154 @@ import { unicodeToAscii } from './unicode-normalize.js';
 const MAX_PROBLEM_HEIGHT = 150;
 
 /**
- * Ceiling on the EXPANSION estimate of any subexpression: terms times digits,
- * where terms is an upper bound on how many monomials it expands to and digits
- * bounds the coefficients.
+ * Ceiling on the EXPANSION estimate of any product or power: terms times one
+ * more than the digits, where terms bounds how many monomials it expands to and
+ * digits bounds the coefficients.
  *
  * Calibrated on `y'=(x+1)^n*y`, the costliest position measured (as a forcing
- * term the same power is several times cheaper): n=50 is 816 and answers in
- * 0.2s, n=97 is 2,961 and answers in about 1.5s, n=150 is 6,946 at 6.7s and
- * n=200 is 12,241 and times out. 3,000 admits the first two and keeps a factor
- * of four below the lowest estimate measured to time out. The estimate
- * over-counts the multinomial cases — `(x^2+x+1)^100*y` is 9,789 and answered
- * in 6.9s — so those are refused earlier than their time requires, which is
- * the direction an estimate may err in.
+ * term the same power is several times cheaper): n=50 is 819 and answers in
+ * 0.2s, n=97 is 2,960 and answers in about 1.5s, n=150 is 6,969 at 6.7s and
+ * n=200 is 12,302 and times out. 3,000 admits the first two — 97 is the largest
+ * n admitted, 98 the smallest refused — and keeps a factor of four below the
+ * lowest estimate measured to time out. The estimate over-counts some shapes —
+ * `(x^2+x+1)^100*y` is 9,791 and answered in 6.9s — so those are refused
+ * earlier than their time requires, which is the direction an estimate may err
+ * in.
  */
 const MAX_EXPANSION = 3_000;
 
 /**
- * Ceiling on how deeply the tree may nest. Above it the tree is not built and
- * the problem is refused: an equation 200 deep burns the budget in the engine
- * (measured for conditions in ode-condition-bounds.ts), and recursion this
- * file cannot finish is not a bound.
+ * Ceiling on how deeply the tree may nest — brackets, signs, powers and `!`
+ * alike. Above it the problem is refused rather than read: the folds recurse
+ * once per level, and recursion this file cannot finish is not a bound. 100 is
+ * far past any ODE a caller writes and far inside the JS stack.
  */
 const MAX_COST_DEPTH = 100;
+
+/**
+ * The derivative operator's spellings: Giac's `diff` and its aliases `derive`
+ * and `deriver`. ode-system-shape.ts builds DERIVATIVE_CALL from this list, so
+ * the shape reader and the condition call check cannot disagree about which
+ * names are the derivative.
+ */
+export const DERIVATIVE_NAMES = ['diff', 'derive', 'deriver'] as const;
+
+/**
+ * What an initial condition may call besides the unknowns and the derivative:
+ * Giac's elementary one-argument functions (POWERED_FUNCTIONS, the list
+ * unicode-normalize.ts keeps of them), the three spellings readMagnitude
+ * already bounds (`factorial`, `Gamma`, `pow`), and `round`, the rounding
+ * function POWERED_FUNCTIONS lacks beside `floor` and `ceil`.
+ *
+ * An ALLOWLIST, because what an initial condition calls is a cost the size
+ * bounds cannot see: `ifactor(2^257-1)` denotes a 78-digit number and burns
+ * the budget. A DENYLIST of the number-theory names would be
+ * ode-condition-bounds.ts's most-repeated defect in another form: `comb`,
+ * `perm`, `ithprime`, `sum`, `fib` and every name not yet thought of would
+ * each have been the next escape.
+ *
+ * Every name here was measured cheap on a 78-digit and a 2,863-digit argument:
+ * `sqrt`, `ln`, `exp`, `sin`, `atan` and the rest answer in under 30ms in both
+ * `exact([y(0)=…,z(0)=0])` and the single-equation fold. What is NOT cheap is
+ * an exact ROOT of a large integer — `sqrt(3^1000+2)` times out in the fold —
+ * and that is a size MAX_PROBLEM_HEIGHT refuses, because the solver forms such
+ * roots itself from bare numbers.
+ *
+ * The cost is stated: a free user function is refused too. `y(0)=g(2)` and
+ * `y(0)=myfactorial(50000)` came back symbolic and cheap, and are now refused,
+ * because the text cannot tell `g` from `ifactor` and a condition is a number.
+ */
+const CONDITION_FUNCTIONS: ReadonlySet<string> = new Set([
+  ...POWERED_FUNCTIONS,
+  'factorial',
+  'Gamma',
+  'pow',
+  'round',
+]);
+
+/**
+ * Whether a character is one a number can be written with: digits, names for
+ * constants and functions, the tokenizer's operators, the derivative prime and
+ * the `=` that joins a condition. Anything else is an operator a number does
+ * not need and a cost no reader sees: Giac's `$` builds a sequence
+ * (`(2^900+k)$(k=1..10000)` is ten thousand numbers and no call), `..` is a
+ * range, `:=` assigns, `@` composes, and a quoted string can name a function.
+ * `**` and the typeset minus `−` never reach here; unicodeToAscii rewrites
+ * them to `^` and `-`.
+ */
+function isNumberCharacter(character: string): boolean {
+  return /[\w\s.'=]/.test(character) || MAGNITUDE_OPERATORS.includes(character);
+}
+
+/**
+ * Why an initial condition's CALLS are too costly to evaluate, or undefined.
+ * `condition` is normalised text; the phrase continues "cannot solve this … —
+ * it ".
+ *
+ * Its SUBJECT first: a condition constrains one of the `unknowns`, and a
+ * subject that is not one is worded as such rather than as a call — main
+ * folded `ifactor(2^257-1)=1` in as a condition and burned the budget on it.
+ * Then every bracket, by what precedes it: an operator, a number or nothing is
+ * grouping; a name is a call, admitted when it is an unknown, a derivative
+ * spelling or in CONDITION_FUNCTIONS; and a closing bracket applies the group
+ * it closes — `diff(y(x),x)(0)` was judged at `diff`'s own bracket, and
+ * `(ifactor)(N)`, a call with no name in front of it, is judged by the names
+ * inside the group.
+ */
+export function conditionCallError(
+  condition: string,
+  unknowns: readonly string[]
+): string | undefined {
+  const stray = [...condition].find((character) => !isNumberCharacter(character));
+  const asNumber = 'give the value itself, as in y(0)=1';
+  if (stray !== undefined)
+    return `contains "${stray}", which a number is not written with — ${asNumber}`;
+  if (condition.includes('..'))
+    return `contains a range "..", which a number is not written with — ${asNumber}`;
+  const admits = (name: string): boolean => {
+    const bare = name.replace(/'+$/, '');
+    return (
+      CONDITION_FUNCTIONS.has(bare) ||
+      (DERIVATIVE_NAMES as readonly string[]).includes(bare) ||
+      unknowns.includes(bare)
+    );
+  };
+  const tokens = foldPrimes(tokenizeMagnitude(condition));
+  const [subject, opens] = tokens;
+  if (subject?.kind === 'name' && opens?.text === '(' && !admits(subject.text)) {
+    const solved = unknowns.join(' or ');
+    return (
+      `gives a condition on ${excerpt(subject.text, 30)}(…), but the function solved for is ` +
+      `${solved} — write it as ${unknowns[0] ?? 'y'}(0)=1`
+    );
+  }
+  const calls = (name: string): string =>
+    `calls ${excerpt(name, 30)} — an initial condition is a number, so compute ` +
+    `${excerpt(name, 30)}(…) on its own first and give the value it returns`;
+  for (const [i, token] of tokens.entries()) {
+    if (token.kind !== 'op' || (token.text !== '(' && token.text !== '[')) continue;
+    const before = tokens[i - 1];
+    if (before?.kind === 'name') {
+      if (!admits(before.text)) return calls(before.text);
+      continue;
+    }
+    if (before?.text !== ')' && before?.text !== ']') continue;
+    const opener = before.text === ')' ? '(' : '[';
+    let depth = 0;
+    let at = i - 1;
+    for (; at >= 0; at -= 1) {
+      if (tokens[at]?.text === before.text) depth += 1;
+      else if (tokens[at]?.text === opener && --depth === 0) break;
+    }
+    if (tokens[at - 1]?.kind === 'name') continue;
+    const foreign = tokens
+      .slice(Math.max(at, 0), i - 1)
+      .find((t) => t.kind === 'name' && !admits(t.text));
+    if (foreign !== undefined) return calls(foreign.text);
+    if (opener === '[') return `applies a list as a function — ${asNumber}`;
+  }
+  return undefined;
+}
 
 type Span = { from: number; to: number };
 
@@ -98,50 +242,33 @@ type CostNode = Span &
     | { kind: 'number'; text: string; value: number }
     | { kind: 'name'; text: string }
     | { kind: 'call'; name: string; args: CostNode[] }
-    | { kind: 'negate'; operand: CostNode }
-    | { kind: 'sum' | 'product'; left: CostNode; right: CostNode }
+    | { kind: 'negate' | 'reciprocal' | 'factorial'; operand: CostNode }
+    | { kind: 'sum' | 'product'; items: CostNode[] }
     | { kind: 'power'; base: CostNode; exponent: CostNode }
-    | { kind: 'factorial'; operand: CostNode }
-    | { kind: 'group'; items: CostNode[] }
-    | { kind: 'deep' }
     | { kind: 'empty' }
   );
 
 /**
- * The tokens, with a derivative's primes folded into its name so `y''` is one
- * symbol rather than a name and two separators, and Giac's boolean keywords
- * made separators: the single-equation path folds its conditions in as
- * `(y'=…) and (y(0)=1)`, and read as a name `and` would multiply the equation
- * by its own conditions.
- */
-function costTokens(text: string): MagnitudeToken[] {
-  const merged: MagnitudeToken[] = [];
-  for (const token of tokenizeMagnitude(text)) {
-    const last = merged[merged.length - 1];
-    if (token.text === "'" && last?.kind === 'name') {
-      merged[merged.length - 1] = { ...last, text: `${last.text}'` };
-    } else if (token.kind === 'name' && BOOLEAN_WORDS.has(token.text)) {
-      merged.push({ ...token, kind: 'separator' });
-    } else merged.push(token);
-  }
-  return merged;
-}
-
-const BOOLEAN_WORDS: ReadonlySet<string> = new Set(['and', 'or', 'xor', 'not']);
-
-/**
- * The tree, built with the magnitude reader's precedence: `!` binds tighter
- * than `^`, `^` is right-associative and tighter than a sign, and juxtaposition
- * (`2x`, `(x+1)(x+2)`) multiplies. Every other separator — `=`, `;`, a stray
- * `)` — joins its sides as a sum, which is the conservative reading for both
- * folds. Never throws and always consumes the input.
+ * The tree. It reads the same tokens as readMagnitude in
+ * ode-condition-bounds.ts with the same binding for `!` (tightest), `^`
+ * (right-associative) and signs, and differs where its job differs:
+ * juxtaposition (`2x`, `(x+1)(x+2)`) multiplies, where readMagnitude stops
+ * reading; an unclosed bracket is read to the end rather than declined; and
+ * every separator — `=`, `;`, a stray `)` — joins its sides as a sum.
+ * Each of those is the conservative reading for a fold that charges cost.
+ *
+ * Sums and products are n-ary, so a flat chain of 8,000 terms is one level
+ * rather than 8,000, and every level of nesting — brackets, signs, powers and
+ * `!` — counts against MAX_COST_DEPTH, past which the read stops and the
+ * problem is refused. Never throws, and always consumes the input.
  */
 function parseCost(tokens: MagnitudeToken[]): { root: CostNode; tooDeep: boolean } {
   let at = 0;
   let tooDeep = false;
+  const empty = (): CostNode => ({ kind: 'empty', from: 0, to: 0 });
   const deep = (): CostNode => {
     tooDeep = true;
-    return { kind: 'deep', from: 0, to: 0 };
+    return empty();
   };
   const peek = (): MagnitudeToken | undefined => tokens[at];
   const isOp = (text: string): boolean => peek()?.kind === 'op' && peek()?.text === text;
@@ -151,13 +278,10 @@ function parseCost(tokens: MagnitudeToken[]): { root: CostNode; tooDeep: boolean
   });
   const startsOperand = (): boolean => {
     const token = peek();
-    return (
-      token !== undefined &&
-      (token.kind === 'number' ||
-        token.kind === 'name' ||
-        (token.kind === 'op' && (token.text === '(' || token.text === '[')))
-    );
+    return token?.kind === 'number' || token?.kind === 'name' || isOp('(') || isOp('[');
   };
+  const many = (kind: 'sum' | 'product', items: CostNode[], from: number): CostNode =>
+    items.length === 1 && items[0] ? items[0] : { kind, items, ...span(from) };
 
   function items(closer: string, depth: number): CostNode[] {
     const list: CostNode[] = [];
@@ -188,18 +312,19 @@ function parseCost(tokens: MagnitudeToken[]): { root: CostNode; tooDeep: boolean
     if (isOp('(') || isOp('[')) {
       const closer = isOp('(') ? ')' : ']';
       at += 1;
-      const list = items(closer, depth);
-      const only = list.length === 1 ? list[0] : undefined;
-      return only ?? { kind: 'group', items: list, ...span(from) };
+      return many('sum', items(closer, depth), from);
     }
-    return { kind: 'empty', from: token?.at ?? 0, to: token?.at ?? 0 };
+    return empty();
   }
 
   function postfix(depth: number): CostNode {
     const from = at;
     let node = primary(depth);
+    let level = depth;
     while (isOp('!')) {
       at += 1;
+      level += 1;
+      if (level > MAX_COST_DEPTH) return deep();
       node = { kind: 'factorial', operand: node, ...span(from) };
     }
     return node;
@@ -229,41 +354,44 @@ function parseCost(tokens: MagnitudeToken[]): { root: CostNode; tooDeep: boolean
 
   function term(depth: number): CostNode {
     const from = at;
-    let left = unary(depth);
+    const factors = [unary(depth)];
     for (;;) {
-      const explicit = isOp('*') || isOp('/');
-      if (!explicit && !startsOperand()) return left;
+      const divide = isOp('/');
+      const explicit = divide || isOp('*');
+      if (!explicit && !startsOperand()) break;
       if (explicit) at += 1;
       const before = at;
-      const right = unary(depth);
-      left = { kind: 'product', left, right, ...span(from) };
+      const from2 = at;
+      const operand = unary(depth);
+      factors.push(divide ? { kind: 'reciprocal', operand, ...span(from2) } : operand);
       // Past the depth bound `unary` declines without consuming, and a
       // juxtaposed operand would then be offered to it forever.
-      if (!explicit && at === before) return left;
+      if (!explicit && at === before) break;
     }
+    return many('product', factors, from);
   }
 
   function expression(depth: number): CostNode {
     const from = at;
-    let left = term(depth);
+    const terms = [term(depth)];
     while (isOp('+') || isOp('-')) {
       const negative = isOp('-');
       at += 1;
+      const from2 = at;
       const operand = term(depth);
-      const right: CostNode = negative ? { kind: 'negate', operand, ...span(from) } : operand;
-      left = { kind: 'sum', left, right, ...span(from) };
+      terms.push(negative ? { kind: 'negate', operand, ...span(from2) } : operand);
     }
-    return left;
+    return many('sum', terms, from);
   }
 
   function join(depth: number): CostNode {
     const from = at;
-    let left = expression(depth);
+    const parts = [expression(depth)];
     while (peek()?.kind === 'separator') {
       at += 1;
-      left = { kind: 'sum', left, right: expression(depth), ...span(from) };
+      parts.push(expression(depth));
     }
-    return left;
+    return many('sum', parts, from);
   }
 
   const parts: CostNode[] = [];
@@ -272,79 +400,168 @@ function parseCost(tokens: MagnitudeToken[]): { root: CostNode; tooDeep: boolean
     parts.push(join(0));
     if (at === before) at += 1;
   }
-  return { root: { kind: 'group', items: parts, from: 0, to: 0 }, tooDeep };
+  return { root: { kind: 'sum', items: parts, from: 0, to: 0 }, tooDeep };
+}
+
+/** Giac's functions a constant exponent or factorial operand is written with. */
+const CONSTANT_CALLS: Readonly<Record<string, (...args: number[]) => number>> = {
+  abs: Math.abs,
+  sqrt: Math.sqrt,
+  exp: Math.exp,
+  ln: Math.log,
+  log: Math.log,
+  log10: Math.log10,
+  floor: Math.floor,
+  ceil: Math.ceil,
+  round: Math.round,
+  sign: Math.sign,
+  sin: Math.sin,
+  cos: Math.cos,
+  tan: Math.tan,
+  max: Math.max,
+  min: Math.min,
+  pow: Math.pow,
+  factorial: (n) => factorialValue(n),
+  Gamma: (n) => factorialValue(n - 1),
+};
+
+function factorialValue(n: number): number {
+  if (!Number.isInteger(n) || n < 0) return Number.NaN;
+  if (n > 170) return Number.POSITIVE_INFINITY;
+  let product = 1;
+  for (let k = 2; k <= n; k += 1) product *= k;
+  return product;
 }
 
 /**
- * The node's value when it is a small exact integer — an exponent or a
- * factorial's operand the folds need as a number — or undefined.
+ * The node's value as a double when it names no symbol, or undefined: an
+ * unknown call, a free name, or a value that is not a number. Approximate on
+ * purpose — it decides only whether an exponent is an integer and how large,
+ * which Giac also decides from the value: `(x+1)^abs(200)`, `(x+1)^(5!*2)` and
+ * `pow(x+1,200)` each expanded and timed out on this branch's first version,
+ * which read only literal exponents.
  */
-function integerValue(node: CostNode): number | undefined {
-  const safe = (value: number): number | undefined =>
-    Number.isSafeInteger(value) ? value : undefined;
+function constantValue(node: CostNode): number | undefined {
+  const all = (nodes: CostNode[]): number[] | undefined => {
+    const values: number[] = [];
+    for (const item of nodes) {
+      const value = constantValue(item);
+      if (value === undefined) return undefined;
+      values.push(value);
+    }
+    return values;
+  };
   switch (node.kind) {
     case 'number':
-      return safe(node.value);
-    case 'negate': {
-      const value = integerValue(node.operand);
-      return value === undefined ? undefined : -value;
+      return node.value;
+    case 'negate':
+    case 'reciprocal':
+    case 'factorial': {
+      const value = constantValue(node.operand);
+      if (value === undefined) return undefined;
+      if (node.kind === 'negate') return -value;
+      return node.kind === 'reciprocal' ? 1 / value : factorialValue(value);
     }
     case 'sum':
     case 'product': {
-      const left = integerValue(node.left);
-      const right = integerValue(node.right);
-      if (left === undefined || right === undefined) return undefined;
-      return safe(node.kind === 'sum' ? left + right : left * right);
+      const values = all(node.items);
+      if (values === undefined) return undefined;
+      return node.kind === 'sum'
+        ? values.reduce((total, value) => total + value, 0)
+        : values.reduce((total, value) => total * value, 1);
     }
     case 'power': {
-      const base = integerValue(node.base);
-      const exponent = integerValue(node.exponent);
-      if (base === undefined || exponent === undefined || exponent < 0) return undefined;
-      return safe(base ** exponent);
+      const [base, exponent] = all([node.base, node.exponent]) ?? [];
+      return base === undefined || exponent === undefined ? undefined : base ** exponent;
+    }
+    case 'call': {
+      const fn = CONSTANT_CALLS[node.name];
+      const values = all(node.args);
+      if (fn === undefined || values === undefined) return undefined;
+      const value = fn(...values);
+      return Number.isNaN(value) ? undefined : value;
     }
     default:
       return undefined;
   }
 }
 
-/** log10 of the larger of a literal's numerator and denominator. */
-function literalHeight(text: string, value: number): number {
-  const [mantissa = '', exponent = '0'] = text.toLowerCase().split('e');
-  const decimals = mantissa.split('.')[1]?.length ?? 0;
-  const scale = decimals - Number(exponent);
-  const magnitude = value === 0 ? 0 : Math.max(0, Math.log10(Math.abs(value)));
-  return scale > 0 ? Math.max(magnitude + scale, scale) : magnitude;
-}
-
-/**
- * Whether the node names nothing — no symbol and no call — so the engine will
- * reduce it to a number.
- */
-function isNumeric(node: CostNode): boolean {
+/** Whether the node names no free symbol, so Giac reduces it to a value. */
+function isConstant(node: CostNode): boolean {
   switch (node.kind) {
     case 'number':
     case 'empty':
       return true;
+    case 'name':
+      return false;
     case 'negate':
+    case 'reciprocal':
     case 'factorial':
-      return isNumeric(node.operand);
+      return isConstant(node.operand);
     case 'sum':
     case 'product':
-      return isNumeric(node.left) && isNumeric(node.right);
+      return node.items.every(isConstant);
     case 'power':
-      return isNumeric(node.base) && isNumeric(node.exponent);
-    case 'group':
-      return node.items.every(isNumeric);
+      return isConstant(node.base) && isConstant(node.exponent);
+    case 'call':
+      return node.args.every(isConstant);
+  }
+}
+
+/**
+ * What an exponent is to the folds: an integer they can raise by (possibly
+ * infinite, past a double), a fraction or a symbol that leaves the power
+ * unexpanded, or a constant they cannot evaluate — `2^foo(3)` — which is
+ * charged as if it were unbounded.
+ */
+type Exponent = { kind: 'integer'; n: number } | { kind: 'unexpanded' } | { kind: 'unreadable' };
+
+function readExponent(node: CostNode): Exponent {
+  if (node.kind === 'empty' || !isConstant(node)) return { kind: 'unexpanded' };
+  const value = constantValue(node);
+  if (value === undefined) return { kind: 'unreadable' };
+  if (!Number.isFinite(value)) return { kind: 'integer', n: Number.POSITIVE_INFINITY };
+  return Number.isInteger(value) ? { kind: 'integer', n: Math.abs(value) } : { kind: 'unexpanded' };
+}
+
+/** Whether the node holds a decimal literal, which makes Giac compute in floats. */
+function hasDecimal(node: CostNode): boolean {
+  switch (node.kind) {
+    case 'number':
+      return !/^0[xXbB]/.test(node.text) && /[.eE]/.test(node.text);
+    case 'negate':
+    case 'reciprocal':
+    case 'factorial':
+      return hasDecimal(node.operand);
+    case 'sum':
+    case 'product':
+      return node.items.some(hasDecimal);
+    case 'power':
+      return hasDecimal(node.base) || hasDecimal(node.exponent);
+    case 'call':
+      return node.args.some(hasDecimal);
     default:
       return false;
   }
 }
 
+/** log10 of the larger of a literal's numerator and denominator. */
+function literalHeight(text: string, value: number): number {
+  // A radix literal by its digits, which stay countable past a double.
+  if (/^0[xX]/.test(text)) return (text.length - 2) * Math.log10(16);
+  if (/^0[bB]/.test(text)) return (text.length - 2) * Math.log10(2);
+  const magnitude = value === 0 ? 0 : Math.max(0, Math.log10(Math.abs(value)));
+  const [mantissa = '', exponent = '0'] = text.toLowerCase().split('e');
+  const decimals = mantissa.split('.')[1]?.length ?? 0;
+  const scale = decimals - Number(exponent);
+  return scale > 0 ? Math.max(magnitude + scale, scale) : magnitude;
+}
+
 /**
- * The HEIGHT of everything in the node, summed, and the single largest
+ * The HEIGHT of everything in the tree, summed, and the single largest
  * contribution to name in a refusal.
  */
-function problemHeight(root: CostNode): { total: number; largest?: Span; largestHeight: number } {
+function problemHeight(root: CostNode): { total: number; largest?: Span } {
   let largest: Span | undefined;
   let largestHeight = 0;
   const charge = (node: CostNode, height: number): number => {
@@ -354,18 +571,24 @@ function problemHeight(root: CostNode): { total: number; largest?: Span; largest
     }
     return height;
   };
-  const factorialHeight = (node: CostNode, operand: CostNode, offset: number): number => {
-    // A decimal literal is the gamma function at a float (`1.5!` answers
-    // 1.32934038818), charged as the next integer up like the magnitude
-    // reader charges it.
-    const n = operand.kind === 'number' ? Math.ceil(operand.value) : integerValue(operand);
-    if (n !== undefined && n + offset >= 0) return charge(node, factorialLog10(n + offset));
-    return isNumeric(operand) ? Number.POSITIVE_INFINITY : height(operand);
-  };
+  const scaled = (n: number, height: number): number => (height === 0 ? 0 : n * height);
   const powerHeight = (node: CostNode, base: CostNode, exponent: CostNode): number => {
-    const n = integerValue(exponent);
-    if (n === undefined) return height(base) + height(exponent);
-    return charge(node, Math.abs(n) * height(base));
+    const read = readExponent(exponent);
+    const baseHeight = height(base);
+    if (read.kind === 'unexpanded') return baseHeight + height(exponent);
+    if (read.kind === 'unreadable') {
+      return baseHeight === 0 ? height(exponent) : charge(node, Number.POSITIVE_INFINITY);
+    }
+    // A decimal base is a float to Giac: charged as written, not raised.
+    if (isConstant(base) && hasDecimal(base)) return baseHeight;
+    return charge(node, scaled(read.n, baseHeight));
+  };
+  const factorialHeight = (node: CostNode, operand: CostNode, offset: number): number => {
+    const value = constantValue(operand);
+    if (value !== undefined && Number.isFinite(value) && value + offset >= 0) {
+      return charge(node, factorialLog10(Math.ceil(value) + offset));
+    }
+    return isConstant(operand) ? charge(node, Number.POSITIVE_INFINITY) : height(operand);
   };
   function height(node: CostNode): number {
     switch (node.kind) {
@@ -374,19 +597,16 @@ function problemHeight(root: CostNode): { total: number; largest?: Span; largest
       case 'name':
       case 'empty':
         return 0;
-      case 'deep':
-        return Number.POSITIVE_INFINITY;
       case 'negate':
+      case 'reciprocal':
         return height(node.operand);
       case 'sum':
       case 'product':
-        return height(node.left) + height(node.right);
+        return node.items.reduce((total, item) => total + height(item), 0);
       case 'power':
         return powerHeight(node, node.base, node.exponent);
       case 'factorial':
         return factorialHeight(node, node.operand, 0);
-      case 'group':
-        return node.items.reduce((sum, item) => sum + height(item), 0);
       case 'call': {
         const [first, second] = node.args;
         if (node.args.length === 1 && first !== undefined) {
@@ -396,12 +616,12 @@ function problemHeight(root: CostNode): { total: number; largest?: Span; largest
         if (node.name === 'pow' && node.args.length === 2 && first && second) {
           return powerHeight(node, first, second);
         }
-        return node.args.reduce((sum, arg) => sum + height(arg), 0);
+        return node.args.reduce((total, arg) => total + height(arg), 0);
       }
     }
   }
   const total = height(root);
-  return { total, largest, largestHeight };
+  return { total, largest };
 }
 
 type Expansion = { terms: number; degrees: Map<string, number>; digits: number };
@@ -416,9 +636,9 @@ function multinomialTerms(m: number, k: number): number {
 }
 
 /**
- * The first node, innermost first, whose EXPANSION estimate exceeds
- * MAX_EXPANSION — the power to name in a refusal rather than the member that
- * contains it — or undefined.
+ * The first product or power, innermost first, whose EXPANSION estimate
+ * exceeds MAX_EXPANSION — the power to name in a refusal rather than the member
+ * that contains it — or undefined.
  *
  * Each node carries an upper bound on its terms (a sum adds them, a product
  * multiplies them, a power of a k-term sum takes the multinomial count), the
@@ -431,49 +651,47 @@ function multinomialTerms(m: number, k: number): number {
  * multiplies to 10,000 but has at most 199 — and the estimate is that count
  * times one more than the digits.
  *
- * A symbol, a call and a power the folds cannot read as an integer each count
- * as one opaque term: `sin(x)^5000` and `x^5000` expand to themselves, and
- * `(x+1)^(1/2)` is not expanded at all. A quotient is charged as a product,
- * which over-counts a polynomial denominator the solver may never expand.
+ * A symbol, a call and a power whose exponent is a fraction or a symbol each
+ * count as one opaque term: `sin(x)^5000` and `x^5000` expand to themselves,
+ * and `(x+1)^(1/2)` is not expanded at all. A power whose exponent is a
+ * constant this cannot evaluate is charged as unbounded once its base is a
+ * sum. A quotient is charged as a product, which over-counts a polynomial
+ * denominator the solver may never expand.
+ *
+ * Linear in the tree: every degree map is owned by the node that made it, so
+ * a product or a sum merges into its first part's map in place, where copying
+ * per node made an 8 KB sum of distinct symbols quadratic (250ms).
  */
 function overExpansion(
   root: CostNode,
   text: string
 ): { estimate: number; node: CostNode } | undefined {
   let first: { estimate: number; node: CostNode } | undefined;
-  const atom = (key: string): Expansion => ({
-    terms: 1,
-    degrees: new Map([[key, 1]]),
-    digits: 0,
-  });
+  const atom = (key: string): Expansion => ({ terms: 1, degrees: new Map([[key, 1]]), digits: 0 });
   const constant = (digits: number): Expansion => ({ terms: 1, degrees: new Map(), digits });
-  // Every node is TIGHTENED (below); only a product or a power is CHARGED,
-  // because only they create expansion — a sum is as large as its parts, which
-  // the caller wrote, and a 2,998-digit condition beside a two-term equation
-  // is a size for the height bound, not a power that "expands too far".
-  const record = (node: CostNode, expansion: Expansion, charged = false): Expansion => {
-    // A node with no symbol in it is a NUMBER, whose size is the height
-    // bound's business: charging it here would word a 2,999-digit condition
-    // as a power that "expands too far".
+  // Every node is TIGHTENED; only a product or a power is CHARGED, because
+  // only they create expansion — a sum is as large as its parts, which the
+  // caller wrote.
+  const record = (node: CostNode, expansion: Expansion, charged: boolean): Expansion => {
     if (expansion.degrees.size === 0) return expansion;
     let monomials = 1;
-    for (const degree of expansion.degrees.values()) monomials *= degree + 1;
-    // The smaller of two upper bounds is one too, and carrying it upward is
-    // what keeps `(x^2+x+1)^40*y` at 81 terms rather than the multinomial 861.
+    for (const degree of expansion.degrees.values()) {
+      monomials *= degree + 1;
+      if (monomials >= expansion.terms) break;
+    }
     const terms = Math.min(expansion.terms, monomials);
     const raw = terms * (expansion.digits + 1);
     const estimate = Number.isNaN(raw) ? Number.POSITIVE_INFINITY : raw;
     if (charged && first === undefined && estimate > MAX_EXPANSION) first = { estimate, node };
-    return { ...expansion, terms };
+    expansion.terms = terms;
+    return expansion;
   };
-  const combine = (
-    a: Map<string, number>,
-    b: Map<string, number>,
-    merge: (x: number, y: number) => number
-  ): Map<string, number> => {
-    const out = new Map(a);
-    for (const [key, degree] of b) out.set(key, merge(out.get(key) ?? 0, degree));
-    return out;
+  const merge = (
+    into: Map<string, number>,
+    from: Map<string, number>,
+    pick: (x: number, y: number) => number
+  ): void => {
+    for (const [key, degree] of from) into.set(key, pick(into.get(key) ?? 0, degree));
   };
   // log10 of a sum of norms, computed from their logs without overflowing.
   const log10Sum = (logs: number[]): number => {
@@ -481,72 +699,79 @@ function overExpansion(
     if (!Number.isFinite(top)) return top;
     return top + Math.log10(logs.reduce((total, log) => total + 10 ** (log - top), 0) || 1);
   };
-  // Flattened before this, so a chain of `+` is one sum of k parts rather
-  // than k-1 nested ones.
-  const sumOf = (parts: Expansion[]): Expansion => ({
-    terms: parts.reduce((total, part) => total + part.terms, 0),
-    degrees: parts.reduce(
-      (acc, part) => combine(acc, part.degrees, Math.max),
-      new Map<string, number>()
-    ),
-    digits: log10Sum(parts.map((part) => part.digits)),
-  });
-  const addends = (node: CostNode): CostNode[] =>
-    node.kind === 'sum' ? [...addends(node.left), ...addends(node.right)] : [node];
   const raise = (base: Expansion, m: number): Expansion => {
     if (m === 0) return constant(0);
     const terms = base.terms <= 1 ? 1 : multinomialTerms(m, base.terms);
-    const degrees = new Map([...base.degrees].map(([key, degree]) => [key, degree * m]));
-    return { terms, degrees, digits: m * base.digits };
+    for (const [key, degree] of base.degrees) base.degrees.set(key, degree * m);
+    return { terms, degrees: base.degrees, digits: base.digits === 0 ? 0 : m * base.digits };
   };
-  // An opaque term is keyed by its text, so `sin(x)` twice is one symbol.
-  const source = (node: CostNode): string => text.slice(node.from, node.to);
+  const power = (node: CostNode, baseNode: CostNode, exponentNode: CostNode): Expansion => {
+    const base = expand(baseNode);
+    expand(exponentNode);
+    const read = readExponent(exponentNode);
+    if (read.kind === 'unexpanded') return atom(text.slice(node.from, node.to));
+    if (read.kind === 'unreadable') {
+      if (base.terms <= 1) return atom(text.slice(node.from, node.to));
+      const unbounded = Number.POSITIVE_INFINITY;
+      return record(node, { terms: unbounded, degrees: base.degrees, digits: unbounded }, true);
+    }
+    // A decimal base is a float to Giac, as in problemHeight: not raised.
+    if (isConstant(baseNode) && hasDecimal(baseNode)) return base;
+    return record(node, raise(base, read.n), true);
+  };
   function expand(node: CostNode): Expansion {
     switch (node.kind) {
       case 'number':
-        return record(node, constant(literalHeight(node.text, node.value)));
+        return constant(literalHeight(node.text, node.value));
       case 'name':
         return atom(node.text);
       case 'empty':
         return constant(0);
-      case 'deep':
-        return constant(0);
       case 'negate':
+      case 'reciprocal':
         return expand(node.operand);
-      case 'sum':
-        return record(node, sumOf(addends(node).map(expand)));
-      case 'group':
-        return record(node, sumOf(node.items.map(expand)));
-      case 'product': {
-        const left = expand(node.left);
-        const right = expand(node.right);
+      case 'sum': {
+        const parts = node.items.map(expand);
+        const degrees = new Map<string, number>();
+        for (const part of parts) merge(degrees, part.degrees, Math.max);
         return record(
           node,
           {
-            terms: left.terms * right.terms,
-            degrees: combine(left.degrees, right.degrees, (x, y) => x + y),
-            digits: left.digits + right.digits,
+            terms: parts.reduce((total, part) => total + part.terms, 0),
+            degrees,
+            digits: log10Sum(parts.map((part) => part.digits)),
           },
-          true
+          false
         );
       }
-      case 'power': {
-        const base = expand(node.base);
-        expand(node.exponent);
-        const n = integerValue(node.exponent);
-        if (n === undefined) return atom(source(node));
-        return record(node, raise(base, Math.abs(n)), true);
+      case 'product': {
+        const product: Expansion = { terms: 1, degrees: new Map(), digits: 0 };
+        for (const item of node.items) {
+          const part = expand(item);
+          product.terms *= part.terms;
+          product.digits += part.digits;
+          merge(product.degrees, part.degrees, (x, y) => x + y);
+        }
+        return record(node, product, true);
       }
+      case 'power':
+        return power(node, node.base, node.exponent);
       case 'factorial': {
-        const n = integerValue(node.operand);
+        const value = constantValue(node.operand);
         expand(node.operand);
-        return n !== undefined && n >= 0
-          ? record(node, constant(factorialLog10(n)))
-          : atom(source(node));
+        return value !== undefined && Number.isFinite(value) && value >= 0
+          ? constant(factorialLog10(Math.ceil(value)))
+          : atom(text.slice(node.from, node.to));
       }
-      case 'call':
+      case 'call': {
+        const [base, exponent] = node.args;
+        if (node.name === 'pow' && node.args.length === 2 && base && exponent) {
+          return power(node, base, exponent);
+        }
         for (const arg of node.args) expand(arg);
-        return atom(source(node));
+        // An opaque term is keyed by its text, so `sin(x)` twice is one symbol.
+        return atom(text.slice(node.from, node.to));
+      }
     }
   }
   expand(root);
@@ -559,15 +784,20 @@ function overExpansion(
  * with its conditions folded in, or a system's right-hand sides and
  * conditions — and the phrase continues "cannot solve this … — it ".
  *
- * Runs after every size bound, so a problem those refuse keeps their wording,
- * and reads height before expansion for the same reason: a large literal is a
- * size, and naming it as an expansion would point the caller at the wrong fix.
+ * Callers run it after every size bound, so a problem those refuse keeps their
+ * wording, and it reads height before expansion for the same reason: a large
+ * literal is a size, and naming it as an expansion would point the caller at
+ * the wrong fix.
  */
 export function odeCostError(text: string): string | undefined {
   const normalised = unicodeToAscii(text);
-  const { root, tooDeep } = parseCost(costTokens(normalised));
-  if (tooDeep)
-    return `is nested more than ${MAX_COST_DEPTH} deep, which this tool cannot bound — remove redundant brackets or split the expression`;
+  const { root, tooDeep } = parseCost(foldPrimes(tokenizeMagnitude(normalised)));
+  if (tooDeep) {
+    return (
+      `is nested more than ${MAX_COST_DEPTH} deep, which this tool cannot bound — ` +
+      'remove redundant brackets or split the expression'
+    );
+  }
   const quoted = (span: Span | undefined): string =>
     span === undefined ? '' : ` (${excerpt(normalised.slice(span.from, span.to), 40)})`;
   const height = problemHeight(root);

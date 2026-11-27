@@ -4,7 +4,13 @@ import { evalWithLatex } from '../src/server/tools/giac-eval.js';
 import type { VerificationResult } from '../src/server/tools/self-verify.js';
 import { algebraHandler } from '../src/server/tools/algebra.js';
 import { calculusHandler } from '../src/server/tools/calculus.js';
-import { solveEquationHandler, solveSystemHandler, parseSolutions, parseTuple, parseTuples } from '../src/server/tools/solve.js';
+import {
+  solveEquationHandler,
+  solveSystemHandler,
+  parseSolutions,
+  parseTuple,
+  parseTuples,
+} from '../src/server/tools/solve.js';
 import { computeHandler } from '../src/server/tools/compute/index.js';
 import { allText } from './helpers/all-text.js';
 
@@ -122,7 +128,10 @@ describe('solve parse helpers', () => {
   });
   it('parseTuples handles a single tuple and a set of tuples', () => {
     expect(parseTuples('(2, 1)')).toEqual([['2', '1']]);
-    expect(parseTuples('{(2, 4), (-2, 4)}')).toEqual([['2', '4'], ['-2', '4']]);
+    expect(parseTuples('{(2, 4), (-2, 4)}')).toEqual([
+      ['2', '4'],
+      ['-2', '4'],
+    ]);
     expect(parseTuples('{}')).toEqual([]);
   });
 });

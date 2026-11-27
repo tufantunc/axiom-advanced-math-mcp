@@ -237,4 +237,3 @@ describe('giacNumber — the Giac reply boundary', () => {
     }
   });
 });
-

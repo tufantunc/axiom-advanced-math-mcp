@@ -73,8 +73,6 @@ describe('self-verification of superscript input', () => {
     const system = await verifySystem(['x²+y=3', 'x-y=-1'], ['x', 'y'], ['1', '2']);
     expect(system.verified).toBe(true);
     expect(system.detail).toBe('2/2 equations satisfied');
-    expect((await verifySystem(['x²+y=3', 'x-y=-1'], ['x', 'y'], ['2', '3'])).verified).toBe(
-      false
-    );
+    expect((await verifySystem(['x²+y=3', 'x-y=-1'], ['x', 'y'], ['2', '3'])).verified).toBe(false);
   });
 });

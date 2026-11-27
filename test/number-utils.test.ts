@@ -72,23 +72,29 @@ describe('handlers refuse non-finite numbers before analyzeNumberCore', () => {
   // guards, these shipped analyzeNumberCore's degenerate report (and
   // ifactor's raw GIAC_ERROR) at isError:false. The pins drive the handlers,
   // which is where the refusal now lives.
-  it.each(['isprime', 'euler'])('number_theory %s refuses NaN (isprime(x), euler(n))', async (operation) => {
-    const { numberTheoryHandler } = await import('../src/server/tools/number-theory.js');
-    // 3.5 is no integer; 1e21 is one, but no longer the integer the caller
-    // meant, and `String(1e21)` is `1e+21`, which BigInt refused with a raw error.
-    for (const number of [Number.NaN, 3.5, 1e21]) {
-      const r = await numberTheoryHandler({ operation, number });
-      expect(r.isError).toBe(true);
-      expect(r.content[0].text).toContain('finite integer');
+  it.each(['isprime', 'euler'])(
+    'number_theory %s refuses NaN (isprime(x), euler(n))',
+    async (operation) => {
+      const { numberTheoryHandler } = await import('../src/server/tools/number-theory.js');
+      // 3.5 is no integer; 1e21 is one, but no longer the integer the caller
+      // meant, and `String(1e21)` is `1e+21`, which BigInt refused with a raw error.
+      for (const number of [Number.NaN, 3.5, 1e21]) {
+        const r = await numberTheoryHandler({ operation, number });
+        expect(r.isError).toBe(true);
+        expect(r.content[0].text).toContain('finite integer');
+      }
     }
-  });
+  );
 
-  it.each(['isprime', 'euler'])('number_theory %s names the missing argument', async (operation) => {
-    const { numberTheoryHandler } = await import('../src/server/tools/number-theory.js');
-    const r = await numberTheoryHandler({ operation });
-    expect(r.isError).toBe(true);
-    expect(r.content[0].text).toContain(`'number' is required for ${operation}`);
-  });
+  it.each(['isprime', 'euler'])(
+    'number_theory %s names the missing argument',
+    async (operation) => {
+      const { numberTheoryHandler } = await import('../src/server/tools/number-theory.js');
+      const r = await numberTheoryHandler({ operation });
+      expect(r.isError).toBe(true);
+      expect(r.content[0].text).toContain(`'number' is required for ${operation}`);
+    }
+  );
 
   it('number_theory prime_factorize refuses NaN (ifactor(foo))', async () => {
     const { numberTheoryHandler } = await import('../src/server/tools/number-theory.js');

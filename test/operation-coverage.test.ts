@@ -238,7 +238,9 @@ function declaredOperations(): string[] {
     // moved into the bounded worker) and numerical-methods with MethodRunner
     // values (decomposed out of a switch for Sonar). Same shape, different
     // value types — the keys are the operations either way.
-    for (const record of source.matchAll(/Record<string, (?:TaskName|MethodRunner)> = \{([^}]*)\}/g)) {
+    for (const record of source.matchAll(
+      /Record<string, (?:TaskName|MethodRunner)> = \{([^}]*)\}/g
+    )) {
       for (const m of record[1].matchAll(/^\s*([a-z][a-z0-9_]*):/gm)) names.add(m[1]);
     }
   }

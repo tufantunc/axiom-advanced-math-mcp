@@ -1,8 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  createGiacHealthProbe,
-  HEALTH_PROBE_TIMEOUT_MS,
-} from '../src/server/giac/health-probe.js';
+import { createGiacHealthProbe, HEALTH_PROBE_TIMEOUT_MS } from '../src/server/giac/health-probe.js';
 
 const silent = () => {};
 

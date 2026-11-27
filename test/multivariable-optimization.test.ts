@@ -69,7 +69,9 @@ describe('multivariable optimization', () => {
           operation: op,
           expression: 'x^2+y^2',
           variables: ['x', 'y'],
-          ...(op === 'tangent_plane' || op === 'directional_derivative' ? { point: ['1', '1'] } : {}),
+          ...(op === 'tangent_plane' || op === 'directional_derivative'
+            ? { point: ['1', '1'] }
+            : {}),
           ...(op === 'directional_derivative' ? { direction: ['1', '0'] } : {}),
           ...(op === 'lagrange' ? { constraint: 'x+y' } : {}),
         });

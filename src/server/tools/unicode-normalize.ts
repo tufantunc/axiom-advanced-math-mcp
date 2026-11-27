@@ -552,6 +552,11 @@ export function unicodeToAscii(s: string): string {
       // `sqrtpi^2`, the same defect the `√` rules were written to fix, for the one
       // operand written as a glyph rather than as ASCII.
       .replaceAll('π', 'pi')
+      // The typeset minus (U+2212), which Giac reads as `-`. Unmapped, every
+      // guard that reads operators saw a separator where the engine saw a
+      // subtraction, and the initial-condition character check refused
+      // `y(0)=−1`, which main answered.
+      .replaceAll('−', '-')
       .replaceAll('×', '*')
       .replaceAll('·', '*')
       .replaceAll('÷', '/')

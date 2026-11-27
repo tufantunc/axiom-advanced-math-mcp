@@ -11,26 +11,42 @@ const text = (r: { content: { text: string }[] }) => r.content.map((c) => c.text
 
 describe('multivariable operators', () => {
   it('gradient of x^2+y^2 is [2*x, 2*y]', async () => {
-    const r = await operatorHandler({ operation: 'gradient', expression: 'x^2+y^2', variables: ['x', 'y'] });
+    const r = await operatorHandler({
+      operation: 'gradient',
+      expression: 'x^2+y^2',
+      variables: ['x', 'y'],
+    });
     expect(r.isError).toBe(false);
     expect(text(r).replace(/\s/g, '')).toContain('2*x');
     expect(text(r).replace(/\s/g, '')).toContain('2*y');
   });
 
   it('curl of [y,-x,0] is [0,0,-2]', async () => {
-    const r = await operatorHandler({ operation: 'curl', functions: ['y', '-x', '0'], variables: ['x', 'y', 'z'] });
+    const r = await operatorHandler({
+      operation: 'curl',
+      functions: ['y', '-x', '0'],
+      variables: ['x', 'y', 'z'],
+    });
     expect(r.isError).toBe(false);
     expect(text(r)).toContain('-2');
   });
 
   it('divergence of [x,y,z] is 3', async () => {
-    const r = await operatorHandler({ operation: 'divergence', functions: ['x', 'y', 'z'], variables: ['x', 'y', 'z'] });
+    const r = await operatorHandler({
+      operation: 'divergence',
+      functions: ['x', 'y', 'z'],
+      variables: ['x', 'y', 'z'],
+    });
     expect(r.isError).toBe(false);
     expect(text(r)).toContain('3');
   });
 
   it('mixed partial of x^2*y^3 wrt x,y is 6*x*y^2', async () => {
-    const r = await operatorHandler({ operation: 'partial', expression: 'x^2*y^3', variables: ['x', 'y'] });
+    const r = await operatorHandler({
+      operation: 'partial',
+      expression: 'x^2*y^3',
+      variables: ['x', 'y'],
+    });
     expect(r.isError).toBe(false);
     expect(text(r).replace(/\s/g, '')).toContain('6*x*y^2');
   });
@@ -41,7 +57,11 @@ describe('multivariable operators', () => {
   });
 
   it('hessian of x^2+y^2 is [[2,0],[0,2]]', async () => {
-    const r = await operatorHandler({ operation: 'hessian', expression: 'x^2+y^2', variables: ['x', 'y'] });
+    const r = await operatorHandler({
+      operation: 'hessian',
+      expression: 'x^2+y^2',
+      variables: ['x', 'y'],
+    });
     expect(r.isError).toBe(false);
     expect(text(r).replace(/\s/g, '')).toContain('[[2,0],[0,2]]');
   });
@@ -52,7 +72,11 @@ describe('multivariable operators', () => {
   });
 
   it('jacobian of [x*y, x+y] wrt [x,y] is [[y,x],[1,1]]', async () => {
-    const r = await operatorHandler({ operation: 'jacobian', functions: ['x*y', 'x+y'], variables: ['x', 'y'] });
+    const r = await operatorHandler({
+      operation: 'jacobian',
+      functions: ['x*y', 'x+y'],
+      variables: ['x', 'y'],
+    });
     expect(r.isError).toBe(false);
     expect(text(r).replace(/\s/g, '')).toContain('[[y,x],[1,1]]');
   });

@@ -84,7 +84,7 @@ describe('single-equation magnitude', () => {
     ["desolve(y'=y*2^20, x, y)", 'c_0*exp(1048576*x)'],
     ["desolve(y'=y*10^90, x, y)", `c_0*exp(1${'0'.repeat(90)}*x)`],
     // An equation with the derivative on the right is the equation, not a condition.
-    ['desolve(sin(x)=y\'\'+y, x, y)', 'c_0*cos(x)+c_1*sin(x)+(-2*x*cos(x)+sin(x))/4'],
+    ["desolve(sin(x)=y''+y, x, y)", 'c_0*cos(x)+c_1*sin(x)+(-2*x*cos(x)+sin(x))/4'],
     ["y''+y=0", 'c_0*cos(x)+c_1*sin(x)'],
     ["desolve(y''+y=sin(x), y(0)=0, y'(0)=1, x, y)", '5/4*sin(x)+(-2*x*cos(x)+sin(x))/4'],
   ])('%s is still solved', async (problem, expected) => {
@@ -98,7 +98,10 @@ describe('single-equation magnitude', () => {
   // application, and a system keeps its own.
   it.each([
     ["desolve(y'=y, y(0)=50000!, x, y)", 'it gives an initial condition of implausible magnitude'],
-    ["desolve([y'=y, y(0)=50000!], x, y)", 'it gives an initial condition of implausible magnitude'],
+    [
+      "desolve([y'=y, y(0)=50000!], x, y)",
+      'it gives an initial condition of implausible magnitude',
+    ],
     [
       `desolve([y'=y, 1*y(0)=${Array(150).fill('9').join('/')}], x, y)`,
       'it gives an initial condition of 306 characters, above the 280',
@@ -137,11 +140,7 @@ describe('equation and condition members', () => {
     // A derivative AT a point is a condition, whatever surrounds it.
     ["[y'=y, 2*y(0)=1]", ['2*y(0)=1'], ['y']],
     ["[y'=y, y(0)+y'(0)=1]", ["y(0)+y'(0)=1"], ['y']],
-    [
-      '[diff(y(x),x,2)=-y, y(0)=1, diff(y(x),x)(0)=0]',
-      ['y(0)=1', 'diff(y(x),x)(0)=0'],
-      ['-y'],
-    ],
+    ['[diff(y(x),x,2)=-y, y(0)=1, diff(y(x),x)(0)=0]', ['y(0)=1', 'diff(y(x),x)(0)=0'], ['-y']],
     ["y''(0)=1", ["y''(0)=1"], []],
     // One not at a point is the equation, on either side and in any notation.
     ["sin(x)=y''+y", [], ["sin(x)=y''+y"]],

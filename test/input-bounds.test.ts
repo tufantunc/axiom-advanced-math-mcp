@@ -7,6 +7,7 @@ import { numericalMethodsHandler } from '../src/server/tools/numerical-methods.j
 import { parseOdeSystem, validateSystemShape } from '../src/server/tools/ode-system-shape.js';
 import { conditionBoundError } from '../src/server/tools/ode-condition-bounds.js';
 import { giacEngine } from '../src/server/giac/index.js';
+import { escapeForRegExp } from '../src/server/tools/output-cleanup.js';
 import { createJsComputeHost } from '../src/server/js-compute/index.js';
 import { probabilityCalcHandler } from '../src/server/tools/probability-calc.js';
 import { plotToSvg } from '../src/server/tools/plot/render.js';
@@ -1819,18 +1820,21 @@ describe('a condition is bounded by what it denotes, not by one operator at a ti
  * and verified inside the budget.
  */
 describe("an ODE problem's cost is bounded before the engine sees it", () => {
-  const VICTIM = "desolve(y'=2*y, y(0)=3, x, y)";
+  // A different victim every time: the evaluation cache would otherwise
+  // answer every victim after the first without the worker.
+  let victims = 0;
   const refusedQuickly = async (problem: string, reason: RegExp) => {
+    victims += 1;
     const started = Date.now();
     const [attacker, victim] = await Promise.all([
       computeHandler({ problem }),
-      computeHandler({ problem: VICTIM }),
+      computeHandler({ problem: `desolve(y'=2*y, y(0)=${victims + 2}, x, y)` }),
     ]);
     expect(attacker.isError, text(attacker)).toBe(true);
     expect(text(attacker)).toMatch(reason);
     expect(text(attacker)).not.toMatch(/timed out|worker exited|RuntimeError|memory access/);
     expect(Date.now() - started).toBeLessThan(2_000);
-    expect(text(victim)).toMatch(/^Result: 3\*exp\(2\*x\)$/m);
+    expect(text(victim)).toMatch(new RegExp(`^Result: ${victims + 2}\\*exp\\(2\\*x\\)$`, 'm'));
   };
 
   // Conditions: a call is a cost the size bounds cannot see. ifactor(2^257-1)
@@ -1841,16 +1845,26 @@ describe("an ODE problem's cost is bounded before the engine sees it", () => {
     ["desolve(y'=y, y(0)=nextprime(10^900), x, y)", 'nextprime'],
     ["desolve([y'=z, z'=-y, y(0)=ifactor(2^257-1), z(0)=0], x)", 'ifactor'],
     ["desolve(y'=y, y(0)=comb(100000,50000), x, y)", 'comb'],
-    // The SUBJECT is caller text too: main folded this as a condition and
-    // burned 10s on it.
-    ["desolve(y'=y, ifactor(2^257-1)=1, x, y)", 'ifactor'],
-    ["[y'=y, nextprime(10^900)=1]", 'nextprime'],
     // A call with no name in front of its bracket.
     ["desolve(y'=y, y(0)=(ifactor)(2^257-1), x, y)", 'ifactor'],
   ])('refuses %s for calling %s', async (problem, name) => {
     await refusedQuickly(
       problem,
       new RegExp(`calls ${name} — an initial condition is a number, so compute ${name}`)
+    );
+  });
+
+  // The SUBJECT is caller text too: main folded `ifactor(2^257-1)=1` in as a
+  // condition and burned 10s on it. Worded as the subject it is, so a typo
+  // in the function's name is not sent off to compute a call.
+  it.each([
+    ["desolve(y'=y, ifactor(2^257-1)=1, x, y)", 'ifactor'],
+    ["[y'=y, nextprime(10^900)=1]", 'nextprime'],
+    ["desolve(y'=y, z(0)=1, x, y)", 'z'],
+  ])('refuses %s as a condition on %s', async (problem, name) => {
+    await refusedQuickly(
+      problem,
+      new RegExp(`gives a condition on ${name}\\(…\\), but the function solved for is y`)
     );
   });
 
@@ -1895,6 +1909,11 @@ describe("an ODE problem's cost is bounded before the engine sees it", () => {
     ["desolve([y'=(10^400+1)*z, z'=-y], x)", /this system — it has numbers that come to 400/],
     ["desolve([y'=(10^160+1)*z, z'=-(10^160+3)*y], x)", /321 digits together/],
     ["desolve([y'=z, z'=-y, y(0)=sqrt(3^1000+2), z(0)=0], x)", /478 digits together/],
+    // A hexadecimal literal is the same 410-digit integer: it held the worker
+    // 10s on this branch's first version, which read `0x…` as `0` and a name.
+    // The shared tokenizer now reads it as one number, so the size bound
+    // refuses it first.
+    [`desolve(y''+(0x${'F'.repeat(340)}+2)*y=0, x, y)`, /too large to count the digits of/],
   ])('refuses %s for its height', async (problem, reason) => {
     await refusedQuickly(problem, reason);
   });
@@ -1908,11 +1927,12 @@ describe("an ODE problem's cost is bounded before the engine sees it", () => {
     ["desolve(y'=(x+a+1)^40*y, x, y)", '(x+a+1)^40'],
     ["desolve(y''+y=(x+1)^1500, x, y)", '(x+1)^1500'],
     ["desolve([y'=z+(x+a+1)^30, z'=-y], x)", '(x+a+1)^30'],
+    // An exponent written as a call is evaluated by Giac, and was by this
+    // branch's first version too late: each of these timed out.
+    ["desolve(y'=pow(x+1,200)*y, x, y)", 'pow(x+1,200)'],
+    ["desolve(y'=(x+1)^abs(200)*y, x, y)", '(x+1)^abs(200)'],
   ])('refuses %s for expanding %s', async (problem, culprit) => {
-    await refusedQuickly(
-      problem,
-      new RegExp(`expands too far \\(${culprit.replace(/[()^+]/g, '\\$&')}\\)`)
-    );
+    await refusedQuickly(problem, new RegExp(`expands too far \\(${escapeForRegExp(culprit)}\\)`));
   });
 
   // The admitted edges, answered and verified inside the budget.
@@ -1924,6 +1944,16 @@ describe("an ODE problem's cost is bounded before the engine sees it", () => {
     // The height edge: the discriminant is 10^300, under the cliff.
     ["desolve(y''+(10^150+1)*y'+y=0, x, y)", /^Result: c_0\*exp\(/m],
     ["desolve(y'=y, y(0)=sqrt(2), x, y)", /^Result: √2\*exp\(x\)$/m],
+    // The typeset minus, which the condition check refused before
+    // unicodeToAscii learned it; main answered both.
+    ["desolve(y'=y, y(0)=\u22121, x, y)", /^Result: -exp\(x\)$/m],
+    ["desolve([y'=z, z'=-y], y(0)=\u22121, z(0)=0, x)", /^Result: \[\[-cos\(x\),sin\(x\)\]\]$/m],
+    // A float raised to a power is not an exact number to root: compound
+    // growth, which main answered.
+    ["desolve(y'=0.05*y*(1+0.07/12)^360, x, y)", /^Result: c_0\*exp\(/m],
+    // The verbless Leibniz route names its own function, and its condition is
+    // on that function, not on a call.
+    ['dz/dt=z, z(0)=1', /^Result: exp\(t\)$/m],
   ])('still answers %s inside the budget', async (problem, expected) => {
     const started = Date.now();
     const r = await computeHandler({ problem });
