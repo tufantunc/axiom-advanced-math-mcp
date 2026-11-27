@@ -1,6 +1,6 @@
 import { stripEnclosingBrackets } from './compute/arg-parsing.js';
 import { GIAC_NUMBER, excerpt, nestingDepth } from './output-cleanup.js';
-import { unicodeToAscii } from './unicode-normalize.js';
+import { POWERED_FUNCTIONS, unicodeToAscii } from './unicode-normalize.js';
 
 /**
  * Every bound on an initial condition — its length, its nesting depth, and the
@@ -170,7 +170,7 @@ const MAX_DENOTED_DIGITS = 3_000;
  * would add a fourth module to the import closure this file's header reasons
  * about. Recorded so the next reader does not re-derive the comparison.
  */
-function factorialLog10(n: number): number {
+export function factorialLog10(n: number): number {
   if (n < 2) return 0;
   const ln = n * Math.log(n) - n + 0.5 * Math.log(2 * Math.PI * n) + 1 / (12 * n);
   return ln / Math.LN10;
@@ -224,8 +224,13 @@ function factorialDigits(n: number): number {
  *     counts: it is not load-bearing against a trap, AND it turns away inputs
  *     the engine handles. Kept as a parity bound so the two paths cannot drift
  *     into different rules, with that cost stated rather than implied away.
+ *
+ * A fourth axis, COST, is conditionCallError's: what a condition calls. It needs
+ * the problem's `unknowns`, because a condition's own subject (`y(0)`) is a call
+ * as far as the text can tell, and only the caller knows which name is the
+ * function being solved for.
  */
-export function conditionBoundError(raw: string): string | undefined {
+export function conditionBoundError(raw: string, unknowns: readonly string[]): string | undefined {
   // ONE string for all three bounds. They measured different ones for a while:
   // magnitude read the normalised text (it has to — `unicodeToAscii` runs
   // downstream at giac-eval.ts, so the guard would otherwise be reading a
@@ -268,6 +273,133 @@ export function conditionBoundError(raw: string): string | undefined {
       `gives an initial condition of implausible magnitude (${oversized}) — ` +
       'initial conditions are ordinary numbers'
     );
+  }
+  // After magnitude, so a condition that is both too large and calls something
+  // keeps the magnitude wording the existing rows pin (`max(1000!^12,1)`).
+  return conditionCallError(condition, unknowns);
+}
+
+/**
+ * The derivative operator's spellings: Giac's `diff` and its aliases `derive`
+ * and `deriver`. ode-system-shape.ts builds DERIVATIVE_CALL from this list, so
+ * the shape reader and the condition call check below cannot disagree about
+ * which names are the derivative.
+ */
+export const DERIVATIVE_NAMES = ['diff', 'derive', 'deriver'] as const;
+
+/**
+ * What an initial condition may call besides the unknowns and the derivative:
+ * Giac's elementary one-argument functions, and the three spellings
+ * readMagnitude already bounds (`factorial`, `Gamma`, `pow`).
+ *
+ * An ALLOWLIST, because what an initial condition calls is a cost the size
+ * bounds cannot see. Measured on main, one value per fresh worker:
+ * `desolve(y'=y, y(0)=ifactor(2^257-1), x, y)` is 21 characters of condition
+ * denoting a 78-digit number, and it burns the full 10s budget; the same
+ * condition in a system, `[y'=z, z'=-y, y(0)=ifactor(2^257-1), z(0)=0]`, timed
+ * out in the conditions scan and the replacement worker then failed to start
+ * for the next caller. `nextprime(10^900)` holds the worker 11s and then
+ * answers. Neither argument is large, so no magnitude rule refuses them, and a
+ * DENYLIST of the number-theory names is this file's most-repeated defect in
+ * another form: `comb`, `perm`, `ithprime`, `sum`, `fib` and every name not yet
+ * thought of would each have been the next escape.
+ *
+ * Every name here was measured cheap on a 78-digit and a 2,863-digit argument:
+ * `sqrt`, `ln`, `exp`, `sin`, `atan` and the rest answer in under 30ms in both
+ * `exact([y(0)=…,z(0)=0])` and the single-equation fold. What is NOT cheap is
+ * an exact ROOT of a large integer — `sqrt(3^1000+2)` times out in the fold —
+ * and that is a size the whole problem's height bound in ode-cost-bounds.ts
+ * refuses, because the solver forms such roots itself from bare numbers.
+ *
+ * The cost is stated: a free user function is refused too. `y(0)=g(2)` and
+ * `y(0)=myfactorial(50000)` came back symbolic and cheap, and are now refused,
+ * because the text cannot tell `g` from `ifactor` and a condition is a number.
+ */
+const CONDITION_FUNCTIONS: ReadonlySet<string> = new Set([
+  ...POWERED_FUNCTIONS,
+  'factorial',
+  'pow',
+  'round',
+]);
+
+/**
+ * The characters a number can be written with — digits, names for constants
+ * and functions, the arithmetic operators, brackets, the derivative prime and
+ * the `=` that joins a condition. Anything else is an operator a number does
+ * not need and a cost the reader cannot see: Giac's `$` builds a sequence
+ * (`(2^9000+k)$(k=1..10000)` is ten thousand large numbers and no call), `..`
+ * is a range, `:=` assigns, `@` composes, and a quoted string can name a
+ * function. `**` never reaches here; unicodeToAscii rewrites it to `^`.
+ */
+const NUMBER_CHARACTER = /[\w\s.'+\-*/^!()[\],=]/;
+
+/**
+ * Why an initial condition's CALLS are too costly to evaluate, or undefined.
+ *
+ * Read off the shared tokens, by what precedes each `(` or `[`: an operator,
+ * a number or nothing is grouping; a name is a call, admitted when it is an
+ * unknown, a derivative spelling or in CONDITION_FUNCTIONS; a prime is the
+ * derivative of the name before it (`y'(0)`); and a closing bracket applies
+ * the group it closes, so `diff(y(x),x)(0)` is judged by `diff` and
+ * `(ifactor)(N)` — a call with no name in front of its bracket — by the names
+ * inside the group.
+ */
+function conditionCallError(condition: string, unknowns: readonly string[]): string | undefined {
+  const stray = [...condition].find((character) => !NUMBER_CHARACTER.test(character));
+  if (stray !== undefined)
+    return `contains "${stray}", which a number is not written with — give the value itself, as in y(0)=1`;
+  if (condition.includes('..'))
+    return 'contains a range "..", which a number is not written with — give the value itself, as in y(0)=1';
+  const admits = (name: string): boolean =>
+    CONDITION_FUNCTIONS.has(name) ||
+    (DERIVATIVE_NAMES as readonly string[]).includes(name) ||
+    unknowns.includes(name);
+  const calls = (name: string): string =>
+    `calls ${excerpt(name, 30)} — an initial condition is a number, so compute ` +
+    `${excerpt(name, 30)}(…) on its own first and give the value it returns`;
+  const tokens = tokenizeMagnitude(condition);
+  for (const [i, token] of tokens.entries()) {
+    if (token.kind !== 'op' || (token.text !== '(' && token.text !== '[')) continue;
+    const before = tokens[i - 1];
+    if (before === undefined || before.kind === 'number') continue;
+    if (before.kind === 'name') {
+      if (!admits(before.text)) return calls(before.text);
+      continue;
+    }
+    if (before.text === "'") {
+      let at = i - 1;
+      while (tokens[at]?.text === "'") at -= 1;
+      const differentiated = tokens[at];
+      if (differentiated?.kind === 'name' && admits(differentiated.text)) continue;
+      return calls(`${differentiated?.text ?? ''}'`);
+    }
+    if (before.text === ')' || before.text === ']') {
+      const opener = before.text === ')' ? '(' : '[';
+      let depth = 0;
+      let at = i - 1;
+      for (; at >= 0; at -= 1) {
+        if (tokens[at]?.text === before.text) depth += 1;
+        else if (tokens[at]?.text === opener && --depth === 0) break;
+      }
+      // Over any primes, so `y'(x)(0)` is judged by `y` — the shape reader
+      // owns what applying a derivative to a point means.
+      let named = at - 1;
+      while (tokens[named]?.text === "'") named -= 1;
+      const callee = tokens[named];
+      if (callee?.kind === 'name') {
+        if (!admits(callee.text)) return calls(callee.text);
+        continue;
+      }
+      const group = tokens.slice(Math.max(at, 0), i - 1);
+      const foreign = group.find((t) => t.kind === 'name' && !admits(t.text));
+      if (foreign !== undefined) return calls(foreign.text);
+      if (opener === '[')
+        return 'applies a list as a function — give the value itself, as in y(0)=1';
+      continue;
+    }
+    // `+ - * / ^ ( [ ,` open a group, and so do `=` (a value starting with a
+    // bracket) and `!` (`5!(2)` multiplies). Nothing else reaches here: the
+    // character check above leaves only these and the prime.
   }
   return undefined;
 }
@@ -353,7 +485,7 @@ type Magnitude =
 const UNREADABLE: Magnitude = { kind: 'unreadable' };
 const SYMBOLIC: Magnitude = { kind: 'symbolic' };
 
-type MagnitudeToken = {
+export type MagnitudeToken = {
   kind: 'number' | 'name' | 'op' | 'separator';
   text: string;
   at: number;
@@ -376,7 +508,7 @@ const MAGNITUDE_NUMBER = new RegExp(`^${GIAC_NUMBER}`);
  * decimal form, so `100.!^200` read as unmodelled where `100!^200` was refused —
  * one character apart, opposite verdicts.
  */
-function tokenizeMagnitude(text: string): MagnitudeToken[] {
+export function tokenizeMagnitude(text: string): MagnitudeToken[] {
   const tokens: MagnitudeToken[] = [];
   let at = 0;
   while (at < text.length) {

@@ -2,6 +2,7 @@ import { stripEnclosingBrackets } from './compute/arg-parsing.js';
 import { escapeForRegExp, excerpt, splitTopLevel } from './output-cleanup.js';
 import { unicodeToAscii } from './unicode-normalize.js';
 import {
+  DERIVATIVE_NAMES,
   conditionBoundError,
   conditionsTogetherError,
   implausibleMagnitude,
@@ -85,7 +86,7 @@ type Member =
  * were folded in as conditions instead and reported as an unsatisfiable
  * initial-value problem.
  */
-const DERIVATIVE_CALL = /^(diff|derive|deriver)\s*\(/;
+const DERIVATIVE_CALL = new RegExp(String.raw`^(${DERIVATIVE_NAMES.join('|')})\s*\(`);
 
 /**
  * Whether the whole string is one balanced derivative call.
@@ -1094,7 +1095,10 @@ export function validateSystemShape(
     // measuring them: MAX_PROBE_CHARS and MAX_COMMAND_CHARS, both in
     // ode-system.ts, bound the probe and the finished command and run only after
     // this function has returned.
-    const unbounded = conditionBoundError(condition);
+    // The subject is admitted here because readConditions, below and before
+    // any engine call, refuses a subject that is not one of the functions and
+    // says so by name; the call check would word it as a call.
+    const unbounded = conditionBoundError(condition, [...functions, parsed[1] ?? '']);
     if (unbounded !== undefined) return { error: unbounded };
   }
 

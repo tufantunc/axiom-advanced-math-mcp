@@ -1646,9 +1646,11 @@ describe('spellings the router has to tell apart', () => {
     it('accepts an ordinary exponent in a condition', async () => {
       // Lowering the exponent bound would refuse everyday conditions with no
       // test noticing — the over-refusal direction the 0.333... rows cover for
-      // the digit rule.
+      // the digit rule. 10^150 is the largest power of ten the problem's
+      // height bound admits (ode-cost-bounds.ts); 10^1000 used to be the
+      // pinned edge, and a root of a number that size does not finish.
       const r = await computeHandler({
-        problem: "desolve([y'=z, z'=-y, y(0)=10^1000, z(0)=0], x)",
+        problem: "desolve([y'=z, z'=-y, y(0)=10^150, z(0)=0], x)",
       });
       expect(r.isError).toBe(false);
       const small = await computeHandler({

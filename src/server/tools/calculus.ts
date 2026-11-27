@@ -19,6 +19,7 @@ import {
 } from './ode-system-shape.js';
 import { translateOdeSystem } from './ode-system.js';
 import { implausibleEquationMagnitude } from './ode-condition-bounds.js';
+import { odeCostError } from './ode-cost-bounds.js';
 
 /** Giac's spelling of a limit's direction: from the right, from the left, both sides. */
 type GiacLimitDirection = '1' | '-1' | '0';
@@ -335,6 +336,14 @@ function validateSolveOde(args: Record<string, unknown>): string | null {
       'give the equation, then any conditions as y(0)=1, then the variable ' +
       "and the function, as in desolve(y'=y, y(0)=1, x, y)"
     );
+  }
+  // COST, last, so every size refusal keeps its wording. Over the folded
+  // command — the equation and every condition together — because the roots
+  // the solver takes combine them. A system is bounded the same way inside
+  // validateSystemShape, after its own size checks.
+  if (parseOdeSystem(equationText) === null) {
+    const costly = odeCostError(replaceLeibnizQuotients(String(args.equation), (q) => q.fn));
+    if (costly !== undefined) return `solve_ode cannot solve this equation — it ${costly}`;
   }
   return null;
 }

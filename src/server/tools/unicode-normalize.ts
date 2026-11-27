@@ -301,8 +301,12 @@ const MODIFIER_LETTER = /[\u02B0-\u02B8\u02E0-\u02E4\u1D2C-\u1D61\u1D78\u1D9B-\u
  * Giac's one-argument functions, whose textbook power `f^2(x)` it reads as a
  * power of the function. Measured beyond the trigonometric ones: `asec^2`,
  * `acot^2`, `log10^2`, `abs^2`, `erf^2` and `acoth^2` each answered a lambda.
+ *
+ * Exported because it is also the list of ELEMENTARY functions an initial
+ * condition may call (ode-condition-bounds.ts). A name added here is admitted
+ * there too, so it must be a function that is cheap on a number.
  */
-const POWERED_FUNCTIONS = [
+export const POWERED_FUNCTIONS = [
   'sin',
   'cos',
   'tan',

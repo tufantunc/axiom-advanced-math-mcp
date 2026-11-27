@@ -6,6 +6,7 @@ import { linearRegressionHandler } from '../src/server/tools/linear-regression.j
 import { numericalMethodsHandler } from '../src/server/tools/numerical-methods.js';
 import { parseOdeSystem, validateSystemShape } from '../src/server/tools/ode-system-shape.js';
 import { conditionBoundError } from '../src/server/tools/ode-condition-bounds.js';
+import { giacEngine } from '../src/server/giac/index.js';
 import { createJsComputeHost } from '../src/server/js-compute/index.js';
 import { probabilityCalcHandler } from '../src/server/tools/probability-calc.js';
 import { plotToSvg } from '../src/server/tools/plot/render.js';
@@ -997,9 +998,6 @@ describe("an initial condition's cost is bounded, not only its size", () => {
     // refused these until the bound learned to count them rounded up.
     ["desolve(y'=y, y(0)=1.5!, x, y)", /^Result: 1\.32934038818\*exp\(x\)$/m],
     ["desolve(y'=y, y(0)=0.5!, x, y)", /^Result: 0\.886226925453\*exp\(x\)$/m],
-    // The named spelling needs a left boundary, or any symbol ending in
-    // "factorial" is read as one: this was refused as a factorial of 50,000.
-    ["desolve(y'=y, y(0)=myfactorial(50000), x, y)", /^Result: myfactorial\(50000\)\*exp\(x\)$/m],
   ])('still answers %s', async (problem, expected) => {
     const r = await computeHandler({ problem });
     expect(r.isError, text(r)).toBe(false);
@@ -1078,18 +1076,21 @@ describe("an initial condition's cost is bounded, not only its size", () => {
     expect(text(r)).toMatch(/a factorial of 10000/);
   });
 
-  it('still answers the largest factorial the bound admits', async () => {
+  // The per-condition size bound admits the largest factorial under 3,000
+  // digits, and the whole problem's HEIGHT bound (ode-cost-bounds.ts) then
+  // refuses it: 2,998 digits is far past the 150 an exact root of the
+  // problem's numbers can stay under 10^308 with. Both halves pinned, so
+  // neither bound can drift into the other's job.
+  it('admits the largest factorial per condition, and refuses it for the problem', async () => {
+    expect(conditionBoundError('y(0)=1142!', ['y'])).toBeUndefined();
     const r = await computeHandler({ problem: "desolve(y'=y, y(0)=1142!, x, y)" });
-    expect(r.isError, text(r)).toBe(false);
-    // 1142! is 2,998 digits, just inside the 3,000. Asserting the leading digits
-    // pins that the value was computed rather than echoed.
-    expect(text(r)).toMatch(/^Result: 65818352720512045295/m);
+    expect(r.isError, text(r)).toBe(true);
+    expect(text(r)).toMatch(/numbers that come to 2998 digits together \(1142!\), above the 150/);
   });
 
   it('refuses one past the bound and admits the bound itself', async () => {
-    const inside = await computeHandler({ problem: "desolve(y'=y, y(0)=1142!, x, y)" });
     const outside = await computeHandler({ problem: "desolve(y'=y, y(0)=1143!, x, y)" });
-    expect(inside.isError, text(inside)).toBe(false);
+    expect(conditionBoundError('y(0)=1142!', ['y'])).toBeUndefined();
     expect(outside.isError, text(outside)).toBe(true);
     // 2,998 digits in, 3,001 out. The message reports the count, so the
     // boundary is visible rather than inferred.
@@ -1107,10 +1108,9 @@ describe("an initial condition's cost is bounded, not only its size", () => {
     expect(r.isError, text(r)).toBe(true);
     expect(text(r)).toMatch(/factorials denoting 28248 digits together/);
     expect(text(r)).not.toMatch(/memory access|worker exited|RuntimeError/);
-    // Each factor on its own is admitted, so this refusal cannot come from a
-    // per-argument bound.
-    const alone = await computeHandler({ problem: "desolve(y'=y, y(0)=1000!, x, y)" });
-    expect(alone.isError, text(alone)).toBe(false);
+    // Each factor on its own is admitted by the size bound, so this refusal
+    // cannot come from a per-argument bound.
+    expect(conditionBoundError('y(0)=1000!', ['y'])).toBeUndefined();
     // And the worker the composition used to kill still answers.
     const after = await computeHandler({ problem: "desolve(y'=y, y(0)=2, x, y)" });
     expect(after.isError, text(after)).toBe(false);
@@ -1233,8 +1233,7 @@ describe("an initial condition's cost is bounded, not only its size", () => {
     expect(text(r)).toMatch(/factorials denoting 26982 digits together/);
     // And one of them alone is admitted, so this cannot be the per-condition
     // bound firing.
-    const alone = await computeHandler({ problem: "desolve(y'=y, y(0)=1142!, x, y)" });
-    expect(alone.isError, text(alone)).toBe(false);
+    expect(conditionBoundError('v0(0)=1142!', ['v0'])).toBeUndefined();
   });
 
   // A verbless SYSTEM must be worded as a system. calculus.ts words every
@@ -1326,8 +1325,7 @@ describe("an initial condition's cost is bounded, not only its size", () => {
     expect(r.isError, text(r)).toBe(true);
     expect(text(r)).toMatch(/initial conditions of implausible magnitude together/);
     expect(text(r)).toMatch(/factorials denoting 29980 digits together/);
-    const alone = await computeHandler({ problem: "desolve(y'=y, y(0)=1142!, x, y)" });
-    expect(alone.isError, text(alone)).toBe(false);
+    expect(conditionBoundError('y(0)=1142!', ['y'])).toBeUndefined();
   });
 });
 
@@ -1533,10 +1531,7 @@ describe('a condition is bounded by what it denotes, not by one operator at a ti
   // The bound itself, both sides. Without this pair, `>` and `>=` are the same
   // suite.
   it('admits 3,000 denoted digits and refuses 3,001', async () => {
-    const under = await computeHandler({
-      problem: "desolve(y'=y, y(0)=10^999*10^1000*10^1000, x, y)",
-    });
-    expect(under.isError, text(under)).toBe(false);
+    expect(conditionBoundError('y(0)=10^999*10^1000*10^1000', ['y'])).toBeUndefined();
     const over = await computeHandler({
       problem: "desolve(y'=y, y(0)=10^1000*10^1000*10^1000, x, y)",
     });
@@ -1556,10 +1551,7 @@ describe('a condition is bounded by what it denotes, not by one operator at a ti
     const r = await computeHandler({ problem: `desolve(y'=y, ${conditions}, x, y)` });
     expect(r.isError, text(r)).toBe(true);
     expect(text(r)).toMatch(/values denoting 26109 digits together/);
-    const alone = await computeHandler({
-      problem: "desolve(y'=y, y(0)=10^1000*10^1000*10^900, x, y)",
-    });
-    expect(alone.isError, text(alone)).toBe(false);
+    expect(conditionBoundError('y(0)=10^1000*10^1000*10^900', ['y'])).toBeUndefined();
   });
 
   // The equation's RIGHT-HAND SIDE, which is the route with no length and no
@@ -1689,7 +1681,7 @@ describe('a condition is bounded by what it denotes, not by one operator at a ti
     // enclosing-strip removes.
     ['[!]', /a value too large to count the digits of \(!\)/],
   ])('refuses %s at a junction of the merged reading', (condition, reason) => {
-    expect(conditionBoundError(condition)).toMatch(reason);
+    expect(conditionBoundError(condition, ['y'])).toMatch(reason);
   });
 
   // A deliberate false refusal, pinned so that widening the rule is a decision
@@ -1784,7 +1776,6 @@ describe('a condition is bounded by what it denotes, not by one operator at a ti
     // lowercase `gamma` stays symbolic where `Gamma` is the factorial
     ['y(0)=gamma(5)', /^Result: gamma\(5\)\*exp\(x\)$/m],
     ['y(0)=+5!^3', /^Result: 1728000\*exp\(x\)$/m],
-    ['y(0)=10^500/10^-500', /^Result: 1[0]+\*exp\(x\)$/m],
   ])('still answers %s', async (condition, expected) => {
     const r = await computeHandler({ problem: `desolve(y'=y, ${condition}, x, y)` });
     expect(r.isError, text(r)).toBe(false);
@@ -1804,11 +1795,172 @@ describe('a condition is bounded by what it denotes, not by one operator at a ti
     expect(text(r)).toMatch(expected);
   });
 
-  // 1000! is 2,568 digits and inside the budget; raising it to the first power
-  // does not change that, and putting it under the line does not either. A
-  // bound that charged for the OPERATOR rather than the size would refuse both.
-  it.each(['y(0)=1000!^1', 'y(0)=1/1000!', 'y(0)=1000!'])('still answers %s', async (condition) => {
-    const r = await computeHandler({ problem: `desolve(y'=y, ${condition}, x, y)` });
+  // 1000! is 2,568 digits and inside the size budget; raising it to the first
+  // power does not change that, and putting it under the line does not either.
+  // A bound that charged for the OPERATOR rather than the size would refuse
+  // these. Pinned on the size bound itself, because end to end the problem's
+  // height bound refuses every one of them (see the cost rows below).
+  it.each(['y(0)=1000!^1', 'y(0)=1/1000!', 'y(0)=1000!', 'y(0)=10^500/10^-500'])(
+    'the size bound still admits %s',
+    (condition) => {
+      expect(conditionBoundError(condition, ['y'])).toBeUndefined();
+    }
+  );
+});
+
+/**
+ * What an ODE problem COSTS the shared worker, bounded before any engine call.
+ *
+ * Each refused row below burned the full 10s budget on main (or held the
+ * worker longer), one input per fresh worker; the measurements are in
+ * ode-condition-bounds.ts (calls) and ode-cost-bounds.ts (height, expansion).
+ * Asserted here: the refusal is quick, worded with what to do, and a caller
+ * sharing the worker still gets its answer. Each admitted edge is answered
+ * and verified inside the budget.
+ */
+describe("an ODE problem's cost is bounded before the engine sees it", () => {
+  const VICTIM = "desolve(y'=2*y, y(0)=3, x, y)";
+  const refusedQuickly = async (problem: string, reason: RegExp) => {
+    const started = Date.now();
+    const [attacker, victim] = await Promise.all([
+      computeHandler({ problem }),
+      computeHandler({ problem: VICTIM }),
+    ]);
+    expect(attacker.isError, text(attacker)).toBe(true);
+    expect(text(attacker)).toMatch(reason);
+    expect(text(attacker)).not.toMatch(/timed out|worker exited|RuntimeError|memory access/);
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(text(victim)).toMatch(/^Result: 3\*exp\(2\*x\)$/m);
+  };
+
+  // Conditions: a call is a cost the size bounds cannot see. ifactor(2^257-1)
+  // burned 10s on main, single and system alike — the system's replacement
+  // worker then failed to start — and nextprime(10^900) held the worker 11s.
+  it.each([
+    ["desolve(y'=y, y(0)=ifactor(2^257-1), x, y)", 'ifactor'],
+    ["desolve(y'=y, y(0)=nextprime(10^900), x, y)", 'nextprime'],
+    ["desolve([y'=z, z'=-y, y(0)=ifactor(2^257-1), z(0)=0], x)", 'ifactor'],
+    ["desolve(y'=y, y(0)=comb(100000,50000), x, y)", 'comb'],
+    // The SUBJECT is caller text too: main folded this as a condition and
+    // burned 10s on it.
+    ["desolve(y'=y, ifactor(2^257-1)=1, x, y)", 'ifactor'],
+    ["[y'=y, nextprime(10^900)=1]", 'nextprime'],
+    // A call with no name in front of its bracket.
+    ["desolve(y'=y, y(0)=(ifactor)(2^257-1), x, y)", 'ifactor'],
+  ])('refuses %s for calling %s', async (problem, name) => {
+    await refusedQuickly(
+      problem,
+      new RegExp(`calls ${name} — an initial condition is a number, so compute ${name}`)
+    );
+  });
+
+  it.each([
+    ['y(0)=ithprime(100000)', /calls ithprime/],
+    ['y(0)=g(2)', /calls g/],
+    ['y(0)=myfactorial(50000)', /calls myfactorial/],
+    ["y(0)='ifactor'(2^257-1)", /calls ifactor/],
+    ['y(ifactor(2^257-1))=1', /calls ifactor/],
+    ['y(0)=(2^900+k)$(k=1..10000)', /contains "\$"/],
+    ['y(0)=k$(k=1..10000)', /contains "\$"/],
+    ['y(0)=1..10', /contains a range/],
+    ['y(0)=sum(k,k,1,10)', /calls sum/],
+    ['y(0)=[1,2](0)', /applies a list as a function/],
+  ])('refuses the condition %s', (condition, reason) => {
+    expect(conditionBoundError(condition, ['y'])).toMatch(reason);
+  });
+
+  it.each([
+    'y(0)=sqrt(2)',
+    'y(0)=exp(1)+sin(1)',
+    'y(pi/2)=ln(3)',
+    "y'(0)=0",
+    'diff(y(x),x)(0)=1',
+    "y'(x)(0)=0",
+    'y(0)=Gamma(5)+factorial(4)+pow(2,10)+round(2.5)',
+    'y(0)=a',
+    'y(L)=0',
+  ])('admits the condition %s', (condition) => {
+    expect(conditionBoundError(condition, ['y'])).toBeUndefined();
+  });
+
+  // Height: the solver takes exact roots of the caller's numbers, and a root
+  // past 10^308 does not finish. Every one of these timed out on main and was
+  // inside the 3,000-digit size bound.
+  it.each([
+    ["desolve(y'=y, y(0)=sqrt(3^1000+2), x, y)", /478 digits together \(3\^1000\)/],
+    ["desolve(y''+(10^400+1)*y=0, x, y)", /400 digits together \(10\^400\)/],
+    ["desolve(y''+(10^160+1)*y'+y=0, x, y)", /160 digits together/],
+    ["desolve(y'=2*sqrt(y), y(0)=10^400+1, x, y)", /401 digits together/],
+    ["desolve(y'=y+1/(x^2+10^400+1), x, y)", /400 digits together/],
+    ["desolve([y'=(10^400+1)*z, z'=-y], x)", /this system — it has numbers that come to 400/],
+    ["desolve([y'=(10^160+1)*z, z'=-(10^160+3)*y], x)", /321 digits together/],
+    ["desolve([y'=z, z'=-y, y(0)=sqrt(3^1000+2), z(0)=0], x)", /478 digits together/],
+  ])('refuses %s for its height', async (problem, reason) => {
+    await refusedQuickly(problem, reason);
+  });
+
+  // Expansion: `y'=(x+1)^5000*y` burned 10s on main, as did the composed and
+  // multivariate forms at far smaller exponents.
+  it.each([
+    ["desolve(y'=(x+1)^5000*y, x, y)", '(x+1)^5000'],
+    ["y'=(x+1)^5000*y", '(x+1)^5000'],
+    ["desolve(y'=(x+1)^200*y, x, y)", '(x+1)^200'],
+    ["desolve(y'=(x+a+1)^40*y, x, y)", '(x+a+1)^40'],
+    ["desolve(y''+y=(x+1)^1500, x, y)", '(x+1)^1500'],
+    ["desolve([y'=z+(x+a+1)^30, z'=-y], x)", '(x+a+1)^30'],
+  ])('refuses %s for expanding %s', async (problem, culprit) => {
+    await refusedQuickly(
+      problem,
+      new RegExp(`expands too far \\(${culprit.replace(/[()^+]/g, '\\$&')}\\)`)
+    );
+  });
+
+  // The admitted edges, answered and verified inside the budget.
+  it.each([
+    // The largest binomial coefficient admitted: about 1.5s measured.
+    ["desolve(y'=(x+1)^97*y, x, y)", /^Result: c_0\*exp\(/m],
+    // One symbol to any power is one term: 25ms measured.
+    ["desolve(y'=x^5000*y, x, y)", /^Result: c_0\*exp\(x\^5001\/5001\)$/m],
+    // The height edge: the discriminant is 10^300, under the cliff.
+    ["desolve(y''+(10^150+1)*y'+y=0, x, y)", /^Result: c_0\*exp\(/m],
+    ["desolve(y'=y, y(0)=sqrt(2), x, y)", /^Result: √2\*exp\(x\)$/m],
+  ])('still answers %s inside the budget', async (problem, expected) => {
+    const started = Date.now();
+    const r = await computeHandler({ problem });
     expect(r.isError, text(r)).toBe(false);
+    expect(text(r)).toMatch(expected);
+    expect(text(r)).toMatch(/Verified: ✓/);
+    expect(Date.now() - started).toBeLessThan(9_000);
+  });
+
+  // The mechanism MAX_PROBLEM_HEIGHT rests on, probed on the engine itself so
+  // a Giac that stops trapping is noticed: an exact root of 1.7e308 answers
+  // at once, and of 1.8e308+1 — one step past the largest double — it does not
+  // finish. 17*10^307 is a smooth number here only in its power of ten; the
+  // radicand Giac is left with after extracting squares is what matters.
+  it('pins the root cliff the height bound is calibrated against', async () => {
+    const started = Date.now();
+    await expect(
+      giacEngine.evaluate("desolve((y'=y) and (y(0)=sqrt(17*10^307)),x,y)")
+    ).resolves.toMatch(/exp\(x\)/);
+    expect(Date.now() - started).toBeLessThan(2_000);
+    await expect(
+      giacEngine.evaluate("desolve((y'=y) and (y(0)=sqrt(18*10^307+1)),x,y)")
+    ).rejects.toThrow(/timed out/);
+    await expect(giacEngine.evaluate('2+3')).resolves.toBe('5');
+  }, 30_000);
+
+  // Item 7 of the cost work, kept as a refusal: the first-order equation is
+  // cheap — the engine answers it at once — but which equations make the
+  // solver take a root of a 1,234-digit number is the solver's business, and
+  // `y''+(2^4096+1)*y=0` is the same text one derivative away.
+  it('keeps refusing y*2^4096, which the engine alone would answer', async () => {
+    const started = Date.now();
+    await expect(giacEngine.evaluate("desolve(y'=y*2^4096,x,y)")).resolves.toMatch(/exp/);
+    expect(Date.now() - started).toBeLessThan(2_000);
+    await refusedQuickly("desolve(y'=y*2^4096, x, y)", /an exponent of 4096/);
+    await refusedQuickly("desolve(y''+(2^4096+1)*y=0, x, y)", /an exponent of 4096/);
+    // And below the exponent clause, the height bound gives the same verdict.
+    await refusedQuickly("desolve(y'=y*10^200, x, y)", /200 digits together/);
   });
 });
