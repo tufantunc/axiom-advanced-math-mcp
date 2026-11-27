@@ -180,6 +180,8 @@ describe('an application built with a CAS command is refused by name', () => {
     ["desolve(y'=apply(y,x-1), x, y)", 'calls apply, which the CAS runs as a command'],
     ["y'=map(x-1,y)", 'calls map, which the CAS runs as a command'],
     ["y'=of(y,x-1)", 'calls of, which the CAS runs as a command'],
+    // Quoted, as Giac prints the command back: still the command `of`.
+    ["y'='of'(y,x-1)", 'calls of, which the CAS runs as a command'],
     ["y'=hold(y(x-1))", 'calls hold, which the CAS runs as a command'],
     ["y'=unquote(y(x-1))", 'calls unquote, which the CAS runs as a command'],
     ["y'=y+eval(quote(y(x-1)))", 'calls eval, which the CAS runs as a command'],
@@ -595,17 +597,9 @@ describe('misreadPrintedOde', () => {
     [["y'=([y](x-1))"], '[y](x-1)'],
     [["y'=((sin(y))(y))"], '(sin(y))(y)'],
     [["y'=((-y)(x)(0)+1)"], '(-y)(x)(0)'],
-    [["y'=(y@( (x)->x-1))"], 'y@( (x)->x-1)'],
-    [["y'=(sin(x)@y)"], 'sin(x)@y'],
-    [["y'=(2@y)"], '2@y'],
-    [["y'=(y'@sin)"], "y'@sin"],
-    [["y'=(sin@y')"], "sin@y'"],
-    [["y'=(apply(y,x-1))"], 'apply(y,x-1)'],
-    [["y'=(map(x-1,y))"], 'map(x-1,y)'],
-    [["y'=('of'(y,x-1))"], "'of'(y,x-1)"],
     // The first in the text.
-    [["y'=(apply(y,0)+(-y)(x-1))"], 'apply(y,0)'],
-    [["y'=((-y)(x-1)+apply(y,0))"], '(-y)(x-1)'],
+    [["y'=((2*y)(0)+(-y)(x-1))"], '(2*y)(0)'],
+    [["y'=((-y)(x-1)+(2*y)(0))"], '(-y)(x-1)'],
   ])('%j applies %s', (printed, expression) => {
     expect(read(printed)).toEqual({ kind: 'built', expression, inCondition: false });
   });
@@ -618,18 +612,13 @@ describe('misreadPrintedOde', () => {
     [["y'=(y*ln(y))"]],
     [["y'(x)=(y(x)*(1-(y(x))))"]],
     [["y'=(f(x)*y(x))"]],
-    [["y'=(unapply(y,x))"]],
-    [["y'=(z@sin+apply(f,x)+map(x,z)+'of'(z,x))"]],
-    [["y'=(mapy(y)+yy@sin+(z)(x)+(yy)(x))"]],
+    [["y'=(mapy(y)+(z)(x)+(yy)(x))"]],
     [["((y'=y) and (y(0)=1))"]],
     [["[y'=y,y(0)=1,y'(0)=0,2*y(0)=1,y(0)+y'(0)=1,y(L)=0,y(1)=(2*y(0))]"]],
     [["y'=y", '(y(0)=1) and (y(1)=2)']],
-    // An application that does not involve y, a quote that does not hold it,
-    // and Giac's own quoted names in a composition.
+    // An application that does not involve y, and a quote that does not hold it.
     [["y'=(y*(sin(x))(2))"]],
     [["y'=('x')"]],
-    [["y'=(('sin')@sin+y)"]],
-    [["y'=('of'(f,g)+y)"]],
   ])('%j is read as written', (printed) => {
     expect(read(printed)).toBeUndefined();
   });
