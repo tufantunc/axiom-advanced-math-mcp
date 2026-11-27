@@ -14,7 +14,7 @@ import { dirname, resolve } from 'node:path';
  *
  * The import half of the invariant IS here: the closure walk below is the only
  * mechanism that can express "no path to the engine". The oxlint
- * no-restricted-imports rule over the same six files is an editor-time backstop
+ * no-restricted-imports rule over the same seven files is an editor-time backstop
  * that fires faster and proves less — see the comment on that test.
  */
 /**
@@ -41,6 +41,7 @@ function orphanedDocblocks(source: string): number[] {
 const TEXT_ONLY = [
   'src/server/tools/ode-system-shape.ts',
   'src/server/tools/ode-condition-bounds.ts',
+  'src/server/tools/ode-misreading.ts',
 ];
 
 // The closure-walk entries: the text-only halves, their leaf imports, and
@@ -140,7 +141,7 @@ describe('the text-only halves evaluate nothing', () => {
     expect(engine).toEqual([]);
   });
 
-  // The walk list and the oxlint override are the same six files maintained
+  // The walk list and the oxlint override are the same seven files maintained
   // by hand in two different files, which grew in lockstep so far only because
   // each author happened to edit both. This pin turns the lockstep into a
   // checked property: the expected set is spelled out HERE, independent of
@@ -160,6 +161,7 @@ describe('the text-only halves evaluate nothing', () => {
     const expected = [
       'src/server/tools/ode-system-shape.ts',
       'src/server/tools/ode-condition-bounds.ts',
+      'src/server/tools/ode-misreading.ts',
       'src/server/tools/output-cleanup.ts',
       'src/server/tools/unicode-normalize.ts',
       'src/server/tools/compute/arg-parsing.ts',
@@ -193,6 +195,8 @@ describe('the text-only halves evaluate nothing', () => {
   it.each([
     ['src/server/tools/ode-system-shape.ts'],
     ['src/server/tools/ode-condition-bounds.ts'],
+    ['src/server/tools/ode-misreading.ts'],
+    ['src/server/tools/ode-clauses.ts'],
     ['src/server/tools/ode-system.ts'],
     ['src/server/tools/calculus.ts'],
   ])('orphans no docblock onto another docblock in %s', (path) => {
@@ -222,6 +226,8 @@ describe('the text-only halves evaluate nothing', () => {
   it.each([
     ['src/server/tools/ode-system-shape.ts'],
     ['src/server/tools/ode-condition-bounds.ts'],
+    ['src/server/tools/ode-misreading.ts'],
+    ['src/server/tools/ode-clauses.ts'],
     ['src/server/tools/ode-system.ts'],
     ['src/server/tools/calculus.ts'],
   ])('locates nothing in %s by distance', (path) => {

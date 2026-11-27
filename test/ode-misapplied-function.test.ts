@@ -5,7 +5,7 @@ import {
   misreadPrintedOde,
   odeLiteral,
   odeMembersToQuote,
-} from '../src/server/tools/ode-system-shape.js';
+} from '../src/server/tools/ode-misreading.js';
 import { allText } from './helpers/all-text.js';
 import { resultLine } from './helpers/result-line.js';
 
@@ -57,8 +57,8 @@ const quoteRefusal = (expression: string, inCondition = false): string =>
   `read as y — remove the quote${inCondition ? ` and ${atAPoint}` : ''}`;
 
 const literalRefusal = (literal: string): string =>
-  `solve_ode cannot solve this equation — it holds ${literal}, which opens a string or a ` +
-  'comment, and an equation holds neither';
+  `solve_ode cannot solve this equation — it holds ${literal}, which the CAS reads as a ` +
+  'string, a comment, a quoted name or an escape, and an equation holds none of them';
 
 const callRefusal = (call: string, primed: string): string =>
   `solve_ode cannot solve this equation — it writes a derivative at a point as ${call}, ` +
@@ -273,10 +273,37 @@ describe('a string or comment in the text is refused before the engine sees it',
     ['desolve(y\'=y, y(1)="a", x, y)', '"'],
     // A system's text reaches the engine through its own probes.
     ['[y\'=z, z\'=-y+"("+")"]', '"'],
+    // A quoted name hides a bracket the same way.
+    ["y'=y+`(`)+ifactor(2^64+1)+(`)`", '`'],
+    // Spelled in glyphs the normaliser turns into a comment: checked on the
+    // raw text, `y'=y(x-1)+0÷*c*÷` was answered as y'=x-1.
+    ["y'=y(x-1)+0÷*c*÷", '/*'],
+    ["desolve(y'=y÷*(*÷)+ifactor(2^64+1)+(0÷*)*÷, x, y)", '/*'],
+    ["y'=y(x-1)÷÷", '//'],
+    ["y'=y/×(×/)+ifactor(2^64+1)+(0/·)·/", '/*'],
+    // An escape, and NUL, where Giac's reader stops.
+    ["y'=y+\\(1)", '\\'],
   ])('%s', async (problem, literal) => {
     const evaluate = vi.spyOn(giacEngine, 'evaluate');
     expect(await refused(problem)).toContain(literalRefusal(literal));
     expect(evaluate.mock.calls.map(([expression]) => expression)).toEqual([]);
+  });
+
+  it('names a control character rather than printing it', async () => {
+    const evaluate = vi.spyOn(giacEngine, 'evaluate');
+    expect(await refused("y'=y\u0000+1")).toContain(literalRefusal('a control character'));
+    expect(evaluate).not.toHaveBeenCalled();
+  });
+
+  // The control: the same spy sees the engine calls of an ordinary solve, so
+  // the empty lists above mean the engine was not reached.
+  it('sees the engine calls of an equation with no hazard', async () => {
+    const evaluate = vi.spyOn(giacEngine, 'evaluate');
+    const r = await computeHandler({ problem: "y'=y+1" });
+    expect(allText(r)).toMatch(resultLine('c_0*exp(x)-1'));
+    const calls = evaluate.mock.calls.map(([expression]) => expression);
+    expect(calls).toContain("quote(y'=y+1)");
+    expect(calls.some((c) => c.startsWith('desolve('))).toBe(true);
   });
 });
 
@@ -348,6 +375,23 @@ describe("Giac's products still solve", () => {
     if (verified !== undefined) {
       expect(text).toContain(`Verified: ✓ (substitution: substitutes back into ${verified}`);
     }
+  });
+
+  /**
+   * Condition first with a product the reader cannot classify, so it is not
+   * reordered and reaches Giac as typed, which reads the first member as the
+   * equation. Refused, as on main, never answered: readSingleOde reads
+   * `y(1-y)` as y applied at 1-y, and these flip to solving only if it learns
+   * Giac's product rule — which is the printed form's job, not the text's.
+   */
+  it.each([
+    ["y(0)=1/2 and y'=y(1-y)"],
+    ["y(0)=1/2, y'=y(1-y)"],
+    ["[y(0)=1/2, y'=y(1-y)]"],
+    ["y(0)=2, y'=y(ln(y))"],
+    ["y(0)=2 && y'=y(ln(y))"],
+  ])('%s is refused, condition first', async (problem) => {
+    await refused(problem);
   });
 
   it.each([
@@ -505,11 +549,15 @@ describe('misreadPrintedOde', () => {
     // Never printed so, but read: a chained application names its brackets.
     [["y'=y(x-1)(0)"], '(x-1)(0)'],
   ])('%j applies y at %s', (printed, argument) => {
-    expect(read(printed)).toEqual({ kind: 'argument', argument });
+    expect(read(printed)).toEqual({ kind: 'argument', argument, inCondition: false });
   });
 
   it('reads the variable it is given', () => {
-    expect(read(["y'=(y(x))"], 't')).toEqual({ kind: 'argument', argument: 'x' });
+    expect(read(["y'=(y(x))"], 't')).toEqual({
+      kind: 'argument',
+      argument: 'x',
+      inCondition: false,
+    });
     expect(read(["y'=(y(t))"], 't')).toBeUndefined();
   });
 
@@ -604,7 +652,7 @@ describe('misreadPrintedOde', () => {
     [["y'=y", "y'(x+1)=0"], 'x+1'],
     [["y'=y", 'y(y(0))=1'], 'y(0)'],
   ])('%j applies y in a condition at %s', (printed, argument) => {
-    expect(read(printed)).toEqual({ kind: 'condition argument', argument });
+    expect(read(printed)).toEqual({ kind: 'argument', argument, inCondition: true });
   });
 
   // The equation's is reported, wherever it stands.
@@ -623,6 +671,13 @@ describe('odeLiteral', () => {
     ["y'=y # c", '#'],
     ["y'=y // c", '//'],
     ["y'=y /* c */", '/*'],
+    ["y'=y+`a`", '`'],
+    ["y'=y+\\a", '\\'],
+    ["y'=y\u0007", '\u0007'],
+    // Read as the engine reads it, after normalisation.
+    ["y'=y ÷÷ c", '//'],
+    ["y'=y ÷* c *÷", '/*'],
+    ["y'=y /× c", '/*'],
   ])('%s holds %s', (text, literal) => {
     expect(odeLiteral(text)).toBe(literal);
   });

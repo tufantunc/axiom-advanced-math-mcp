@@ -1,6 +1,12 @@
 import { giacEngine } from '../giac/index.js';
 import { MAX_ENGINE_DEPTH } from './giac-eval.js';
-import { escapeForRegExp, nestingDepth, isPrintedZero, splitTopLevel } from './output-cleanup.js';
+import {
+  escapeForRegExp,
+  giacNumber,
+  nestingDepth,
+  isPrintedZero,
+  splitTopLevel,
+} from './output-cleanup.js';
 import { stripEnclosingBrackets } from './compute/arg-parsing.js';
 import { unicodeToAscii } from './unicode-normalize.js';
 import { beforeTopLevelConjunction, isOneBareEquation, odeClauses } from './ode-clauses.js';
@@ -372,8 +378,8 @@ type ConditionsHold = 'exact' | 'rounded' | false;
  */
 const ROUNDING_SLACK = 1e-9;
 
-/** A decimal in printed engine output: `0.551819161757`, `3.0`, `1.4e-13`. */
-const PRINTED_DECIMAL = /\d\.|\.\d/;
+/** A float in printed engine output: `0.551819161757`, `3.0`, `1e-13`. */
+const PRINTED_DECIMAL = /\d\.|\.\d|\d[eE][+-]?\d/;
 
 /**
  * Whether EVERY clause is a condition that holds — exactly, or to the rounding
@@ -465,9 +471,10 @@ async function holdsToRounding(
 ): Promise<boolean> {
   if (!PRINTED_DECIMAL.test(answer)) return false;
   const printed = await evaluate(`evalf([${zeroForm},${value}])`);
-  const [residual, scale] = splitTopLevel(stripEnclosingBrackets(printed.trim()), ',').map((n) =>
-    Number(n.trim())
-  );
+  const read = splitTopLevel(stripEnclosingBrackets(printed.trim()), ',').map(giacNumber);
+  if (read.length !== 2) return false;
+  const [residual, scale] = read;
+  if (residual === null || scale === null) return false;
   if (!Number.isFinite(residual) || !Number.isFinite(scale)) return false;
   return Math.abs(residual) <= ROUNDING_SLACK * Math.abs(scale);
 }
@@ -776,7 +783,9 @@ async function disproveResidual(
   try {
     const residual = (await evaluate(`normal(${toZeroForm(substituted)})`)).trim();
     if (isPrintedZero(residual) || allZero(residual)) {
-      return checkConditions(
+      // Awaited, so an engine failure in a condition check lands in the catch
+      // below as "no verdict" rather than refusing an answer already computed.
+      return await checkConditions(
         conditionSource ?? equation,
         equationOnly,
         functionName,

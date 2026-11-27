@@ -1,23 +1,27 @@
 import { stripEnclosingBrackets } from './compute/arg-parsing.js';
 import { splitTopLevel } from './output-cleanup.js';
 
-/**
+/*
  * The clauses of an ODE as written, and the join spellings that separate them.
  *
  * Text only, and engine-free like ode-system-shape.ts, so both sides of the
  * single-ODE path read one grammar: readSingleOde splits the caller's text
  * into members with odeClauses, and verifyOdeSolution (self-verify.ts) cuts
- * the equation off its conditions and reads the conditions back with the same
- * functions. Two splitters that disagreed about what `&&` or `∧` is would let
- * the reader accept a member the verifier then reads differently.
+ * the equation off its conditions (beforeTopLevelConjunction, "the cut"),
+ * refuses what is not one equation (isOneBareEquation, "the backstop") and
+ * reads the conditions back with odeClauses ("the splitter"). Two splitters
+ * that disagreed about what `&&` or `∧` is would let the reader accept a member
+ * the verifier then reads differently. Moved here from self-verify.ts, whose
+ * history the comments below keep.
  */
+
 /**
  * The LENGTH of the join beginning at `i`, or undefined if none does.
  *
  * A length rather than a boolean because three callers need it: the cut and the
  * backstop only ask whether a join is there, but the clause splitter has to step
  * OVER it, and a splitter with its own idea of how long `and` is would be a
- * fourth spelling prediction in a file that has already paid for three.
+ * fourth spelling prediction in code that has already paid for three.
  *
  * The word form needs a boundary before it, or `and` matches inside `command`. An
  * operator does not, and requiring one is what made this miss the spelling `&&`
@@ -151,7 +155,7 @@ export function isOneBareEquation(text: string): boolean {
  * conjunction above: its terms are alternatives, not a list of things that all
  * hold. So `y(0)=1 or y(0)=2` survives whole into ONE clause rather than being
  * split into two claims — and that is all this function guarantees. It does not
- * fail readCondition's shape: point `0`, value `1 or y(0)=2`. What declines it is
+ * fail self-verify.ts readCondition's shape: point `0`, value `1 or y(0)=2`. What declines it is
  * readCondition's rule against a boolean value, and that rule rather than this
  * paragraph is what covers the parenthesised spelling `y(0)=(1 or 2)`.
  */
