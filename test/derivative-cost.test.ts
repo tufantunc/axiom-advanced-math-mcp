@@ -8,7 +8,10 @@ import {
   probeOrders,
 } from '../src/server/tools/derivative-cost.js';
 import { allText } from './helpers/all-text.js';
-import { expectAnswer, expectRefused } from './helpers/compute-answer.js';
+import { answerOf, expectAnswer, expectRefused } from './helpers/compute-answer.js';
+import { engineFailures } from './helpers/engine.js';
+import { factorial } from './helpers/exact.js';
+import { verifyHandler } from '../src/server/tools/verify/index.js';
 
 beforeAll(async () => {
   await giacEngine.initialize();
@@ -17,23 +20,6 @@ beforeAll(async () => {
 afterEach(() => {
   vi.restoreAllMocks();
 });
-
-/** n! exactly. */
-function factorial(n: number): bigint {
-  let f = 1n;
-  for (let k = 2n; k <= BigInt(n); k++) f *= k;
-  return f;
-}
-
-/** The answer's Result line, after asserting it is an answer. */
-async function answerOf(problem: string): Promise<string> {
-  const r = await computeHandler({ problem });
-  const text = allText(r);
-  expect(r.isError, text).toBe(false);
-  const result = /^Result: (.*)$/m.exec(text)?.[1];
-  expect(result, text).toBeDefined();
-  return result!;
-}
 
 const BIG = 'exp(sin(x*y))*cos(x+y)/(1+x^2+y^2)';
 
@@ -100,11 +86,17 @@ describe('a derivative with respect to one variable is bounded by its size', () 
     // Answered on main with 558,407 characters, past what this computes: the
     // order 6 derivative has 38,952 and its growth predicts 831,147.
     [`diff(${BIG}, x, 12)`, 12],
+    // A list of one name is the same derivative in a list: it escaped both
+    // bounds and trapped the worker at the order `x` is refused.
+    [`diff(${BIG}, [x], 15)`, 15],
   ])('%s is refused', async (problem, n) => {
-    await expectRefused(problem, refusal(n));
-    await expectRefused(problem, `past the ${MAX_DERIVATIVE_SIZE.toLocaleString('en-US')}`);
-    // The probes stopped before any of them could trap: the worker answers.
-    await expectAnswer('diff(x^3, x)', '3*x^2');
+    // A probe that trapped would recycle the worker and the refusal would
+    // still read the same, so the engine's failures are what is asserted.
+    const failures = await engineFailures(async () => {
+      await expectRefused(problem, refusal(n));
+      await expectRefused(problem, `past the ${MAX_DERIVATIVE_SIZE.toLocaleString('en-US')}`);
+    });
+    expect(failures).toEqual([]);
   });
 
   it('says how large the derivative already is and where it would go', async () => {
@@ -122,6 +114,7 @@ describe('a derivative with respect to one variable is bounded by its size', () 
     ['diff(x^50, x, 50)', factorial(50).toString()],
     ['diff(x^100, x, 99)', `${factorial(100)}*x`],
     ['diff(x^3*y, x$2)', '6*x*y'],
+    ['diff(sin(x), [x], 3)', '[[[-cos(x)]]]'],
   ])('%s is %s', async (problem, expected) => {
     await expectAnswer(problem, expected);
   });
@@ -166,5 +159,34 @@ describe('a derivative with respect to one variable is bounded by its size', () 
     const evaluate = vi.spyOn(giacEngine, 'evaluate');
     expect(await derivativeCostRefusal('tan(tan(x))', 'x', 1)).toBeUndefined();
     expect(evaluate).not.toHaveBeenCalled();
+  });
+});
+
+// verify handed a derivative side to the engine as written, so the claim
+// trapped the worker that compute now refuses before any trap.
+describe("verify — a derivative side gets compute's bounds", () => {
+  it('cannot check a derivative compute refuses, without a trap', async () => {
+    const failures = await engineFailures(async () => {
+      const t = allText(await verifyHandler({ claim: `diff(${BIG}, x, 15) = 0` }));
+      expect(t).toContain('Verified: UNKNOWN');
+      expect(t).toContain('derivative_computation');
+      expect(t).toContain('differentiate to order 15 of this expression is more than');
+    });
+    expect(failures).toEqual([]);
+  });
+
+  it.each([
+    'diff(x^3, x) = 3*x^2',
+    'diff(exp(x), x, 100) = exp(x)',
+    `diff(x^50, x, 50) = ${factorial(50)}`,
+    '(diff(sin(x), x, 2)) = -sin(x)',
+  ])('%s is verified', async (claim) => {
+    expect(allText(await verifyHandler({ claim }))).toContain('Verified: TRUE');
+  });
+
+  it('refutes a wrong derivative', async () => {
+    expect(allText(await verifyHandler({ claim: 'diff(x^3, x) = 3*x' }))).toContain(
+      'Verified: FALSE'
+    );
   });
 });

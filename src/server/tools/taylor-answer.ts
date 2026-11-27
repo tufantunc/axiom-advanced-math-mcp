@@ -1,14 +1,14 @@
 import { giacEngine } from '../giac/index.js';
 import { readableBack, type EvaluatedResponse } from './giac-eval.js';
 import {
-  escapeForRegExp,
   excerpt,
+  isEngineFailure,
   nonSeriesTerm,
   printedList,
   stripOrderTerm,
 } from './output-cleanup.js';
 import { formatErrorResponse, formatToolResponse } from './response-formatter.js';
-import { NAME_CHAR_PATTERN, unicodeToAscii } from './unicode-normalize.js';
+import { namesWhole, unicodeToAscii } from './unicode-normalize.js';
 
 /** The order taylor expands to when the caller names none — the command's own default. */
 export const DEFAULT_TAYLOR_ORDER = 5;
@@ -55,15 +55,6 @@ export function shortfallReason(k: number, n: number): string {
  */
 const MAX_REGULARITY_LEVELS = 16;
 
-/** Whether printed text names `variable` as a whole name, not inside a longer one. */
-function namesVariable(variable: string): (text: string) => boolean {
-  const name = new RegExp(
-    `(?<!${NAME_CHAR_PATTERN})${escapeForRegExp(variable)}(?!${NAME_CHAR_PATTERN})`,
-    'u'
-  );
-  return (text) => name.test(text);
-}
-
 /** The engine's printed list for `command`, read back as ASCII, or undefined. */
 async function evaluateList(command: string): Promise<string[] | undefined> {
   try {
@@ -83,7 +74,7 @@ async function evaluateList(command: string): Promise<string[] | undefined> {
 async function readBack(command: string): Promise<string[] | undefined> {
   if (!readableBack(command)) return undefined;
   const list = await evaluateList(command);
-  return list?.some((piece) => /\bundef\b|GIAC_ERROR/.test(piece)) ? undefined : list;
+  return list?.some(isEngineFailure) ? undefined : list;
 }
 
 /** A limit the engine found not to be a finite value, in words. */
@@ -99,8 +90,9 @@ const NOT_A_VALUE = /infinity|undef|bounded_function|limit|order_size|GIAC_ERROR
 
 /**
  * Why `point` is not a regular point of `expression`, or undefined when every
- * function the expression applies — at any depth, and every power whose
- * exponent varies — has an argument with a finite limit there.
+ * function the expression applies, at any depth, has an argument with a
+ * finite limit there, and every power whose base or exponent varies has a
+ * logarithm with one.
  *
  * Giac expands a function whose argument blows up as though it were bounded:
  * exp(1/x) at 0 becomes order_size(x), O(1). Alone that is a remainder of
@@ -111,8 +103,13 @@ const NOT_A_VALUE = /infinity|undef|bounded_function|limit|order_size|GIAC_ERROR
  * tells them apart: an analytic function of an argument with a finite limit
  * is regular or has a pole there, which a Laurent series reports honestly.
  *
+ * A power b^e is exp(e*ln(b)), so its argument is e*ln(b), not e: the
+ * exponent of `(1+x)^(1/x)` blows up at 0, the power tends to e, and its
+ * series is answered; `2^(1/x)`, whose e*ln(b) is ln(2)/x, is refused. A base
+ * tending to 0 is a branch point, and its logarithm says so too.
+ *
  * Read with the engine, not the text: `lvar` lists the applications and
- * non-integer powers (`e^(1/x)` is exp(1/x), `2^(1/x)` a power), `op` their
+ * non-integer powers (`e^(1/x)` is exp(1/x)), `sommet` and `op` their head and
  * arguments, and `limit` where each goes. A limit of the arguments is cheap —
  * they are pieces of the caller's expression, and the expensive limit
  * #57 measured and rejected was of the whole expression over (x-a)^n. A
@@ -128,7 +125,7 @@ export async function irregularPointReason(
   variable: string,
   point: string
 ): Promise<string | undefined> {
-  const mentions = namesVariable(variable);
+  const mentions = namesWhole(variable);
   const unconfirmed =
     'the point could not be confirmed to be a regular point of the expression — the CAS ' +
     'could not say where the argument of every function it applies tends there';
@@ -142,26 +139,41 @@ export async function irregularPointReason(
     if (kernels === undefined) return unconfirmed;
     const applied = kernels.filter((k) => k !== variable && mentions(k));
     if (applied.length === 0) return undefined;
-    const operands = await readBack(`[${applied.map((k) => `[op(${k})]`).join(',')}]`);
+    const operands = await readBack(`[${applied.map((k) => `[sommet(${k}),op(${k})]`).join(',')}]`);
     if (operands?.length !== applied.length) return unconfirmed;
-    const args = new Set<string>();
+    // Each piece whose limit must be finite, with the words that name it.
+    const probes = new Map<string, string>();
+    const inner = new Set<string>();
     for (const printed of operands) {
-      const list = printedList(printed);
-      if (list === undefined) return unconfirmed;
-      for (const arg of list) if (arg !== variable && mentions(arg)) args.add(arg);
+      const [head, ...args] = printedList(printed) ?? [];
+      if (head === undefined) return unconfirmed;
+      const varying = args.filter((arg) => mentions(arg));
+      for (const arg of varying) if (arg !== variable) inner.add(arg);
+      if (head === "'^'" && args.length === 2) {
+        const [base, exponent] = args;
+        probes.set(
+          `(${exponent})*ln(${base})`,
+          `raises ${excerpt(base, 30)} to the power ${excerpt(exponent, 30)}, whose logarithm`
+        );
+      } else {
+        for (const arg of varying) {
+          if (arg !== variable) probes.set(arg, `applies a function to ${excerpt(arg, 40)}, which`);
+        }
+      }
     }
-    level = [...args];
-    if (level.length === 0) return undefined;
-    const limitsCommand = `[${level.map((arg) => `limit(${arg},${variable},${point})`).join(',')}]`;
+    level = [...inner];
+    const limited = [...probes.keys()];
+    if (limited.length === 0) continue;
+    const limitsCommand = `[${limited.map((arg) => `limit(${arg},${variable},${point})`).join(',')}]`;
     if (!readableBack(limitsCommand)) return unconfirmed;
     const limits = await evaluateList(limitsCommand);
-    if (limits?.length !== level.length) return unconfirmed;
+    if (limits?.length !== limited.length) return unconfirmed;
     const bad = limits.findIndex((v) => v === '' || NOT_A_VALUE.test(v) || mentions(v));
     if (bad !== -1) {
       return (
-        `the expression applies a function to ${excerpt(level[bad], 40)}, which has no ` +
-        `finite limit there (${limitWords(limits[bad])}) — the point is a singularity such ` +
-        'as exp(1/x) or sin(1/x) has at 0, where there is no Taylor series'
+        `the expression ${probes.get(limited[bad])} has no finite limit there ` +
+        `(${limitWords(limits[bad])}) — the point is a singularity such as exp(1/x) or ` +
+        'sin(1/x) has at 0, where there is no Taylor series'
       );
     }
   }
@@ -226,15 +238,19 @@ export async function taylorAnswer(
       `taylor cannot answer this — expanding ${excerpt(String(args.expression), 60)} to ` +
         `order ${n} at ${where}: ${why}`
     );
-  const shortfall = orders === undefined || infinite ? undefined : seriesShortfall(orders, n);
+  // At infinity Giac counts orders from the leading power and a function of x
+  // tends to infinity as a matter of course, so only the answer's form is read.
+  if (infinite) {
+    const form = seriesFormReason(response.result, variable);
+    return form === undefined ? undefined : refusal(form);
+  }
+  const shortfall = orders === undefined ? undefined : seriesShortfall(orders, n);
   if (shortfall !== undefined) return refusal(shortfallReason(shortfall, n));
-  const irregular = infinite
-    ? undefined
-    : await irregularPointReason(expression, variable, unicodeToAscii(point));
+  const irregular = await irregularPointReason(expression, variable, unicodeToAscii(point));
   if (irregular !== undefined) return refusal(irregular);
   const form = seriesFormReason(response.result, variable);
   if (form !== undefined) return refusal(form);
-  if (orders === undefined || infinite) return undefined;
+  if (orders === undefined) return undefined;
   // The remainder alone, with no polynomial in front of it to cut back to. A
   // list (`taylor([sin(x), cos(x)], ...)`) keeps its remainders inside its
   // entries, which stripOrderTerm leaves, and is answered as printed.

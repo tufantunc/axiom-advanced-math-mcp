@@ -2,11 +2,13 @@ import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import { giacEngine } from '../src/server/giac/index.js';
 import { computeHandler } from '../src/server/tools/compute/index.js';
 import { verifyHandler } from '../src/server/tools/verify/index.js';
+import { unwrapSide } from '../src/server/tools/verify/side-reading.js';
 import { irregularPointReason } from '../src/server/tools/taylor-answer.js';
 import { nonSeriesTerm, seriesRemainderOrders } from '../src/server/tools/output-cleanup.js';
 import { allText } from './helpers/all-text.js';
 import { resultLine } from './helpers/result-line.js';
 import { expectAnswer, expectRefused } from './helpers/compute-answer.js';
+import { engineFailures, stubEngine } from './helpers/engine.js';
 
 beforeAll(async () => {
   await giacEngine.initialize();
@@ -15,26 +17,6 @@ beforeAll(async () => {
 afterEach(() => {
   vi.restoreAllMocks();
 });
-
-/**
- * Every engine call that failed while `run` ran. A trap recycles the worker
- * and the next call succeeds on a fresh one, so the answer alone cannot tell
- * a clean refusal from one that took the shared worker down first.
- */
-async function engineFailures(run: () => Promise<void>): Promise<string[]> {
-  const evaluate = giacEngine.evaluate.bind(giacEngine);
-  const failures: string[] = [];
-  vi.spyOn(giacEngine, 'evaluate').mockImplementation(async (expr: string) => {
-    try {
-      return await evaluate(expr);
-    } catch (error) {
-      failures.push(String(error));
-      throw error;
-    }
-  });
-  await run();
-  return failures;
-}
 
 // Giac writes a series' remainder as B^k*order_size(B), and writes a series
 // that broke down the same way; the order k is what tells them apart.
@@ -282,14 +264,19 @@ describe('taylor — a point that is not regular is refused', () => {
   const at0 = (expr: string) => `expanding ${expr} to order 3 at x = 0: `;
   const noLimit = (arg: string, value = 'it tends to infinity') =>
     `the expression applies a function to ${arg}, which has no finite limit there (${value})`;
+  const noLog = (base: string, exponent: string) =>
+    `the expression raises ${base} to the power ${exponent}, whose logarithm has no finite ` +
+    'limit there (it tends to infinity)';
 
   it.each([
     ['taylor(x+x^4*exp(1/x), x, 0, 3)', at0('x+x^4*exp(1/x)') + noLimit('1/x')],
     ['taylor(x+x^4*exp(1/x), x=0, 3)', at0('x+x^4*exp(1/x)') + noLimit('1/x')],
     ['series(x+x^4*exp(1/x), x, 0, 3)', at0('x+x^4*exp(1/x)') + noLimit('1/x')],
-    // e^u is exp(u), and a^u a power whose exponent blows up.
+    // e^u is exp(u), and a^u is exp(u*ln(a)): its logarithm blows up.
     ['taylor(x+x^4*e^(1/x), x, 0, 3)', at0('x+x^4*e^(1/x)') + noLimit('1/x')],
-    ['taylor(x+x^4*2^(1/x), x, 0, 3)', at0('x+x^4*2^(1/x)') + noLimit('1/x')],
+    ['taylor(x+x^4*2^(1/x), x, 0, 3)', at0('x+x^4*2^(1/x)') + noLog('2', '1/x')],
+    // A base tending to 0 is a branch point: answered `√x`.
+    ['taylor(sqrt(x), x, 0, 3)', at0('sqrt(x)') + noLog('x', '1/2')],
     // Every level is read: exp's own argument has a limit, 0, and the sine
     // inside it has none.
     ['taylor(x+x^4*exp(x*sin(1/x)), x, 0, 3)', at0('x+x^4*exp(x*sin(1/x))') + noLimit('1/x')],
@@ -333,6 +320,11 @@ describe('taylor — a point that is not regular is refused', () => {
     ['taylor(sin(1/x), x, inf, 3)', '1/x-1/6*(1/x)^3'],
     ['taylor(x*exp(1/x), x, inf, 2)', '(1/x)^-1+1+1/2/x'],
     ['taylor(sin(θ), θ, 0, 3)', 'θ-1/6*θ^3'],
+    // A power is judged by its logarithm, not its exponent: 1/x blows up at
+    // 0, ln(1+x)/x tends to 1, and (1+x)^(1/x) tends to e.
+    ['taylor((1+x)^(1/x), x, 0, 2)', 'exp(1)-exp(1)/2*x+11*exp(1)/24*x^2'],
+    ['taylor((1+a*x)^(1/x), x, 0, 1)', 'exp(a)-exp(a)*a^2/2*x'],
+    ['taylor(sqrt(x), x, 4, 2)', '2+1/4*(x-4)-1/64*(x-4)^2'],
   ])('%s is %s', async (problem, expected) => {
     await expectAnswer(problem, expected);
   });
@@ -351,26 +343,39 @@ it('refuses a point whose pieces are too long to hand back, without a trap', asy
   expect(failures).toEqual([]);
 });
 
+describe('unwrapSide', () => {
+  it.each([
+    ['(taylor(f,x,0,3))', 'taylor(f,x,0,3)'],
+    ['((a))', 'a'],
+    [' ( a ) ', ' a '],
+    ['(a)+(b)', '(a)+(b)'],
+    ['((a)(b))', '(a)(b)'],
+    ['taylor(f,x,0,3)', 'taylor(f,x,0,3)'],
+    ['()', ''],
+  ])('%j is %j', (side, call) => {
+    expect(unwrapSide(side)).toBe(call);
+  });
+
+  it('reads deep parentheses in linear time', () => {
+    const side = `${'('.repeat(4000)}x${')'.repeat(4000)}`;
+    const started = performance.now();
+    expect(unwrapSide(side)).toBe('x');
+    expect(performance.now() - started).toBeLessThan(250);
+  });
+});
+
 // Two readings no input measured here produces, pinned with a stubbed engine
 // so neither can go quietly: each would otherwise let the point pass.
 describe('irregularPointReason — what it does not take for a finite limit', () => {
-  /** The engine, except that a command matching `pattern` answers `printed`. */
-  function stub(pattern: RegExp, printed: string): void {
-    const evaluate = giacEngine.evaluate.bind(giacEngine);
-    vi.spyOn(giacEngine, 'evaluate').mockImplementation(async (expr: string) =>
-      pattern.test(expr) ? printed : evaluate(expr)
-    );
-  }
-
   it('a limit that still names the variable', async () => {
-    stub(/^\[limit\(/, '[x]');
+    stubEngine(/^\[limit\(/, '[x]');
     expect(await irregularPointReason('exp(sin(x))', 'x', '0')).toContain(
       'the expression applies a function to sin(x), which has no finite limit there'
     );
   });
 
   it('a piece that reads back as undef', async () => {
-    stub(/^\[\[op\(/, '[[undef]]');
+    stubEngine(/^\[\[sommet\(/, "[['sin',undef]]");
     expect(await irregularPointReason('exp(sin(x))', 'x', '0')).toContain(
       'the point could not be confirmed to be a regular point'
     );
@@ -381,6 +386,38 @@ describe('irregularPointReason — what it does not take for a finite limit', ()
   });
 });
 
+// The walk reads sixteen levels of nesting and refuses a deeper expression
+// rather than answering it unchecked.
+describe('irregularPointReason — how deep it reads', () => {
+  const nest = (depth: number) => `${'sin('.repeat(depth)}x${')'.repeat(depth)}`;
+
+  it('answers sixteen nested functions', async () => {
+    // sin applied k times is x - k/6*x^3 + O(x^5).
+    await expectAnswer(`taylor(${nest(16)}, x, 0, 3)`, 'x-8/3*x^3');
+  });
+
+  it('refuses seventeen', async () => {
+    await expectRefused(
+      `taylor(${nest(17)}, x, 0, 3)`,
+      'the point could not be confirmed to be a regular point'
+    );
+  });
+
+  // The limits repeat the point once per argument: 29 arguments at a point of
+  // 700 characters are past what is handed back, though each piece is short.
+  it('refuses limits too long to hand back, without a trap', async () => {
+    const terms = Array.from({ length: 29 }, (_, k) => `sin(x+${k + 1})`).join('+');
+    const point = `(${Array.from({ length: 119 }, (_, k) => `1/${k + 1}`).join('+')})`;
+    const failures = await engineFailures(() =>
+      expectRefused(
+        `taylor(${terms}, x, ${point}, 1)`,
+        'the point could not be confirmed to be a regular point'
+      )
+    );
+    expect(failures).toEqual([]);
+  });
+});
+
 // Giac hands back what it cannot expand as it found it, with no remainder to
 // say so: each of these answered with isError:false.
 describe('taylor — an answer that is not a series is refused', () => {
@@ -388,9 +425,12 @@ describe('taylor — an answer that is not a series is refused', () => {
     `the expansion still holds ${term}, which is not an integer power of the variable`;
 
   it.each([
-    // Answered `ln(x)` and `√x`.
+    // Answered `ln(x)` and `surd(x,3)`.
     ['taylor(log(x), x, 0, 3)', 'expanding log(x) to order 3 at x = 0: ' + holds('ln(x)')],
-    ['taylor(sqrt(x), x, 0, 3)', 'expanding sqrt(x) to order 3 at x = 0: ' + holds('sqrt(x)')],
+    [
+      'taylor(surd(x,3), x, 0, 2)',
+      'expanding surd(x,3) to order 2 at x = 0: ' + holds('surd(x,3)'),
+    ],
     // Answered 1+ln(x)*x+ln(x)^2/2*x^2+ln(x)^3/6*x^3.
     ['taylor(x^x, x, 0, 3)', 'expanding x^x to order 3 at x = 0: ' + holds('ln(x)')],
     // Answered `sin((1/x)^-1)` and `1/exp(x)^-1`: no expansion at infinity.
@@ -409,7 +449,6 @@ describe('taylor — an answer that is not a series is refused', () => {
 
   it.each([
     ['taylor(ln(x), x, 1, 3)', 'x-1-1/2*(x-1)^2+1/3*(x-1)^3'],
-    ['taylor(sqrt(x), x, 4, 2)', '2+1/4*(x-4)-1/64*(x-4)^2'],
     ['taylor(atan(x), x, inf, 3)', '1/2*pi-1/x+1/3*(1/x)^3'],
     // Coefficients free of x are coefficients, whatever they hold.
     ['taylor(exp(x), x, 1, 2)', 'exp(1)+exp(1)*(x-1)+exp(1)/2*(x-1)^2'],
@@ -423,38 +462,43 @@ describe('taylor — an answer that is not a series is refused', () => {
 // where compute reads the point a and the order n. Each spelling now reads
 // as compute reads it, through compute's own path and its checks.
 describe('verify — a series side reads as compute reads it', () => {
-  const spellings = (f: string, a: string, n: string) => [
-    `taylor(${f}, x, ${a}, ${n})`,
-    `taylor(${f}, x=${a}, ${n})`,
+  const spellings = (f: string, a: string, n: string, outcome: 'answered' | 'refused') => [
+    [`taylor(${f}, x, ${a}, ${n})`, outcome],
+    [`taylor(${f}, x=${a}, ${n})`, outcome],
   ];
 
   // compute's answer for the call, verified against the same call — and a
   // refusal of compute's, carried into verify's verdict in compute's words.
   it.each([
-    ...spellings('exp(x)', '1', '2'),
-    ...spellings('sin(x)', '0', '5'),
-    ...spellings('1/(1-x)', '0', '3'),
-    ...spellings('tan(x)', 'pi/2', '3'),
-    ...spellings('x^4', '0', '3'),
-    ...spellings('exp(1/x)', 'inf', '3'),
-    ...spellings('x+x^4*exp(1/x)', '0', '3'),
-    ...spellings('sin(1/x)', '0', '3'),
-    ...spellings('log(x)', '0', '3'),
-    ...spellings('sin(x)', '0', '200'),
-    'taylor(sin(x), x, 3)',
-    'series(sin(x), x, 1, 2)',
-  ])('%s: compute and verify agree', async (call) => {
+    ...spellings('exp(x)', '1', '2', 'answered'),
+    ...spellings('sin(x)', '0', '5', 'answered'),
+    ...spellings('1/(1-x)', '0', '3', 'answered'),
+    ...spellings('tan(x)', 'pi/2', '3', 'answered'),
+    ...spellings('x^4', '0', '3', 'answered'),
+    ...spellings('(1+x)^(1/x)', '0', '2', 'answered'),
+    ...spellings('exp(1/x)', 'inf', '3', 'answered'),
+    ...spellings('x+x^4*exp(1/x)', '0', '3', 'refused'),
+    ...spellings('sin(1/x)', '0', '3', 'refused'),
+    ...spellings('log(x)', '0', '3', 'refused'),
+    ...spellings('sin(x)', '0', '200', 'refused'),
+    ['taylor(sin(x), x, 3)', 'answered'],
+    ['series(sin(x), x, 1, 2)', 'answered'],
+    // compute's router reads the name in any case, and so does verify.
+    ['Series(sin(x), x, 0, 3)', 'answered'],
+    ['TAYLOR(exp(x), x, 1, 2)', 'answered'],
+    ['Taylor(x+x^4*exp(1/x), x, 0, 3)', 'refused'],
+  ])('%s: compute and verify agree that it is %s', async (call, outcome) => {
     const computed = await computeHandler({ problem: call });
     const answer = allText(computed);
+    expect(computed.isError, answer).toBe(outcome === 'refused');
     const result = /^Result: (.*)$/m.exec(answer)?.[1];
     const claim = `${call} = ${result ?? '0'}`;
     const verdict = allText(await verifyHandler({ claim }));
-    if (computed.isError) {
+    if (outcome === 'refused') {
       expect(verdict).toContain('Verified: UNKNOWN');
       expect(verdict).toContain(answer.replace(/^Error: /, ''));
       expect(verdict).toContain('series_computation');
     } else {
-      expect(result, answer).toBeDefined();
       expect(verdict, claim).toContain('Verified: TRUE');
     }
   });
@@ -477,14 +521,16 @@ describe('verify — a series side reads as compute reads it', () => {
   // compute reads a series only as the whole call, so a series inside a
   // larger expression has no reading of compute's to check — and one that
   // starts the side gets compute's own refusal of what follows it.
-  const inside = 'it holds a taylor or series call inside a larger expression';
+  const inside =
+    'it holds a taylor or series call inside a larger expression, and verify checks a ' +
+    'series only as the whole side';
   it.each([
     [
       'taylor(x+x^4*exp(1/x), x=0, 3) + 1 = x + 1',
       'it must be a single taylor(...) with nothing after the closing parenthesis',
     ],
     ['2*taylor(x+x^4*exp(1/x), x, 0, 3) = 2*x', inside],
-    ['(taylor(sin(x), x=0, 3)) = x - x^3/6', inside],
+    ['(taylor(sin(x), x=0, 3))*1 = x - x^3/6', inside],
   ])('%s cannot be checked', async (claim, reason) => {
     const t = allText(await verifyHandler({ claim }));
     expect(t).toContain('Verified: UNKNOWN');
@@ -502,6 +548,32 @@ describe('verify — a series side reads as compute reads it', () => {
     });
     expect(failures).toEqual([]);
   });
+
+  // A failed engine says nothing about the call: the side is unread, not a
+  // computation compute refuses.
+  it('reads a side the engine failed on as unread, not refused', async () => {
+    // An expansion no other test computes, so no cached reading answers it.
+    stubEngine(/^taylor\(cos\(7\*x\)/, new Error('Giac evaluation timed out'));
+    const t = allText(await verifyHandler({ claim: 'taylor(cos(7*x), x, 0, 2) = 1-49/2*x^2' }));
+    expect(t).toContain('Verified: UNKNOWN');
+    expect(t).toContain('unreadable_side');
+    expect(t).not.toContain('series_computation');
+  });
+
+  // With no series call to read it through, a remainder typed as it is.
+  it.each(['order_size(3) = 0', '0 = order_size(x)'])('%s cannot be checked', async (claim) => {
+    const t = allText(await verifyHandler({ claim }));
+    expect(t).toContain('Verified: UNKNOWN');
+    expect(t).toContain('broken_series');
+  });
+
+  // Parentheses around the whole side are not a larger expression.
+  it.each(['(taylor(sin(x), x=0, 3)) = x - x^3/6', '((series(sin(x), x, 0, 3))) = x - x^3/6'])(
+    '%s is verified',
+    async (claim) => {
+      expect(allText(await verifyHandler({ claim }))).toContain('Verified: TRUE');
+    }
+  );
 
   it('reads a name that merely ends in taylor as a name', async () => {
     const t = allText(await verifyHandler({ claim: 'my_taylor(x) = my_taylor(x)' }));

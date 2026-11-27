@@ -19,3 +19,13 @@ export async function expectAnswer(problem: string, expected: string): Promise<v
   expect(r.isError, text).toBe(false);
   expect(text).toMatch(resultLine(expected));
 }
+
+/** The value on `problem`'s Result line, after asserting it is an answer. */
+export async function answerOf(problem: string): Promise<string> {
+  const r = await computeHandler({ problem });
+  const text = allText(r);
+  expect(r.isError, text).toBe(false);
+  const result = /^Result: (.*)$/m.exec(text)?.[1];
+  expect(result, text).toBeDefined();
+  return result ?? '';
+}

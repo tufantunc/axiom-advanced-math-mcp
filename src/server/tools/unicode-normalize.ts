@@ -1,3 +1,5 @@
+import { escapeForRegExp } from './output-cleanup.js';
+
 /**
  * The superscript half of Unicode's Superscripts and Subscripts block
  * (U+2070–U+207F) less `⁼ ⁽ ⁾`, plus the three Latin-1 digits `¹²³`, as the
@@ -76,6 +78,18 @@ const NAME_START = String.raw`(?:(?![${SUPERSCRIPT_GLYPHS}])[\p{L}_])`;
 export const NAME_PATTERN = `${NAME_START}${NAME_CHAR}*`;
 /** One name character, as regex source — for a lookaround that ends a name. */
 export const NAME_CHAR_PATTERN = NAME_CHAR;
+
+/**
+ * Whether `text` names `name` as a whole name, not inside a longer one, by the
+ * same rule as NAME_PATTERN: `θ` is a name character, so `θ` is not named in
+ * `θ1` and is in `sin(θ)`. The ASCII `\b` copies elsewhere treat a Greek
+ * letter as a boundary.
+ */
+export function namesWhole(name: string): (text: string) => boolean {
+  const pattern = new RegExp(`(?<!${NAME_CHAR})${escapeForRegExp(name)}(?!${NAME_CHAR})`, 'u');
+  return (text) => pattern.test(text);
+}
+
 const NAME_CHAR_ONE = new RegExp(`^${NAME_CHAR}$`, 'u');
 const NAME_START_ONE = new RegExp(`^${NAME_START}$`, 'u');
 const NAME_CALL_AFTER = new RegExp(`^\\s*${NAME_START}${NAME_CHAR}*\\s*\\(`, 'u');

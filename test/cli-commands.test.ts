@@ -173,14 +173,19 @@ describe('runCommand — verify', () => {
   }, 30_000);
 
   // Verified TRUE, exit 0, where compute refuses the series: the same
-  // reading on both surfaces, and an unchecked claim is exit 1.
+  // reading on both surfaces, and an unchecked claim is exit 1 with nothing
+  // on stdout, saying why on stderr.
   it.each(['taylor(x+x^4*exp(1/x),x,0,3) = x', 'taylor(x+x^4*exp(1/x),x=0,3) = x'])(
     '%s cannot be checked',
     async (claim) => {
       capture();
-      const code = await runCommand({ kind: 'verify', claim, output: 'quiet' });
-      expect(code).toBe(1);
-      expect(out.join('').trim()).not.toBe('true');
+      expect(await runCommand({ kind: 'verify', claim, output: 'quiet' })).toBe(1);
+      expect(out).toEqual([]);
+      expect(err.join('\n')).toContain('could not check the claim');
+      err = [];
+      expect(await runCommand({ kind: 'verify', claim, output: 'text' })).toBe(1);
+      expect(out).toEqual([]);
+      expect(err.join('\n')).toContain('which has no finite limit there');
     },
     30_000
   );

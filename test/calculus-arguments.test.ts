@@ -4,6 +4,7 @@ import { computeHandler } from '../src/server/tools/compute/index.js';
 import { MAX_CALCULUS_ORDER } from '../src/server/tools/calculus.js';
 import { allText } from './helpers/all-text.js';
 import { resultLine } from './helpers/result-line.js';
+import { factorial } from './helpers/exact.js';
 
 beforeAll(async () => {
   await giacEngine.initialize();
@@ -12,12 +13,6 @@ beforeAll(async () => {
 /** Giac's print of the all-zero 2^n tensor: `[0,0]` nested n deep. */
 function zeroTensor(n: number): string {
   return n === 1 ? '[0,0]' : `[${zeroTensor(n - 1)},${zeroTensor(n - 1)}]`;
-}
-
-function factorial(n: number): bigint {
-  let f = 1n;
-  for (let k = 2n; k <= BigInt(n); k++) f *= k;
-  return f;
 }
 
 // The arguments of diff, integrate and taylor. Each refusal below was an

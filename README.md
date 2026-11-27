@@ -303,8 +303,9 @@ like a polynomial (`taylor(exp(1/x), x, 0, 3)` was `order_size(x)`), and so is
 one at a point where a function's argument has no finite limit, however the
 remainder looks (`taylor(x+x^4*exp(1/x), x, 0, 3)` was `x`), or whose answer is
 not a series at all (`taylor(sin(1/x), x, 0, 3)` was `sin(1/x)`, `ln(x)` at 0
-`ln(x)`). `verify` reads a `taylor` or `series` call exactly as `compute` does,
-`taylor(f, x, a, n)` included, and refuses one it does not. With no
+`ln(x)`). A side of a `verify` claim that is one `taylor`, `series` or `diff`
+call is read exactly as `compute` reads it, `taylor(f, x, a, n)` included, with
+the same checks, and a side `compute` refuses cannot be checked. With no
 variable named, `diff`, `integrate` and `taylor` refuse an expression with more
 than one symbol (`diff(2x+y)`) instead of picking one, and a variable the CAS
 holds a value in (`DIGITS`, `plus_inf`, `epsilon`) is refused. A derivative with

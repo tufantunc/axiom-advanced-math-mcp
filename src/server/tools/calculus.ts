@@ -20,7 +20,12 @@ import {
 import { translateOdeSystem } from './ode-system.js';
 import { implausibleEquationMagnitude } from './ode-condition-bounds.js';
 import { odeCostError } from './ode-cost-bounds.js';
-import { resolveVariable, takesVariable, variableRefusal } from './calculus-variable.js';
+import {
+  resolveVariable,
+  takesVariable,
+  variableNames,
+  variableRefusal,
+} from './calculus-variable.js';
 import { DEFAULT_TAYLOR_ORDER, taylorAnswer } from './taylor-answer.js';
 import { definiteIntegralRefusal } from './definite-integral.js';
 import { derivativeCostRefusal } from './derivative-cost.js';
@@ -821,89 +826,105 @@ async function odeMisreadRefusal(args: Record<string, unknown>): Promise<string 
 /**
  * What a derivative with respect to one variable would cost, measured on the
  * engine (derivativeCostRefusal) — after the variable is resolved, so the
- * probes differentiate by the variable the command will. A list of variables
- * is bounded before any engine call, by variableRefusal.
+ * probes differentiate by the variable the command will. A list of two or
+ * more variables is bounded before any engine call, by variableRefusal; a
+ * list of one, `[x]`, is the same derivative in a list and is measured here —
+ * it escaped both bounds and trapped the worker at the order `x` is refused.
  */
 async function singleVariableCostRefusal(
   args: Record<string, unknown>
 ): Promise<string | undefined> {
-  const variable = unicodeToAscii(String(args.variable)).trim();
-  if (variable.startsWith('[') || args.order === undefined) return undefined;
+  const names = variableNames(unicodeToAscii(String(args.variable)));
+  if (names.length !== 1 || args.order === undefined) return undefined;
   return derivativeCostRefusal(
     unicodeToAscii(String(args.expression)),
-    variable,
+    names[0],
     Number(String(args.order).trim())
   );
 }
 
 export async function calculusHandler(input: Record<string, unknown>) {
   try {
-    const operation = input.operation as string;
-
-    const paramError = validateParams(operation, input);
-    if (paramError) return formatErrorResponse(paramError);
-
-    const leibniz = operation === 'solve_ode' ? rewriteLeibniz(input) : { args: input };
-    if ('error' in leibniz) return formatErrorResponse(leibniz.error);
-    let { args } = leibniz;
-
-    const exprToValidate =
-      operation === 'solve_ode' ? (args.equation as string) : (args.expression as string);
-    const validationError = validateExpression(exprToValidate);
-    if (validationError) return formatErrorResponse(validationError.message);
-
-    // The variable as the engine reads it — after every synchronous check, so
-    // text those refuse never reaches the engine.
-    if (takesVariable(operation)) {
-      const resolved = await resolveVariable(operation, args);
-      if ('error' in resolved) return formatErrorResponse(resolved.error);
-      args = resolved.args;
-    }
-
-    if (operation === 'differentiate') {
-      const costly = await singleVariableCostRefusal(args);
-      if (costly !== undefined) return formatErrorResponse(costly);
-    }
-
-    if (operation === 'solve_ode') {
-      const misread = await odeMisreadRefusal(args);
-      if (misread !== undefined) {
-        return formatErrorResponse(`solve_ode cannot solve this equation — ${misread}`);
-      }
-    }
-
-    const { expr: giacExpr, functions, system } = await buildGiacExpression(operation, args);
-    // From the translation, not a second parse of the caller's text. Re-running
-    // unicodeToAscii, splitTopLevel and classify over the whole argument to
-    // recover one boolean also made this handler depend on the parser's
-    // internals rather than on what buildGiacExpression handed back — and two
-    // independent computations over the same string can disagree.
-    const hasConditions = system?.condition !== undefined;
-    const verify = buildVerifyCallback(operation, args, system);
-    // Through `notes`, not appended to the formatted content: formatToolResponse
-    // owns line order and puts notes before the "The answer is" summary. Pushed
-    // onto content it landed after the sentence presenting the answer, which for
-    // an IVP is the only thing saying which component is which.
-    const response = await evalWithLatex({
-      giacExpr,
-      operation,
-      verify,
-      ...(functions ? { notes: [`${COMPONENT_ORDER_PREFIX} ${functions.join(', ')}`] } : {}),
-    });
-    if (functions) {
-      const refusal = solutionVectorGuard(response, hasConditions);
-      if (refusal) return refusal;
-    } else if (operation === 'solve_ode') {
-      const refusal = await singleEquationGuard(response, args);
-      if (refusal) return refusal;
-    } else if (operation !== 'limit' && !response.isError) {
-      const refusal = unfinishedAnswerGuard(operation, response.result);
-      if (refusal) return refusal;
-      const answer = await operationAnswer(operation, response, args, giacExpr);
-      if (answer) return answer;
-    }
-    return response;
+    return await calculusOutcome(input);
   } catch (error) {
     return formatErrorResponse(error instanceof Error ? error.message : String(error));
   }
+}
+
+/** What calculusHandler answers: a response, or a refusal as an error response. */
+export type CalculusOutcome = EvaluatedResponse | ReturnType<typeof formatErrorResponse>;
+
+/**
+ * calculusHandler's work without its catch: a refusal comes back as an error
+ * response, and anything thrown — a worker timeout or trap, a lost IPC
+ * channel, a command that cannot be built — propagates. verify reads a series
+ * side through this, so an engine that failed is an unreadable side and not a
+ * computation compute refuses.
+ */
+export async function calculusOutcome(input: Record<string, unknown>): Promise<CalculusOutcome> {
+  const operation = input.operation as string;
+
+  const paramError = validateParams(operation, input);
+  if (paramError) return formatErrorResponse(paramError);
+
+  const leibniz = operation === 'solve_ode' ? rewriteLeibniz(input) : { args: input };
+  if ('error' in leibniz) return formatErrorResponse(leibniz.error);
+  let { args } = leibniz;
+
+  const exprToValidate =
+    operation === 'solve_ode' ? (args.equation as string) : (args.expression as string);
+  const validationError = validateExpression(exprToValidate);
+  if (validationError) return formatErrorResponse(validationError.message);
+
+  // The variable as the engine reads it — after every synchronous check, so
+  // text those refuse never reaches the engine.
+  if (takesVariable(operation)) {
+    const resolved = await resolveVariable(operation, args);
+    if ('error' in resolved) return formatErrorResponse(resolved.error);
+    args = resolved.args;
+  }
+
+  if (operation === 'differentiate') {
+    const costly = await singleVariableCostRefusal(args);
+    if (costly !== undefined) return formatErrorResponse(costly);
+  }
+
+  if (operation === 'solve_ode') {
+    const misread = await odeMisreadRefusal(args);
+    if (misread !== undefined) {
+      return formatErrorResponse(`solve_ode cannot solve this equation — ${misread}`);
+    }
+  }
+
+  const { expr: giacExpr, functions, system } = await buildGiacExpression(operation, args);
+  // From the translation, not a second parse of the caller's text. Re-running
+  // unicodeToAscii, splitTopLevel and classify over the whole argument to
+  // recover one boolean also made this handler depend on the parser's
+  // internals rather than on what buildGiacExpression handed back — and two
+  // independent computations over the same string can disagree.
+  const hasConditions = system?.condition !== undefined;
+  const verify = buildVerifyCallback(operation, args, system);
+  // Through `notes`, not appended to the formatted content: formatToolResponse
+  // owns line order and puts notes before the "The answer is" summary. Pushed
+  // onto content it landed after the sentence presenting the answer, which for
+  // an IVP is the only thing saying which component is which.
+  const response = await evalWithLatex({
+    giacExpr,
+    operation,
+    verify,
+    ...(functions ? { notes: [`${COMPONENT_ORDER_PREFIX} ${functions.join(', ')}`] } : {}),
+  });
+  if (functions) {
+    const refusal = solutionVectorGuard(response, hasConditions);
+    if (refusal) return refusal;
+  } else if (operation === 'solve_ode') {
+    const refusal = await singleEquationGuard(response, args);
+    if (refusal) return refusal;
+  } else if (operation !== 'limit' && !response.isError) {
+    const refusal = unfinishedAnswerGuard(operation, response.result);
+    if (refusal) return refusal;
+    const answer = await operationAnswer(operation, response, args, giacExpr);
+    if (answer) return answer;
+  }
+  return response;
 }

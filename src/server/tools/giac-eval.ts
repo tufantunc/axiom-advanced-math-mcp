@@ -30,12 +30,8 @@ export interface EvalOptions {
   methodNote?: string;
 }
 
-/** Deepest nesting handed back to `latex(...)`; see the note in toLatex. */
+/** Deepest nesting handed back to the engine; see the note in toLatex. */
 export const MAX_ENGINE_DEPTH = 100;
-const MAX_LATEX_DEPTH = MAX_ENGINE_DEPTH;
-
-/** Largest result handed back to `latex(...)`; see the note in toLatex. */
-const MAX_LATEX_INPUT = 6_000;
 
 /**
  * The longest printed engine output handed back to the engine as input.
@@ -48,7 +44,8 @@ const MAX_LATEX_INPUT = 6_000;
  * 28,132. A series or derivative the engine printed runs far past all three —
  * `diff(exp(sin(x)), x, 100)` is 159,096 characters — so anything read back
  * is bounded first, below the smallest of them. Nesting depth is bounded with
- * it, as for latex (MAX_ENGINE_DEPTH).
+ * it (MAX_ENGINE_DEPTH). `latex(...)` is one such read-back, measured on its
+ * own in toLatex, and sits under the same bound.
  */
 export const MAX_READBACK_LENGTH = 6_000;
 
@@ -97,9 +94,7 @@ export async function toLatex(result: string): Promise<string | undefined> {
   // Giac's own parser refuses gracefully ("Too many embeddings"), so the fatal
   // band is narrow and a conservative depth bound costs nothing: 100 rendered
   // cleanly in every probe.
-  if (result.length > MAX_LATEX_INPUT || nestingDepth(result) > MAX_LATEX_DEPTH) {
-    return undefined;
-  }
+  if (!readableBack(result)) return undefined;
   try {
     const raw = await giacEngine.evaluate(`latex(${result})`);
     if (!raw || raw === 'undef' || raw.startsWith('latex')) return undefined;
