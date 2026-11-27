@@ -8,11 +8,10 @@ import { stripEnclosingBrackets } from './compute/arg-parsing.js';
 import { unicodeToAscii, NAME_PATTERN } from './unicode-normalize.js';
 import { giacEngine } from '../giac/index.js';
 import { verifyIntegrate, verifyOdeSystem, verifyOdeSolution } from './self-verify.js';
+import { misreadPrintedOde, odeLiteral, odeMembersToQuote } from './ode-misreading.js';
 import {
   leibnizQuotients,
-  misreadPrintedOde,
   odeEquationMembers,
-  odeMembersToQuote,
   parseOdeSystem,
   replaceLeibnizQuotients,
   type LeibnizQuotient,
@@ -773,8 +772,9 @@ function rewriteLeibniz(
 }
 
 /**
- * A refusal for a single ODE Giac would MISREAD, decided on the form Giac
- * prints for it, or undefined.
+ * Why a single ODE cannot be handed to Giac — it holds a lexical hazard
+ * (odeLiteral), or Giac would MISREAD it, decided on the form Giac prints for
+ * it — or undefined. The reason only: the caller adds the prefix.
  *
  * `quote(member)` asks Giac's own parser what the text is, without evaluating
  * it, and misreadPrintedOde reads that. Four rounds of rules over the caller's
@@ -797,6 +797,20 @@ async function odeMisreadRefusal(args: Record<string, unknown>): Promise<string 
   const equation = args.equation as string;
   const fn = (args.function_name as string) ?? 'y';
   const variable = (args.variable as string) ?? 'x';
+  // First, and for a system too: this is the last check before the first
+  // engine call that embeds the text, quote( here or desolve( and the system's
+  // probes after it, and a bracket hidden in a string or a comment balances
+  // every count above and not Giac's parser, which would close the call early
+  // and run what follows.
+  const literal = odeLiteral(equation);
+  if (literal !== undefined) {
+    const code = literal.codePointAt(0) ?? 0;
+    const shown = code < 0x20 || code === 0x7f ? 'a control character' : literal;
+    return (
+      `it holds ${shown}, which the CAS reads as a string, a comment, a quoted name or an ` +
+      'escape, and an equation holds none of them'
+    );
+  }
   if (parseOdeSystem(equation) !== null) return undefined;
   const members = odeMembersToQuote(equation);
   if (members === null) return undefined;
@@ -810,29 +824,37 @@ async function odeMisreadRefusal(args: Record<string, unknown>): Promise<string 
   }
   const misread = misreadPrintedOde(printed, fn, variable);
   if (misread === undefined) return undefined;
-  if (misread.kind === 'argument') {
-    return (
-      `solve_ode cannot solve this equation — it applies ${fn} at ` +
-      `${excerpt(misread.argument, 60)} rather than at the variable ${variable}, ` +
-      'a delay or functional equation, which this does not solve'
-    );
-  }
   if (misread.kind === 'derivative call') {
     // Giac drops a condition written this way: `[y''=-y, y(0)=1,
     // diff(y(x),x)(0)=0]` answered cos(x)+c_1*sin(x). The primed spelling
     // answers cos(x).
     return (
-      `solve_ode cannot solve this equation — it writes a derivative at a point as ` +
-      `${excerpt(misread.call, 60)}, which the CAS drops — write it ${misread.primed}`
+      `it writes a derivative at a point as ${excerpt(misread.call, 60)}, which the CAS ` +
+      `drops — write it ${misread.primed}`
     );
   }
-  return misread.inCondition
-    ? `solve_ode cannot solve this equation — it gives a condition that applies ${fn} ` +
-        `through ${excerpt(misread.expression, 60)} — write a condition at a point, ` +
-        `as ${fn}(0)=1 or ${fn}'(0)=0`
-    : `solve_ode cannot solve this equation — the CAS reads ${excerpt(misread.expression, 60)} ` +
-        `as an expression built from ${fn} applied as a function, which this does not solve ` +
-        `— write a product with *, and ${fn} only at the variable ${variable}`;
+  const atAPoint = `write a condition at a point, as ${fn}(0)=1 or ${fn}'(0)=0`;
+  if (misread.kind === 'quoted') {
+    // `y'=quote(y(x-1))` answered (2*c_0+x^2-2*x)/2, the solution of y'=x-1.
+    return (
+      `it quotes ${excerpt(misread.expression, 60)}, which the CAS does not read as ${fn} ` +
+      `— remove the quote${misread.inCondition ? ` and ${atAPoint}` : ''}`
+    );
+  }
+  if (misread.inCondition) {
+    // `[y'=y, y(x=0)=1]` answered 0.
+    const how =
+      misread.kind === 'argument'
+        ? `at ${excerpt(misread.argument, 60)} rather than at a point`
+        : `through ${excerpt(misread.expression, 60)}`;
+    return `it gives a condition that applies ${fn} ${how} — ${atAPoint}`;
+  }
+  return misread.kind === 'argument'
+    ? `it applies ${fn} at ${excerpt(misread.argument, 60)} rather than at the variable ` +
+        `${variable}, a delay or functional equation, which this does not solve`
+    : `the CAS reads ${excerpt(misread.expression, 60)} as a function applied to an ` +
+        `argument, with ${fn} in one or the other, which this does not solve — write a ` +
+        `product with *, and ${fn} only at the variable ${variable}`;
 }
 
 export async function calculusHandler(input: Record<string, unknown>) {
@@ -853,7 +875,9 @@ export async function calculusHandler(input: Record<string, unknown>) {
 
     if (operation === 'solve_ode') {
       const misread = await odeMisreadRefusal(args);
-      if (misread !== undefined) return formatErrorResponse(misread);
+      if (misread !== undefined) {
+        return formatErrorResponse(`solve_ode cannot solve this equation — ${misread}`);
+      }
     }
 
     const { expr: giacExpr, functions, system } = await buildGiacExpression(operation, args);

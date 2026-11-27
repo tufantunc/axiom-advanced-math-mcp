@@ -1,6 +1,7 @@
 import { stripEnclosingBrackets } from './compute/arg-parsing.js';
 import { escapeForRegExp, excerpt, splitTopLevel } from './output-cleanup.js';
 import { unicodeToAscii } from './unicode-normalize.js';
+import { odeClauses } from './ode-clauses.js';
 import {
   conditionBoundError,
   conditionsTogetherError,
@@ -30,7 +31,7 @@ import {
  *   - No `async` and no `await` in this file, and no engine symbol named in it.
  *     Both are text assertions in ode-system-shape-boundary.test.ts.
  *   - No path from this file, from the bounds module it imports, or from any of
- *     the three leaf modules either of them imports, to `src/server/giac`. That
+ *     the four leaf modules either of them imports, to `src/server/giac`. That
  *     is the real invariant, and only a walk of the import closure can state
  *     it — the same test does that walk, per guarded file.
  *   - An oxlint no-restricted-imports rule in .oxlintrc.json, which is a DENYLIST
@@ -415,12 +416,12 @@ interface ReadOccurrence extends FunctionOccurrence {
 }
 
 /** Whether `name` appears in `text` as a whole identifier. */
-function mentions(text: string, name: string): boolean {
+export function mentions(text: string, name: string): boolean {
   return new RegExp(String.raw`(?<![\w'])${escapeForRegExp(name)}(?!\w)`).test(text);
 }
 
 /** The index of the `)` closing the `(` at `open`, or -1. */
-function closingParen(text: string, open: number): number {
+export function closingParen(text: string, open: number): number {
   let depth = 0;
   for (let i = open; i < text.length; i++) {
     if (text[i] === '(') depth++;
@@ -430,7 +431,7 @@ function closingParen(text: string, open: number): number {
 }
 
 /** The index of the bracket closing the `(`, `[` or `{` at `open`, or -1. */
-function closingBracket(text: string, open: number): number {
+export function closingBracket(text: string, open: number): number {
   let depth = 0;
   for (let i = open; i < text.length; i++) {
     if ('([{'.includes(text[i])) depth++;
@@ -440,7 +441,7 @@ function closingBracket(text: string, open: number): number {
 }
 
 /** The end of the run of bracket groups that opens at `open`, or -1 if one is unclosed. */
-function bracketChainEnd(text: string, open: number): number {
+export function bracketChainEnd(text: string, open: number): number {
   let close = closingParen(text, open);
   while (close >= 0) {
     const next = /^\s*\(/.exec(text.slice(close + 1));
@@ -466,7 +467,7 @@ export function functionOccurrences(
 }
 
 /** functionOccurrences, with each single application's argument. */
-function readOccurrences(text: string, fn: string, variable: string): ReadOccurrence[] {
+export function readOccurrences(text: string, fn: string, variable: string): ReadOccurrence[] {
   const name = new RegExp(String.raw`(?<![\w'])${escapeForRegExp(fn)}(?!\w)('*)`, 'g');
   return [...text.matchAll(name)].map((m): ReadOccurrence => {
     const primes = m[1].length;
@@ -491,250 +492,14 @@ function readOccurrences(text: string, fn: string, variable: string): ReadOccurr
 }
 
 /**
- * The operands of the boolean joins in one printed member, flattened: Giac
- * prints `y'=y and y(0)=1` — and `&&`, `∧`, `and(` alike — as
- * `((y'=y) and (y(0)=1))`, and a longer chain nests, so each operand is
- * stripped of its brackets and split again.
- */
-function printedOperands(member: string): string[] {
-  const text = stripEnclosingBrackets(member);
-  const operands: string[] = [];
-  let depth = 0;
-  let start = 0;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    if (ch === '(' || ch === '[' || ch === '{') depth++;
-    else if (ch === ')' || ch === ']' || ch === '}') depth--;
-    if (depth !== 0 || /\w/.test(text[i - 1] ?? ' ')) continue;
-    const op = /^(?:and|or|xor)(?!\w)/.exec(text.slice(i));
-    if (op === null) continue;
-    operands.push(text.slice(start, i));
-    start = i + op[0].length;
-    i = start - 1;
-  }
-  operands.push(text.slice(start));
-  const parts = operands.map((o) => o.trim()).filter((o) => o.length > 0);
-  return parts.length === 1 ? parts : parts.flatMap(printedOperands);
-}
-
-/**
  * `diff(fn(v),v)` or `diff(fn,v)`, optionally with an order — a derivative of
  * `fn` taken with respect to the variable — as the whole body of a call.
  * Group 1 is the order.
  */
-function derivativeCallBody(fn: string, variable: string): RegExp {
+export function derivativeCallBody(fn: string, variable: string): RegExp {
   const f = escapeForRegExp(fn);
   const v = escapeForRegExp(variable);
   return new RegExp(String.raw`^\s*${f}\s*(?:\(\s*${v}\s*\))?\s*,\s*${v}\s*(?:,\s*(\d+)\s*)?$`);
-}
-
-/** One `diff(y(x),x)(p)`: where it stands, its order and its point. */
-interface DerivativeCallAtPoint {
-  start: number;
-  end: number;
-  order: number;
-  point: string;
-}
-
-/** Every derivative call of `fn` with respect to `variable` applied at one point. */
-function derivativeCallsAtPoints(
-  text: string,
-  fn: string,
-  variable: string
-): DerivativeCallAtPoint[] {
-  const body = derivativeCallBody(fn, variable);
-  const found: DerivativeCallAtPoint[] = [];
-  for (const call of text.matchAll(/\b(?:diff|derive|deriver)\s*\(/g)) {
-    const open = call.index + call[0].length - 1;
-    const close = closingParen(text, open);
-    if (close < 0) continue;
-    const order = body.exec(text.slice(open + 1, close));
-    const at = /^\s*\(/.exec(text.slice(close + 1));
-    if (order === null || at === null) continue;
-    const pointOpen = close + at[0].length;
-    const pointClose = closingParen(text, pointOpen);
-    if (pointClose < 0) continue;
-    found.push({
-      start: call.index,
-      end: pointClose + 1,
-      order: order[1] === undefined ? 1 : Number(order[1]),
-      point: text.slice(pointOpen + 1, pointClose).trim(),
-    });
-  }
-  return found;
-}
-
-/** `fn` with `order` primes applied at `point`: `y''(0)`. */
-function primedAt(fn: string, order: number, point: string): string {
-  return `${fn}${"'".repeat(order)}(${point})`;
-}
-
-/** The start of the identifier ending just before `at`, or `at` if none. */
-function calleeStart(text: string, at: number): number {
-  const callee = /[A-Za-z_]\w*\s*$/.exec(text.slice(0, at));
-  return callee === null ? at : callee.index;
-}
-
-/**
- * The operand of `@` in printed (balanced, unspaced) text that ends just
- * before `at` (left) or starts at `at` (right): a bracket group, with its
- * callee on the left, or a name or number with its primes.
- */
-function compositionOperand(text: string, at: number, side: 'left' | 'right'): string {
-  if (side === 'right') {
-    if (text[at] === '(') return text.slice(at, closingParen(text, at) + 1);
-    return /^[\w.]*'*/.exec(text.slice(at))?.[0] ?? '';
-  }
-  if (text[at - 1] !== ')') return /[\w.]*'*$/.exec(text.slice(0, at))?.[0] ?? '';
-  let depth = 0;
-  let open = at - 1;
-  for (; open >= 0; open--) {
-    if (text[open] === ')') depth++;
-    else if (text[open] === '(' && --depth === 0) break;
-  }
-  return text.slice(calleeStart(text, open), at);
-}
-
-/**
- * Every application of something BUILT from `fn` in one printed operand, in
- * text order: a bracket group that mentions `fn` and is applied —
- * `(2*y)(x-1)`, `(y/2)(2-y)`, `(y(x))(0)`, `[y](x-1)`, `(sin(y))(y)` — a
- * composition with `fn` as an operand, and apply, map or of with `fn` among
- * the arguments. Giac prints every applied call wrapped, `(sin(y))(y)`, but
- * a derivative call, so a call's own arguments followed by a bracket —
- * `diff(y(t),t)(0)` in `x` — are read as applied too.
- */
-function builtApplications(operand: string, fn: string): { start: number; text: string }[] {
-  const found: { start: number; text: string }[] = [];
-  for (const group of operand.matchAll(/[([]/g)) {
-    const open = group.index;
-    const close = closingBracket(operand, open);
-    if (!mentions(operand.slice(open + 1, close), fn) || operand[close + 1] !== '(') continue;
-    found.push({ start: open, text: operand.slice(open, bracketChainEnd(operand, close + 1) + 1) });
-  }
-  for (const op of operand.matchAll(/@+/g)) {
-    const left = compositionOperand(operand, op.index, 'left');
-    const right = compositionOperand(operand, op.index + op[0].length, 'right');
-    if (mentions(left, fn) || mentions(right, fn)) {
-      found.push({ start: op.index - left.length, text: `${left}${op[0]}${right}`.trim() });
-    }
-  }
-  for (const call of operand.matchAll(/(?:\b(?:apply|map)|'of')\(/g)) {
-    const open = call.index + call[0].length - 1;
-    const close = closingParen(operand, open);
-    if (splitTopLevel(operand.slice(open + 1, close), ',').some((a) => mentions(a, fn))) {
-      found.push({ start: call.index, text: operand.slice(call.index, close + 1) });
-    }
-  }
-  return found.sort((a, b) => a.start - b.start);
-}
-
-/**
- * The members of a single ODE's text, each to be handed to Giac's `quote` on
- * its own: split at top-level `,` and `;` (a statement separator, which no
- * quote could hold), or null when the brackets do not balance — a member
- * with a stray `)` would close the quote early and evaluate what follows.
- */
-export function odeMembersToQuote(text: string): string[] | null {
-  const ascii = unicodeToAscii(text);
-  if (!bracketsBalance(ascii)) return null;
-  return splitTopLevel(stripEnclosingBrackets(ascii), ',')
-    .flatMap((m) => splitTopLevel(m, ';'))
-    .map((m) => m.trim())
-    .filter((m) => m.length > 0);
-}
-
-/** What misreadPrintedOde found, worded by the caller. */
-export type OdeMisreading =
-  /** The equation applies `fn` at `argument`, not at the variable. */
-  | { kind: 'argument'; argument: string }
-  /** An application of something built from `fn`, in the equation or a condition. */
-  | { kind: 'built'; expression: string; inCondition: boolean }
-  /** A derivative call at a point, which Giac drops, and its primed spelling. */
-  | { kind: 'derivative call'; call: string; primed: string };
-
-/**
- * How Giac will MISREAD a single ODE, read off the form Giac itself prints
- * for it — `quote(member)` for each of odeMembersToQuote's members — or
- * undefined when it reads the function only bare, at the variable, or (in a
- * condition) at a point.
- *
- * Read on the printed form because Giac's own parser decides whether `A(B)`
- * is a product or an application, and no reading of the caller's text kept up:
- * `y(1-y)`, `y(ln(y))` and `y(1-y)(2-y)` are products, `y(f(y))`,
- * `(y/2)(2-y)` and `2y(x-1)` applications, and four rounds of text rules
- * refused the first kind or answered the second. Printed, a product carries
- * its `*` — `y*(1-y)`, `(2*y)(x-1)` — so a name followed by a bracket IS an
- * application, and `(y')'` is `y''`.
- *
- * Four findings, in order:
- *
- *   1. the EQUATION applies `fn` at anything but exactly the variable —
- *      `y(x-1)`, `y(x/2)`, `y(0)`, `y(f(y))` — a delay, pantograph or
- *      nonlocal equation, which Giac answers as something else
- *      (`y'=y(x-1)` gave `(2*c_0+x^2-2*x)/2`);
- *   2. the equation applies something built from `fn` (builtApplications);
- *   3. a derivative call at a point, `diff(y(x),x)(0)`, anywhere — Giac drops
- *      the condition; read as `y'(0)` for 1 and 2;
- *   4. a condition applies something built from `fn`: `(2*y)(0)=1`.
- *
- * An operand is the equation when, with its built applications taken out, it
- * holds `fn` bare or at the variable — its derivative prints as `y'` or
- * `diff(y(x),x)`, so it always does; every other operand is a condition,
- * where `fn` at a point is what a condition is.
- */
-export function misreadPrintedOde(
-  printed: string[],
-  fn: string,
-  variable: string
-): OdeMisreading | undefined {
-  const primesFolded = printed.map((p) => {
-    const nested = new RegExp(String.raw`\((${escapeForRegExp(fn)}'+)\)'`, 'g');
-    let read = p;
-    for (let before = ''; before !== read;) {
-      before = read;
-      read = read.replaceAll(nested, "$1'");
-    }
-    return read;
-  });
-  const operands = primesFolded
-    .flatMap((p) => splitTopLevel(stripEnclosingBrackets(p), ','))
-    .flatMap(printedOperands);
-  let inCondition: { start: number; text: string } | undefined;
-  for (const operand of operands) {
-    let read = operand;
-    for (const call of derivativeCallsAtPoints(read, fn, variable).reverse()) {
-      read =
-        read.slice(0, call.start) + primedAt(fn, call.order, call.point) + read.slice(call.end);
-    }
-    const built = builtApplications(read, fn);
-    const rest = built.reduce((t, b) => t.replace(b.text, '0'), read);
-    const isEquation = readOccurrences(rest, fn, variable).some(
-      (o) => o.at === 'bare' || o.at === 'variable'
-    );
-    if (!isEquation) {
-      inCondition ??= built[0];
-      continue;
-    }
-    const off = readOccurrences(read, fn, variable).find(
-      (o) => o.at === 'point' || o.at === 'other'
-    );
-    if (off?.argument !== undefined) return { kind: 'argument', argument: off.argument };
-    if (built.length > 0) return { kind: 'built', expression: built[0].text, inCondition: false };
-  }
-  for (const member of primesFolded) {
-    const [call] = derivativeCallsAtPoints(member, fn, variable);
-    if (call !== undefined) {
-      return {
-        kind: 'derivative call',
-        call: member.slice(call.start, call.end),
-        primed: primedAt(fn, call.order, call.point),
-      };
-    }
-  }
-  return inCondition === undefined
-    ? undefined
-    : { kind: 'built', expression: inCondition.text, inCondition: true };
 }
 
 /**
@@ -779,8 +544,12 @@ export interface SingleOde {
  *
  *   1. brackets balance (a system needs two equation members, so rule 7
  *      declines one without asking parseOdeSystem);
- *   2. nothing non-ASCII survives normalisation;
- *   3. no member holds `&`, `|`, `;`, `<`, `>`, `!`, or and/or/xor/not;
+ *   2. the members are odeClauses's: split at top-level commas and at the
+ *      conjunctions Giac reads as one, `and`, `&&` and `∧`, so
+ *      `y'(x)=y(x) and y(0)=1` is the same two members as the list spelling;
+ *      nothing non-ASCII survives in a member;
+ *   3. no member holds `&`, `|`, `;`, `<`, `>`, `!`, or and/or/xor/not — what
+ *      is left of a join after the split is a join this does not read;
  *   4. every member has exactly one top-level `=`;
  *   5. every appearance of `fn` is bare, at exactly the variable, or at a point
  *      that mentions neither the variable nor `fn` (functionOccurrences) —
@@ -798,13 +567,28 @@ export interface SingleOde {
  * what the caller wrote. Only the equation is rewritten.
  */
 export function readSingleOde(text: string, fn: string, variable: string): SingleOde | null {
+  const read = readSingleOdeAsTyped(text, fn, variable);
+  return read === null ? null : { equation: read.equation, conditions: read.conditions };
+}
+
+/**
+ * readSingleOde, and whether the typed text is already what it reads: the
+ * equation first and not rewritten, in a bracketed list or one comma-free
+ * argument. One pass, so singleOdeText compares against the members this read
+ * rather than splitting the text a second time.
+ */
+function readSingleOdeAsTyped(
+  text: string,
+  fn: string,
+  variable: string
+): (SingleOde & { asTyped: boolean }) | null {
   const ascii = unicodeToAscii(text);
   if (!bracketsBalance(ascii)) return null;
-  if (/[^\x20-\x7E]/.test(ascii.replaceAll(/\s/g, ' '))) return null;
-  const members = splitTopLevel(stripEnclosingBrackets(ascii), ',').map((m) => m.trim());
   let equation: string | undefined;
+  let equationFirst = false;
   const conditions: string[] = [];
-  for (const member of members) {
+  for (const member of odeClauses(ascii).map((m) => m.trim())) {
+    if (/[^\x20-\x7E]/.test(member.replaceAll(/\s/g, ' '))) return null;
     if (/[&|;<>!]/.test(member) || /\b(?:and|or|xor|not)\b/i.test(member)) return null;
     if (splitTopLevel(member, '=').length !== 2) return null;
     const occurrences = functionOccurrences(member, fn, variable);
@@ -827,6 +611,7 @@ export function readSingleOde(text: string, fn: string, variable: string): Singl
     if (isEquation) {
       if (equation !== undefined) return null;
       equation = member;
+      equationFirst = conditions.length === 0;
     } else if (isCondition) {
       conditions.push(member);
     } else {
@@ -838,13 +623,22 @@ export function readSingleOde(text: string, fn: string, variable: string): Singl
     String.raw`(?<![\w'])(${escapeForRegExp(fn)}'+)\s*\(\s*${escapeForRegExp(variable)}\s*\)`,
     'g'
   );
-  return { equation: equation.replaceAll(applied, '$1'), conditions };
+  const rewritten = equation.replaceAll(applied, '$1');
+  const oneArgument = splitTopLevel(stripEnclosingBrackets(ascii), ',').length === 1;
+  const asTyped =
+    equationFirst && rewritten === equation && (oneArgument || text.trim().startsWith('['));
+  return { equation: rewritten, conditions, asTyped };
 }
 
 /**
  * The text a single ODE is solved as, and whether it differs from what the
  * caller typed: `[equation, condition, …]` when readSingleOde reads it and the
  * typed text is not already that, otherwise `text` exactly.
+ *
+ * Already that means the equation comes first, needs no `y'(x)` rewrite, and
+ * the members are a bracketed list or one comma-free argument: `[y'=y,
+ * y(0)=1]`, and `y'=y and y(0)=1`, Giac's own IVP spelling, go through as
+ * typed. `y'=y, y(0)=1` unbracketed is two arguments, and is rewritten.
  *
  * `rewritten` is what calculus.ts's fail-closed gate keys on: an answer to a
  * text this changed ships only with a verified substitution.
@@ -854,16 +648,8 @@ export function singleOdeText(
   fn: string,
   variable: string
 ): { text: string; rewritten: boolean } {
-  const read = readSingleOde(text, fn, variable);
-  if (read === null) return { text, rewritten: false };
-  const members = splitTopLevel(stripEnclosingBrackets(unicodeToAscii(text)), ',').map((m) =>
-    m.trim()
-  );
-  const unchanged =
-    members[0] === read.equation &&
-    (members.length === 1 || text.trim().startsWith('[')) &&
-    members.slice(1).every((m, i) => m === read.conditions[i]);
-  if (unchanged) return { text, rewritten: false };
+  const read = readSingleOdeAsTyped(text, fn, variable);
+  if (read === null || read.asTyped) return { text, rewritten: false };
   const solved =
     read.conditions.length === 0
       ? read.equation
@@ -872,7 +658,7 @@ export function singleOdeText(
 }
 
 /** Whether every `(` and `[` in `text` closes, in order, and nothing else does. */
-function bracketsBalance(text: string): boolean {
+export function bracketsBalance(text: string): boolean {
   const open: string[] = [];
   for (const ch of text) {
     if (ch === '(' || ch === '[') open.push(ch === '(' ? ')' : ']');
