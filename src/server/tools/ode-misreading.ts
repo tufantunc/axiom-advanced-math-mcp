@@ -91,44 +91,23 @@ function primedAt(fn: string, order: number, point: string): string {
   return `${fn}${"'".repeat(order)}(${point})`;
 }
 
-/** The start of the identifier ending just before `at`, or `at` if none. */
-function calleeStart(text: string, at: number): number {
-  const callee = /[A-Za-z_]\w*\s*$/.exec(text.slice(0, at));
-  return callee === null ? at : callee.index;
-}
-
-/**
- * The operand of `@` in printed (balanced, unspaced) text that ends just
- * before `at` (left) or starts at `at` (right): a bracket group, with its
- * callee on the left, or a name or number with its primes.
- */
-function compositionOperand(text: string, at: number, side: 'left' | 'right'): string {
-  if (side === 'right') {
-    if (text[at] === '(') return text.slice(at, closingParen(text, at) + 1);
-    return /^[\w.]*'*/.exec(text.slice(at))?.[0] ?? '';
-  }
-  if (text[at - 1] !== ')') return /[\w.]*'*$/.exec(text.slice(0, at))?.[0] ?? '';
-  let depth = 0;
-  let open = at - 1;
-  for (; open >= 0; open--) {
-    if (text[open] === ')') depth++;
-    else if (text[open] === '(' && --depth === 0) break;
-  }
-  return text.slice(calleeStart(text, open), at);
-}
-
 /**
  * Every application of something BUILT from `fn` in one printed operand, in
  * text order: a bracket group that is applied, where the group or what it is
  * applied to mentions `fn` — `(2*y)(x-1)`, `(y/2)(2-y)`, `(y(x))(0)`,
  * `[y](x-1)`, `(sin(y))(y)`, and `(sin(x))(y)`, which Giac evaluates as
- * sin(y), not sin(x)*y — a composition with `fn` as an operand, and apply,
- * map or of with `fn` among the arguments. Giac prints every applied call
- * wrapped, `(sin(y))(y)`, but a derivative call, so a call's own arguments
- * followed by a bracket — `diff(y(t),t)(0)` in `x` — are read as applied too.
+ * sin(y), not sin(x)*y. Giac prints every applied call wrapped,
+ * `(sin(y))(y)`, but a derivative call, so a call's own arguments followed by
+ * a bracket — `diff(y(t),t)(0)` in `x` — are read as applied too.
+ *
+ * Giac's other ways to apply — composition (`@`, `@@`, `∘`) and the `apply`,
+ * `map` and `of` commands — never reach this print: equationNameError
+ * (ode-name-bounds.ts) refuses each of them in the caller's text before any
+ * engine call, and `quote` prints the parse tree without evaluating it, so no
+ * admitted spelling prints as one.
  */
-function builtApplications(operand: string, fn: string): { start: number; text: string }[] {
-  const found: { start: number; text: string }[] = [];
+function builtApplications(operand: string, fn: string): string[] {
+  const found: string[] = [];
   for (const group of operand.matchAll(/[([]/g)) {
     const open = group.index;
     const close = closingBracket(operand, open);
@@ -136,23 +115,9 @@ function builtApplications(operand: string, fn: string): { start: number; text: 
     const end = bracketChainEnd(operand, close + 1);
     const appliedTo = operand.slice(close + 1, end < 0 ? undefined : end + 1);
     if (!mentions(operand.slice(open + 1, close), fn) && !mentions(appliedTo, fn)) continue;
-    found.push({ start: open, text: operand.slice(open, end + 1) });
+    found.push(operand.slice(open, end + 1));
   }
-  for (const op of operand.matchAll(/@+/g)) {
-    const left = compositionOperand(operand, op.index, 'left');
-    const right = compositionOperand(operand, op.index + op[0].length, 'right');
-    if (mentions(left, fn) || mentions(right, fn)) {
-      found.push({ start: op.index - left.length, text: `${left}${op[0]}${right}`.trim() });
-    }
-  }
-  for (const call of operand.matchAll(/(?:\b(?:apply|map)|'of')\(/g)) {
-    const open = call.index + call[0].length - 1;
-    const close = closingParen(operand, open);
-    if (splitTopLevel(operand.slice(open + 1, close), ',').some((a) => mentions(a, fn))) {
-      found.push({ start: call.index, text: operand.slice(call.index, close + 1) });
-    }
-  }
-  return found.sort((a, b) => a.start - b.start);
+  return found;
 }
 
 /**
@@ -246,7 +211,7 @@ export function misreadPrintedOde(
         read.slice(0, call.start) + primedAt(fn, call.order, call.point) + read.slice(call.end);
     }
     const built = builtApplications(read, fn);
-    const rest = built.reduce((t, b) => t.replace(b.text, '0'), read);
+    const rest = built.reduce((t, b) => t.replace(b, '0'), read);
     const restOccurrences = readOccurrences(rest, fn, variable);
     const isCondition = !restOccurrences.some((o) => o.at === 'bare' || o.at === 'variable');
     // A condition is `fn` at a point, so only `other` is off its place there;
@@ -259,7 +224,7 @@ export function misreadPrintedOde(
     if (off?.argument !== undefined) {
       found = { kind: 'argument', argument: off.argument, inCondition: isCondition };
     } else if (built.length > 0) {
-      found = { kind: 'built', expression: built[0].text, inCondition: isCondition };
+      found = { kind: 'built', expression: built[0], inCondition: isCondition };
     } else if (quoted !== undefined) {
       found = { kind: 'quoted', expression: quoted, inCondition: isCondition };
     }
@@ -285,8 +250,7 @@ export function misreadPrintedOde(
  * Giac prints `quote(e)` as `'e'`, and the name inside is no occurrence to
  * readOccurrences — a quote is not a prime, but both are `'`, and its
  * lookbehind skips a name after either. Unread, `y'=quote(y(x-1))` was solved
- * as y'=x-1. An OPENING quote follows no name, closing bracket or prime;
- * `'of'` is Giac's composition and builtApplications' finding. Which `'`
+ * as y'=x-1. An OPENING quote follows no name, closing bracket or prime. Which `'`
  * CLOSES a quote cannot be read off the print: `quote(x'*y)` prints `'x'*y'`
  * and `quote(x)*y` prints `'x'*y`. So the expression runs to the end of its
  * bracket group, which may take in more than the quote — `quote(x)*y` is
@@ -294,7 +258,6 @@ export function misreadPrintedOde(
  */
 function quotedWithFn(text: string, fn: string): string | undefined {
   for (const quote of text.matchAll(/(?<![\w')\]}])'/g)) {
-    if (text.startsWith("of'", quote.index + 1)) continue;
     let depth = 0;
     let end = quote.index + 1;
     for (; end < text.length; end++) {
