@@ -11,6 +11,25 @@ let isInitialized = false;
 let _caseval: ((expression: string) => string) | null = null;
 
 /**
+ * The WASM binary embedded in giac.wasm.js's source as a base64 data URI.
+ * Exported for scripts/generate-giac-reserved-names.mjs, which reads the
+ * engine's names from the same bytes this loads.
+ */
+export function embeddedWasmBinary(code: string): Buffer {
+  const marker = 'data:application/wasm;base64,';
+  const start = code.indexOf(marker);
+  if (start === -1) {
+    throw new Error(
+      'Could not find embedded WASM binary in giac.wasm.js.\n' +
+        'Make sure the file is a real build output: npm run build:giac:wasm'
+    );
+  }
+  const base64Start = start + marker.length;
+  const base64End = code.indexOf('"', base64Start);
+  return Buffer.from(code.substring(base64Start, base64End), 'base64');
+}
+
+/**
  * Load the Emscripten-built giac.wasm.js module.
  *
  * The GeoGebra/giac build embeds the WASM binary as a base64 data URI inside
@@ -36,19 +55,7 @@ async function loadGiacModule(): Promise<any> {
     );
   }
 
-  // Extract base64-encoded WASM binary from the embedded data URI
-  const marker = 'data:application/wasm;base64,';
-  const start = code.indexOf(marker);
-  if (start === -1) {
-    throw new Error(
-      'Could not find embedded WASM binary in giac.wasm.js.\n' +
-        'Make sure the file is a real build output: npm run build:giac:wasm'
-    );
-  }
-  const base64Start = start + marker.length;
-  const base64End = code.indexOf('"', base64Start);
-  const base64Data = code.substring(base64Start, base64End);
-  const wasmBinary = Buffer.from(base64Data, 'base64');
+  const wasmBinary = embeddedWasmBinary(code);
 
   // Pre-configure the Emscripten module object.
   // The code starts with: var __ggb__giac = typeof __ggb__giac != "undefined" ? __ggb__giac : {};

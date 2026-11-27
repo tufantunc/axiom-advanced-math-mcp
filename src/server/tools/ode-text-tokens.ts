@@ -192,3 +192,11 @@ export function quotedReason(expression: string, fn: string, inCondition: boolea
     `— remove the quote${inCondition ? ` and ${atAPoint}` : ''}`
   );
 }
+
+/**
+ * A name token's text without the primes foldPrimes attached: `y''` is `y`.
+ * Every reader that asks which function a primed token names asks it here.
+ */
+export function bareName(text: string): string {
+  return text.replace(/'+$/, '');
+}

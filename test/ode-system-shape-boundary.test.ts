@@ -42,6 +42,7 @@ const TEXT_ONLY = [
   'src/server/tools/ode-system-shape.ts',
   'src/server/tools/ode-condition-bounds.ts',
   'src/server/tools/ode-cost-bounds.ts',
+  'src/server/tools/ode-name-bounds.ts',
   'src/server/tools/ode-text-tokens.ts',
   'src/server/tools/ode-misreading.ts',
 ];
@@ -55,6 +56,7 @@ const WALKED = [
   'src/server/tools/unicode-normalize.ts',
   'src/server/tools/compute/arg-parsing.ts',
   'src/server/tools/ode-clauses.ts',
+  'src/server/tools/giac-reserved-names.ts',
 ];
 
 describe('the text-only halves evaluate nothing', () => {
@@ -164,12 +166,14 @@ describe('the text-only halves evaluate nothing', () => {
       'src/server/tools/ode-system-shape.ts',
       'src/server/tools/ode-condition-bounds.ts',
       'src/server/tools/ode-cost-bounds.ts',
+      'src/server/tools/ode-name-bounds.ts',
       'src/server/tools/ode-text-tokens.ts',
       'src/server/tools/ode-misreading.ts',
       'src/server/tools/output-cleanup.ts',
       'src/server/tools/unicode-normalize.ts',
       'src/server/tools/compute/arg-parsing.ts',
       'src/server/tools/ode-clauses.ts',
+      'src/server/tools/giac-reserved-names.ts',
     ];
     expect(matches, 'overrides setting no-restricted-imports').toHaveLength(1);
     expect(matches[0]?.files, 'the no-restricted-imports override').toEqual(expected);

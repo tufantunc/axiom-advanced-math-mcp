@@ -2039,4 +2039,140 @@ describe("an ODE problem's cost is bounded before the engine sees it", () => {
     // And below the exponent clause, the height bound gives the same verdict.
     await refusedQuickly("desolve(y'=y*10^200, x, y)", /200 digits together/);
   });
+
+  // NAMES in the equation itself (equationNameError, ode-cost-bounds.ts).
+  // Every refused row here held the worker its full 10s on main (32a9232),
+  // measured one input per fresh worker, except the seq and `$` rows, which
+  // killed it in under 300ms — and every spelling of the same call: the
+  // and/&&/∧ joins, the condition written first, the member list, the
+  // verbless route and a system.
+  const calls = (name: string): RegExp =>
+    new RegExp(
+      `it calls ${escapeForRegExp(name)}, which the CAS runs as a command rather than ` +
+        'reading as part of an equation — (compute|write)'
+    );
+  const names = (name: string): RegExp =>
+    new RegExp(`it names ${name}, which the CAS reserves for its own commands and syntax`);
+  it.each([
+    ["desolve(y'=y+0*ifactor(2^257-1), x, y)", 'this equation', calls('ifactor')],
+    ["desolve(y'=y+0*ifactor(2^257-1) and y(0)=1, x, y)", 'this equation', calls('ifactor')],
+    ["desolve(y'=y+0*ifactor(2^257-1) && y(0)=1, x, y)", 'this equation', calls('ifactor')],
+    ["desolve(y'=y+0*ifactor(2^257-1) ∧ y(0)=1, x, y)", 'this equation', calls('ifactor')],
+    ["desolve(y(0)=1 and y'=y+0*ifactor(2^257-1), x, y)", 'this equation', calls('ifactor')],
+    ["desolve([y(0)=1, y'=y+0*ifactor(2^257-1)], x, y)", 'this equation', calls('ifactor')],
+    ["y'=y+0*ifactor(2^257-1), y(0)=1", 'this equation', calls('ifactor')],
+    ["[y'=y+0*ifactor(2^257-1), y(0)=1]", 'this equation', calls('ifactor')],
+    ["desolve([y'=z+0*ifactor(2^257-1), z'=-y], x)", 'this system', calls('ifactor')],
+    // A quote is no shelter (the probe below), so what it holds is read too.
+    ["desolve(y'=y+quote(ifactor(2^257-1)), x, y)", 'this equation', calls('ifactor')],
+    ["desolve(y'=y+0*eval(ifactor(2^257-1)), x, y)", 'this equation', calls('eval')],
+    ["desolve(y'=y+0*apply(ifactor,[2^257-1]), x, y)", 'this equation', calls('apply')],
+    // A group applied as a function: no name in front of the bracket.
+    ["desolve(y'=y+0*(ifactor)(2^257-1), x, y)", 'this equation', names('ifactor')],
+    // Loops call nothing at all.
+    ["desolve(y'=y+0*(while 1 do 1 od), x, y)", 'this equation', names('while')],
+    ["desolve(y'=y+0*(for k from 1 to 10^9 do od), x, y)", 'this equation', names('for')],
+    ["desolve(y'=y+0*(repeat 1 until 0), x, y)", 'this equation', names('repeat')],
+    ["desolve(y'=y+0*seq(k,k,1,10^7), x, y)", 'this equation', calls('seq')],
+    [
+      "desolve(y'=y+0*(k$(k=1..10^7)), x, y)",
+      'this equation',
+      /it contains "\$", which an equation/,
+    ],
+    ['desolve(diff(y(x),x$(10^7))+y(x)=0, x, y)', 'this equation', /it contains "\$"/],
+    // Glyphs the engine reads as commands, and an operator spelling of a
+    // power: each held the worker 10s on this branch's first version.
+    ["desolve(y'=y+∑(1/(k^3+2),k,1,10^4), x, y)", 'this equation', /it contains "∑"/],
+    ["desolve([y'=z+∑(1/(k^3+2),k,1,10^4), z'=-y], x)", 'this system', /it contains "∑"/],
+    ["desolve(y'=y*((x+1)&^300), x, y)", 'this equation', /it contains "&"/],
+    // A reserved name as a condition's VALUE: no call, so the condition's own
+    // check admits it, and the folded text is where it is refused.
+    ["desolve([y'=z, z'=-y, y(0)=undef, z(0)=undef], x)", 'this system', names('undef')],
+    ["desolve([y'=z, z'=-y, y(0)=epsilon, z(0)=0], x)", 'this system', names('epsilon')],
+    ["desolve(y'=y, y(0)=restart, x, y)", 'this equation', names('restart')],
+    ["desolve(y'=y and y(0)=epsilon, x, y)", 'this equation', names('epsilon')],
+  ])('refuses %s by name', async (problem, what, reason) => {
+    await refusedQuickly(problem, new RegExp(`cannot solve ${what} — ${reason.source}`));
+  });
+
+  // Ordinary equations still answer, and verify: the logistic, Gompertz and
+  // y·ln(y) equations, forcing terms in exp, sin and Heaviside, parameters
+  // and functions of the caller's own, and a system.
+  it.each([
+    ["desolve(y'=r*y*(1-y/K), t, y)", /^Result: \[-K\*exp\(r\*t\)\/\(-exp\(r\*t\)\+c_0\)\]$/m],
+    ["desolve(y'=r*y*ln(K/y), t, y)", /^Result: \[K\/exp\(exp\(-r\*t\+c_0\)\)\]$/m],
+    ["desolve(y'=y*ln(y), x, y)", /^Result: \[exp\(exp\(x-c_0\)\)\]$/m],
+    ["desolve(y'+y=exp(-x), x, y)", /^Result: c_0\*exp\(-x\)\+x\*exp\(-x\)$/m],
+    ["desolve(y''+y=sin(2*x), x, y)", /^Result: c_0\*cos\(x\)\+c_1\*sin\(x\)-sin\(2\*x\)\/3$/m],
+    ["desolve(y'=f(x)*y, x, y)", /^Result: c_0\*exp\(-integrate\(-\(f\(x\)\),x\)\)$/m],
+    ["desolve(L*I'+R*I=V, t, I)", /^Result: \(R\*c_0\*exp\(-R\*t\/L\)\+V\)\/R$/m],
+    ['desolve(diff(y(x),x$2)+y(x)=0, x, y)', /^Result: c_0\*cos\(x\)\+c_1\*sin\(x\)$/m],
+    ["desolve(y'=y AND y(0)=1, x, y)", /^Result: exp\(x\)$/m],
+    ["desolve([y'=z+exp(x), z'=-y], x)", /^Result: \[\[\(2\*c_0\*cos\(x\)/m],
+  ])('still answers %s', async (problem, expected) => {
+    const r = await computeHandler({ problem });
+    expect(r.isError, text(r)).toBe(false);
+    expect(text(r)).toMatch(expected);
+    expect(text(r)).toMatch(/Verified: ✓/);
+  });
+
+  // The allowlist's measurement, pinned: every function an equation may name
+  // of the CAS's own answers quickly on a 140-digit constant and as the
+  // forcing term of a second-order equation on 3^140+2, with a caller sharing
+  // the worker answered too.
+  it.each(['abs', 'sign', 'erf', 'Heaviside', 'Dirac', 'Si', 'Ci', 'Ei', 'floor', 'Gamma'])(
+    'admits %s on 140-digit arguments, inside the budget',
+    async (fn) => {
+      for (const problem of [
+        `desolve(y'=y+0*${fn}(10^140+7), x, y)`,
+        `desolve(y''+y=${fn}(3^140+2), x, y)`,
+      ]) {
+        victims += 1;
+        const started = Date.now();
+        const [r, victim] = await Promise.all([
+          computeHandler({ problem }),
+          computeHandler({ problem: `desolve(y'=2*y, y(0)=${victims + 2}, x, y)` }),
+        ]);
+        expect(text(r)).not.toMatch(/timed out|worker exited|RuntimeError|memory access/);
+        expect(text(r)).not.toMatch(/cannot solve this equation — it (calls|names)/);
+        expect(Date.now() - started).toBeLessThan(2_000);
+        expect(text(victim)).toMatch(new RegExp(`^Result: ${victims + 2}\\*exp\\(2\\*x\\)$`, 'm'));
+      }
+    }
+  );
+
+  it.each([
+    ["desolve(y'=y+0*max(10^140+7,3), x, y)", /^Result: c_0\*exp\(x\)$/m],
+    ["desolve(y''+y=min(3^140+2,x), x, y)", /^Result: /m],
+  ])('admits %s inside the budget', async (problem, expected) => {
+    const started = Date.now();
+    const r = await computeHandler({ problem });
+    expect(text(r)).toMatch(expected);
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
+
+  // Heaviside's answer is a piecewise the verifier does not mark; it answers.
+  it('still answers a Heaviside forcing term', async () => {
+    const r = await computeHandler({ problem: "desolve(y'+2*y=Heaviside(x-pi), y(0)=0, x, y)" });
+    expect(r.isError, text(r)).toBe(false);
+    expect(text(r)).toMatch(
+      /^Result: exp\(-2\*x\)\*piecewise\(\(-pi\)>\(-x\),1\/2\*exp\(2\*x\),0\)$/m
+    );
+  });
+
+  // The mechanisms the name bound rests on, probed on the engine so a Giac
+  // that changes is noticed: desolve evaluates what a quote holds (ifactor's
+  // value comes back in the answer), and a sequence of ten million terms
+  // kills the worker outright, which then recycles.
+  it('pins what a quote and seq do inside desolve', async () => {
+    await expect(giacEngine.evaluate("desolve(y'=y+quote(ifactor(2^64+1)),x,y)")).resolves.toBe(
+      'c_0*exp(x)-18446744073709551617'
+    );
+    const started = Date.now();
+    await expect(giacEngine.evaluate("desolve(y'=y+0*seq(k,k,1,10^7),x,y)")).rejects.toThrow(
+      /RuntimeError: unreachable/
+    );
+    expect(Date.now() - started).toBeLessThan(5_000);
+    await expect(giacEngine.evaluate('2+3')).resolves.toBe('5');
+  }, 30_000);
 });

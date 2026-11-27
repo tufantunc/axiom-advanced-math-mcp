@@ -1,6 +1,6 @@
 import { stripEnclosingBrackets } from './compute/arg-parsing.js';
 import { excerpt, nestingDepth } from './output-cleanup.js';
-import { conditionCallError } from './ode-cost-bounds.js';
+import { conditionCallError } from './ode-name-bounds.js';
 import { factorialLog10, tokenizeMagnitude, type MagnitudeToken } from './ode-text-tokens.js';
 import { unicodeToAscii } from './unicode-normalize.js';
 
@@ -206,7 +206,7 @@ function factorialDigits(n: number): number {
  *     the engine handles. Kept as a parity bound so the two paths cannot drift
  *     into different rules, with that cost stated rather than implied away.
  *
- * A fourth axis, COST, is conditionCallError's in ode-cost-bounds.ts: what a
+ * A fourth axis, COST, is conditionCallError's in ode-name-bounds.ts: what a
  * condition calls. It needs the problem's `unknowns`, because a condition's
  * own subject (`y(0)`) is a call as far as the text can tell, and only the
  * caller knows which name is the function being solved for.
@@ -839,7 +839,7 @@ function denotedDigits(
  * cannot be by anything shaped like this: measured, `comb(100000,50000)` returns
  * a 30,101-character answer and leaves the worker dead, and `perm(50000,25000)`
  * and `sum(k!,k,1,20000)` trap outright. That is a COST, and in a condition
- * conditionCallError (ode-cost-bounds.ts) refuses each of those calls by name;
+ * conditionCallError (ode-name-bounds.ts) refuses each of those calls by name;
  * on the other channels this function guards it remains open.
  */
 export function implausibleMagnitude(raw: string): string | undefined {

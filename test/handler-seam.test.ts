@@ -1154,7 +1154,7 @@ describe('spellings the router has to tell apart', () => {
 
     it('does not ship [] when the rewritten form has no solution', async () => {
       const r = await computeHandler({
-        problem: "desolve([y'=z, z'=-y, y(0)=undef, z(0)=undef], x)",
+        problem: "desolve([y'=z, z'=-y, y(0)=0/0, z(0)=0/0], x)",
       });
       expect(r.isError).toBe(true);
       expect(text(r)).not.toMatch(/The answer is \[\]/);
@@ -1220,8 +1220,9 @@ describe('spellings the router has to tell apart', () => {
     // deleted with the suite green. The exception is `ilaplace(`, which has never
     // been observed without `poly1[` beside it, so no input separates them.
     it.each([
-      // Y(0)=[undef,undef] -> Result: []
-      ["desolve([y'=z, z'=-y, y(0)=undef, z(0)=undef], x)", '[]'],
+      // Y(0)=[0/0,0/0], which the CAS reads as [undef,undef] -> Result: []. Spelled
+      // 0/0 because a bare `undef` is now refused by name before the engine.
+      ["desolve([y'=z, z'=-y, y(0)=0/0, z(0)=0/0], x)", '[]'],
       // An initial-condition VALUE is the one part of the command the probe
       // never sees, so a bad one reaches desolve intact -> Result: GIAC_ERROR: ...
       ["desolve([y'=z, z'=-y, y(0)=sqrt, z(0)=0], x)", 'GIAC_ERROR'],
@@ -2323,7 +2324,7 @@ describe('spellings the router has to tell apart', () => {
 
     it('does blame them when they were', async () => {
       const r = await computeHandler({
-        problem: "desolve([y'=z, z'=-y, y(0)=undef, z(0)=undef], x)",
+        problem: "desolve([y'=z, z'=-y, y(0)=0/0, z(0)=0/0], x)",
       });
       expect(text(r)).toMatch(/check the initial conditions/);
     });
