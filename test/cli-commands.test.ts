@@ -190,6 +190,24 @@ describe('runCommand — verify', () => {
     30_000
   );
 
+  // The substitution residual is read by the same reader as solve's self-check:
+  // `x=2/k` leaves 2/k*k-2, exactly 0, which parseFloat once read as 2 (FALSE).
+  // TRUE is exit 0 / "true", FALSE exit 2 / "false", and an undecidable
+  // residual (abs(k)-k) exit 1 with nothing on stdout — never TRUE.
+  it.each([
+    ['x=2/k satisfies x*k=2', 0, 'true'],
+    ['x=3/k satisfies x*k=2', 2, 'false'],
+    ['x=abs(k) satisfies x=k', 1, ''],
+  ])(
+    '%s exits %i in quiet mode',
+    async (claim, code, stdout) => {
+      capture();
+      expect(await runCommand({ kind: 'verify', claim, output: 'quiet' })).toBe(code);
+      expect(out.join('').trim()).toBe(stdout);
+    },
+    30_000
+  );
+
   it('text mode still reports the verdict through the exit code', async () => {
     capture();
     const code = await runCommand({

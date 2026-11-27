@@ -4,7 +4,7 @@ import { validateEquation } from './expression-validator.js';
 import { unicodeToAscii } from './unicode-normalize.js';
 import { evalWithLatex } from './giac-eval.js';
 import { isEngineFailure, listToSet, splitTopLevel } from './output-cleanup.js';
-import { verifySolveSet, verifySystem, type VerificationResult } from './self-verify.js';
+import { verifySolveSet, verifySystemSolutions, type VerificationResult } from './self-verify.js';
 
 /** Parse a raw Giac solve result (list[...] / [] / [..]) into top-level member strings. */
 export function parseSolutions(raw: string): string[] {
@@ -76,7 +76,8 @@ interface Candidate {
 
 interface Attempt {
   giacExpr: string;
-  verification: VerificationResult;
+  /** Undefined when the substitution check could not decide either way. */
+  verification: VerificationResult | undefined;
   note?: string;
 }
 
@@ -122,7 +123,7 @@ export async function solveEquationHandler(args: Record<string, unknown>) {
       if (!raw || isEngineFailure(raw)) continue;
       const verification = await verifySolveSet(equation, variable, parseSolutions(raw));
       primary ??= { giacExpr, verification, note: undefined };
-      if (verification.verified) {
+      if (verification?.verified) {
         chosen = { giacExpr, verification, note: cand.note };
         break;
       }
@@ -168,21 +169,7 @@ export async function solveSystemHandler(args: Record<string, unknown>) {
     const verify = async (result: string): Promise<VerificationResult | undefined> => {
       const tuples = parseTuples(result);
       if (tuples.length === 0) return undefined; // unparseable / no solution → skip
-      for (const tup of tuples) {
-        const v = await verifySystem(equations, variables, tup);
-        if (!v.verified) {
-          return {
-            verified: false,
-            method: 'substitution',
-            detail: `${tuples.length} solution(s); at least one did not satisfy all equations`,
-          };
-        }
-      }
-      return {
-        verified: true,
-        method: 'substitution',
-        detail: `${tuples.length} solution(s) satisfy all equations`,
-      };
+      return verifySystemSolutions(equations, variables, tuples);
     };
     return evalWithLatex({
       giacExpr,

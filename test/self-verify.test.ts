@@ -14,36 +14,36 @@ beforeAll(async () => {
 describe('verifySolveSet', () => {
   it('verifies correct real roots', async () => {
     const v = await verifySolveSet('x^2-4', 'x', ['-2', '2']);
-    expect(v.verified).toBe(true);
-    expect(v.method).toBe('substitution');
-    expect(v.detail).toContain('2/2');
+    expect(v?.verified).toBe(true);
+    expect(v?.method).toBe('substitution');
+    expect(v?.detail).toContain('2/2');
   });
   it('verifies complex roots', async () => {
     const v = await verifySolveSet('x^2+1', 'x', ['i', '-i']);
-    expect(v.verified).toBe(true);
-    expect(v.detail).toContain('2/2');
+    expect(v?.verified).toBe(true);
+    expect(v?.detail).toContain('2/2');
   });
   it('rejects a wrong root', async () => {
-    expect((await verifySolveSet('x^2-4', 'x', ['-2', '3'])).verified).toBe(false);
+    expect((await verifySolveSet('x^2-4', 'x', ['-2', '3']))?.verified).toBe(false);
   });
   it('treats an empty solution set as unverified', async () => {
     const v = await verifySolveSet('x^2+1', 'x', []);
-    expect(v.verified).toBe(false);
+    expect(v?.verified).toBe(false);
   });
   it('handles an equation written with =', async () => {
-    expect((await verifySolveSet('x^2=4', 'x', ['-2', '2'])).verified).toBe(true);
+    expect((await verifySolveSet('x^2=4', 'x', ['-2', '2']))?.verified).toBe(true);
   });
 });
 
 describe('verifySystem', () => {
   it('verifies a correct tuple', async () => {
-    expect((await verifySystem(['x+y=3', 'x-y=1'], ['x', 'y'], ['2', '1'])).verified).toBe(true);
+    expect((await verifySystem(['x+y=3', 'x-y=1'], ['x', 'y'], ['2', '1']))?.verified).toBe(true);
   });
   it('rejects a tuple/variable count mismatch', async () => {
-    expect((await verifySystem(['x+y=3'], ['x', 'y'], ['2'])).verified).toBe(false);
+    expect((await verifySystem(['x+y=3'], ['x', 'y'], ['2']))?.verified).toBe(false);
   });
   it('rejects a wrong tuple', async () => {
-    expect((await verifySystem(['x+y=3', 'x-y=1'], ['x', 'y'], ['3', '1'])).verified).toBe(false);
+    expect((await verifySystem(['x+y=3', 'x-y=1'], ['x', 'y'], ['3', '1']))?.verified).toBe(false);
   });
 });
 

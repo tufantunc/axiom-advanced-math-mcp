@@ -1,10 +1,11 @@
 import { giacEngine } from '../giac/index.js';
-import { MAX_ENGINE_DEPTH } from './giac-eval.js';
+import { MAX_ENGINE_DEPTH, readableBack } from './giac-eval.js';
 import {
   escapeForRegExp,
   giacNumber,
   nestingDepth,
   isPrintedZero,
+  printedReal,
   splitTopLevel,
 } from './output-cleanup.js';
 import { stripEnclosingBrackets } from './compute/arg-parsing.js';
@@ -34,18 +35,177 @@ function toZeroForm(equation: string): string {
   return `(${equation})`;
 }
 
-/** True iff evalf(subst(zeroForm, substs)) is ~0, with a symbolic fallback. Never throws. */
-async function isZeroAfterSubst(zeroForm: string, substs: string): Promise<boolean> {
-  try {
-    const r = await giacEngine.evaluate(`evalf(subst(${zeroForm},${substs}))`);
-    const n = Number.parseFloat(r);
-    if (!Number.isNaN(n)) return Math.abs(n) < 1e-8;
-    // Non-numeric result (e.g. a complex residual like "0.+0.*i"): fall back to
-    // a symbolic zero check on the un-evalf'd substitution.
-    return await simplifiesToZero(`subst(${zeroForm},${substs})`);
-  } catch {
-    return false;
+/** Largest |residual| a substituted root may leave and still count as a root. */
+const ROOT_TOLERANCE = 1e-8;
+
+/**
+ * Smallest |residual| at a sampled parameter value that counts as evidence
+ * against a root — the floor disproveResidual uses for the ODE check. Between
+ * this and ROOT_TOLERANCE a sample is neither, and the residual is undecided.
+ */
+const DISPROOF_FLOOR = 1e-6;
+
+/**
+ * Parameter values the sampled disproof tries, in tenths. Positive, because a
+ * root Giac returns for a parametric radical equation is typically valid on a
+ * negative or bounded range only: `solve(sqrt(x+k)=x, x)` includes
+ * `(1-√(4k+1))/2`, which is a root for -1/4 ≤ k ≤ 0 and extraneous for every
+ * k > 0. The k-th parameter gets the base plus 3k tenths, so no two parameters
+ * share a value and `a-b` cannot cancel by accident.
+ */
+const SAMPLE_TENTHS = [13, 23, 7];
+
+/**
+ * What substituting a candidate back leaves: provably zero, shown nonzero, or
+ * something this check cannot decide either way.
+ */
+export type Residual = 'zero' | 'nonzero' | 'undecided';
+
+/** A residual verdict, and the engine's text it was read from. */
+export interface ResidualReading {
+  residual: Residual;
+  printed: string;
+}
+
+/**
+ * The magnitude of a printed engine value when it is a pure number, else
+ * undefined.
+ *
+ * Read whole by printedReal, never by its leading digits. `parseFloat` read the
+ * residual of `solve(x*k=2, x)`, which evalf leaves as `2.0/k*k-2.0`, as the
+ * number 2, and a correct answer was reported as disproved — while `k*x=2`,
+ * whose residual happens to print with a letter first, verified ✓. Infinity is
+ * a magnitude: a root at a pole leaves `+infinity`, and that is a disproof.
+ */
+function magnitudeOf(printed: string): number | undefined {
+  const value = Math.abs(printedReal(printed));
+  return Number.isNaN(value) ? undefined : value;
+}
+
+/**
+ * `abs(evalf(expr))`, as printed. `abs` folds a complex residual into one real
+ * (`1+2*i` reads as 2.236, where the complex spelling is not a number at all).
+ *
+ * In THAT order: `evalf(abs(...))` makes Giac write |z| out as sqrt(re²+im²)
+ * symbolically before evaluating, and for a parameterised complex root — the
+ * thirty roots of `csolve(x^30=k, x)` — that ran into 10 s timeouts and WASM
+ * traps that recycled the shared worker, where evaluating first takes
+ * milliseconds and leaves a short symbolic remainder for the exact step.
+ */
+async function evaluatedMagnitude(expr: string): Promise<{ printed: string; value?: number }> {
+  const printed = (await giacEngine.evaluate(`abs(evalf(${expr}))`)).trim();
+  return { printed, value: magnitudeOf(printed) };
+}
+
+function residualOf(magnitude: number): Residual {
+  return magnitude < ROOT_TOLERANCE ? 'zero' : 'nonzero';
+}
+
+/**
+ * Whether a symbolic residual stays clear of zero at every sampled value of its
+ * free parameters.
+ *
+ * `simplify` is not a zero test, so a residual it leaves symbolic is not
+ * evidence by itself. But a root Giac returns that is not a root for most of
+ * its parameter range must still be reported: before this check existed such
+ * an answer lost its ✗ and shipped with no verdict at all. Sampling the RAW
+ * substitution, not the simplified one, because `simplify` assumes a branch:
+ * it reduces the residual of `(1-√(4k+1))/2` in `sqrt(x+k)=x` to `√(4k+1)-1`,
+ * which is wrong on exactly the range where that root is valid. One sample at
+ * or near zero, or one that is not a finite number, and nothing is claimed —
+ * `abs(k)-k` vanishes at every positive k and stays undecided.
+ */
+async function nonzeroAtSamples(substituted: string): Promise<{ printed: string } | undefined> {
+  const listed = (await giacEngine.evaluate(`lname(${substituted})`)).trim();
+  const names = splitTopLevel(stripEnclosingBrackets(listed), ',')
+    .map((n) => n.trim())
+    .filter((n) => n.length > 0);
+  // `undef` is what Giac makes of text it could not read; never a parameter.
+  if (names.length === 0 || names.some((n) => n === 'undef' || !/^[A-Za-z_]\w*$/.test(n))) {
+    return undefined;
   }
+  const seen: string[] = [];
+  for (const base of SAMPLE_TENTHS) {
+    const values = names.map((_, k) => `${base + 3 * k}/10`);
+    const at = await evaluatedMagnitude(
+      `subst(${substituted},[${names.join(',')}],[${values.join(',')}])`
+    );
+    if (at.value === undefined || !Number.isFinite(at.value) || at.value < DISPROOF_FLOOR) {
+      return undefined;
+    }
+    seen.push(`${at.printed} at ${names.map((n, k) => `${n}=${values[k]}`).join(',')}`);
+  }
+  return { printed: seen.join(', ') };
+}
+
+/**
+ * Substitutes `substs` into an expression that should vanish and reads what is
+ * left. Never throws. The one reader of a substitution residual, shared by
+ * solve's self-check and the verify tool, so a fix to it reaches both.
+ *
+ * Numerically first — cheap, and enough for anything without a free symbol.
+ * A residual that still mentions a parameter is simplified EXACTLY before
+ * anything is read from it (`2/k*k-2` is 0, `3/k*k-2` is 1). What is still
+ * symbolic after that is disproved only by sampling its parameters
+ * (nonzeroAtSamples), and otherwise undecided: never ✓, and never ✗ by its
+ * leading digits.
+ */
+export async function substitutionResidual(
+  zeroForm: string,
+  substs: string
+): Promise<ResidualReading> {
+  const substituted = `subst(${zeroForm},${substs})`;
+  try {
+    const numeric = await evaluatedMagnitude(substituted);
+    if (numeric.value !== undefined) {
+      return { residual: residualOf(numeric.value), printed: numeric.printed };
+    }
+    const exact = (await giacEngine.evaluate(`simplify(${substituted})`)).trim();
+    if (isPrintedZero(exact)) return { residual: 'zero', printed: exact };
+    // Printed engine output goes back to the engine only within the bound its
+    // parser survives; past it, a trap would recycle the shared worker.
+    if (readableBack(exact)) {
+      const settled = await evaluatedMagnitude(exact);
+      if (settled.value !== undefined) {
+        return { residual: residualOf(settled.value), printed: settled.printed };
+      }
+    }
+    const sampled = await nonzeroAtSamples(substituted);
+    if (sampled) return { residual: 'nonzero', printed: sampled.printed };
+    return { residual: 'undecided', printed: exact };
+  } catch (error) {
+    return {
+      residual: 'undecided',
+      printed: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+async function residualAfterSubst(zeroForm: string, substs: string): Promise<Residual> {
+  return (await substitutionResidual(zeroForm, substs)).residual;
+}
+
+/**
+ * The verdict over several residuals: ✗ if any is disproved, no verdict if
+ * any is undecided, ✓ only when every one is zero.
+ */
+function substitutionVerdict(
+  residuals: Residual[],
+  what: (ok: number, total: number) => string
+): VerificationResult | undefined {
+  const ok = residuals.filter((r) => r === 'zero').length;
+  const undecided = residuals.filter((r) => r === 'undecided').length;
+  const disproved = residuals.length - ok - undecided;
+  if (disproved === 0 && undecided > 0) return undefined;
+  let detail = what(ok, residuals.length);
+  if (undecided > 0) detail += `; ${undecided} undecided`;
+  return { verified: disproved === 0, method: 'substitution', detail };
+}
+
+/** The least favourable of several residuals: nonzero, then undecided, then zero. */
+function worstOf(residuals: Residual[]): Residual {
+  if (residuals.includes('nonzero')) return 'nonzero';
+  return residuals.includes('undecided') ? 'undecided' : 'zero';
 }
 
 /**
@@ -66,8 +226,7 @@ function allZero(vector: string): boolean {
 async function simplifiesToZero(expr: string): Promise<boolean> {
   try {
     const r = await giacEngine.evaluate(`simplify(${expr})`);
-    const t = (r ?? '').trim();
-    return t === '0' || t === '0.0';
+    return isPrintedZero(r ?? '');
   } catch {
     return false;
   }
@@ -84,46 +243,85 @@ async function simplifiesToZero(expr: string): Promise<boolean> {
  * for its cache key too.
  */
 
+/**
+ * Substitutes each root back into the equation. Undefined (no verdict) when no
+ * root is disproved but some residual cannot be decided.
+ */
 export async function verifySolveSet(
   equation: string,
   variable: string,
   solutions: string[]
-): Promise<VerificationResult> {
-  const method = 'substitution';
+): Promise<VerificationResult | undefined> {
   if (solutions.length === 0) {
-    return { verified: false, method, detail: 'no solutions to verify' };
+    return { verified: false, method: 'substitution', detail: 'no solutions to verify' };
   }
   const zero = toZeroForm(unicodeToAscii(equation));
-  let ok = 0;
+  const residuals: Residual[] = [];
   for (const sol of solutions) {
-    if (await isZeroAfterSubst(zero, `${variable}=${sol}`)) ok++;
+    residuals.push(await residualAfterSubst(zero, `${variable}=${sol}`));
   }
-  return {
-    verified: ok === solutions.length,
-    method,
-    detail: `${ok}/${solutions.length} roots satisfy the equation`,
-  };
+  return substitutionVerdict(residuals, (ok, n) => `${ok}/${n} roots satisfy the equation`);
 }
 
+/**
+ * Each equation's residual at one solution tuple, or undefined when the tuple
+ * does not match the variables.
+ */
+async function tupleResiduals(
+  equations: string[],
+  variables: string[],
+  tuple: string[]
+): Promise<Residual[] | undefined> {
+  if (tuple.length === 0 || tuple.length !== variables.length) return undefined;
+  const substs = variables.map((v, i) => `${v}=${tuple[i]}`).join(',');
+  const residuals: Residual[] = [];
+  for (const eq of equations) {
+    residuals.push(await residualAfterSubst(toZeroForm(unicodeToAscii(eq)), substs));
+  }
+  return residuals;
+}
+
+/**
+ * Substitutes one solution tuple into every equation. Undefined (no verdict)
+ * when no equation is disproved but some residual cannot be decided.
+ */
 export async function verifySystem(
   equations: string[],
   variables: string[],
   tuple: string[]
-): Promise<VerificationResult> {
-  const method = 'substitution';
-  if (tuple.length === 0 || tuple.length !== variables.length) {
-    return { verified: false, method, detail: 'solution tuple does not match variables' };
+): Promise<VerificationResult | undefined> {
+  const residuals = await tupleResiduals(equations, variables, tuple);
+  if (residuals === undefined) {
+    return {
+      verified: false,
+      method: 'substitution',
+      detail: 'solution tuple does not match variables',
+    };
   }
-  const substs = variables.map((v, i) => `${v}=${tuple[i]}`).join(',');
-  let ok = 0;
-  for (const eq of equations) {
-    if (await isZeroAfterSubst(toZeroForm(unicodeToAscii(eq)), substs)) ok++;
+  return substitutionVerdict(residuals, (ok, n) => `${ok}/${n} equations satisfied`);
+}
+
+/**
+ * Every solution tuple of a system, under the same rule as one tuple's
+ * equations: ✗ if any tuple is disproved (or does not match the variables),
+ * no verdict if any is undecided, ✓ only when every tuple satisfies every
+ * equation.
+ */
+export async function verifySystemSolutions(
+  equations: string[],
+  variables: string[],
+  tuples: string[][]
+): Promise<VerificationResult | undefined> {
+  const perTuple: Residual[] = [];
+  for (const tuple of tuples) {
+    const residuals = await tupleResiduals(equations, variables, tuple);
+    perTuple.push(residuals === undefined ? 'nonzero' : worstOf(residuals));
   }
-  return {
-    verified: ok === equations.length,
-    method,
-    detail: `${ok}/${equations.length} equations satisfied`,
-  };
+  return substitutionVerdict(perTuple, (ok, n) =>
+    ok === n
+      ? `${n} solution(s) satisfy all equations`
+      : `${ok}/${n} solution(s) satisfy all equations`
+  );
 }
 
 export async function verifyFactor(
@@ -232,7 +430,7 @@ export async function verifyOdeSystem(
       const settled = await evaluate(`evalf(subst(${residual},${variable}=13/10))`);
       const magnitude = Math.max(
         ...splitTopLevel(stripEnclosingBrackets(settled.trim()), ',').map((c) =>
-          Math.abs(Number(c.trim()))
+          Math.abs(printedReal(c))
         )
       );
       if (!Number.isFinite(magnitude) || magnitude < 1e-6) return undefined;
@@ -674,7 +872,7 @@ async function disproveResidual(
         .join(',');
       const substs = [`${variable}=${point}`, ...(constants ? [constants] : [])].join(',');
       const settled = await evaluate(`evalf(subst(${residual},${substs}))`);
-      const here = Math.abs(Number(settled.trim()));
+      const here = Math.abs(printedReal(settled));
       // Max over the constant assignments, as before: a solution FAMILY has to
       // satisfy the equation for every constant, so one assignment leaving a
       // residual is enough at this point.

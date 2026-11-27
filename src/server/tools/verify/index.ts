@@ -8,6 +8,8 @@ import {
   unicodeToAscii,
 } from '../unicode-normalize.js';
 import { rewriteCombinatorics } from '../combinatorics-rewrite.js';
+import { printedReal } from '../output-cleanup.js';
+import { substitutionResidual } from '../self-verify.js';
 import {
   containsUndefinedMarker,
   normalizeSide,
@@ -176,7 +178,8 @@ async function verifyNumericDirect(lhs: string, rhs: string): Promise<CheckOutco
   // No variables — direct numeric evaluation
   const lhsVal = await giacEngine.evaluate(`evalf(${lhs})`);
   const rhsVal = await giacEngine.evaluate(`evalf(${rhs})`);
-  const diff = Math.abs(Number.parseFloat(lhsVal) - Number.parseFloat(rhsVal));
+  // Read whole: parseFloat would take `2.0+k` for 2.
+  const diff = Math.abs(printedReal(lhsVal) - printedReal(rhsVal));
   // A non-numeric side leaves diff NaN: nothing was compared, so this is
   // "could not check", not "checked and unequal".
   if (Number.isNaN(diff)) {
@@ -213,8 +216,14 @@ async function verifyNumericSampled(
       for (const v of vars) {
         substExpr = `subst(${substExpr}, ${v}=${val})`;
       }
-      const result = await giacEngine.evaluate(`evalf(${substExpr})`);
-      const numResult = Number.parseFloat(result);
+      // |difference|, read whole. `abs` keeps a complex counterexample: at
+      // x=-1, `ln(x^2) = 2*ln(x)` differs by -6.28*i, which only a prefix read
+      // of `-6.28318530718*i` used to catch — read whole it is not a number,
+      // and skipping it certified the false identity. A residual still
+      // carrying a symbol is not a number either, whatever digits it starts
+      // with, and is skipped as an undefined point.
+      const result = await giacEngine.evaluate(`abs(evalf(${substExpr}))`);
+      const numResult = printedReal(result);
 
       if (!Number.isFinite(numResult)) {
         continue; // Skip undefined points
@@ -225,7 +234,7 @@ async function verifyNumericSampled(
         passCount++;
       } else {
         const where = vars.map((v) => `${v}=${val}`).join(', ');
-        failures.push(`At ${where}: diff = ${numResult}`);
+        failures.push(`At ${where}: |diff| = ${numResult}`);
       }
     } catch {
       // Skip points that cause evaluation errors
@@ -249,7 +258,9 @@ async function verifyNumericSampled(
 async function verifyNumeric(lhs: string, rhs: string): Promise<CheckOutcome> {
   try {
     // Extract variables
-    const varsResult = await giacEngine.evaluate(`lname(${lhs})`);
+    // Both sides' names: a symbol only the right side carries was left
+    // unsubstituted, and the comparison then read a symbolic residual.
+    const varsResult = await giacEngine.evaluate(`lname((${lhs}) - (${rhs}))`);
     const vars = parseVariableList(varsResult);
 
     // awaited, not bare-returned: a rejection inside an arm must land in this
@@ -286,30 +297,27 @@ async function verifySolution(
       expr = equation;
     }
 
-    const substituted = `evalf(subst(${expr}, ${variable}=${value}))`;
-    const result = await giacEngine.evaluate(substituted);
-    const numResult = Number.parseFloat(result);
-
-    // No number back means the substitution did not produce something
-    // comparable to zero — nothing was checked. An '=' in the answer is an
-    // equation OBJECT, not a number: parseFloat stops at the '=' and would
-    // certify its left side (`0.0=5.0` read as 0 ≈ 0) — unreachable behind
-    // the shape guards today, kept as the belt at this parse site.
-    if (result.includes('=') || Number.isNaN(numResult)) {
+    // The same reader solve's self-check uses, so the two cannot disagree on
+    // one substitution. Reading the evalf'd residual with parseFloat refuted a
+    // true claim: `x=2/k satisfies x*k=2` leaves `2.0/k*k-2.0`, read as 2, and
+    // printed FALSE, while `k*x=2` (residual printed letter-first) was UNKNOWN.
+    // An '=' in the reading is an equation OBJECT, not a number; the reader
+    // never takes one for a value, and the shape guards refuse it earlier.
+    const { residual, printed } = await substitutionResidual(expr, `${variable}=${value}`);
+    if (residual === 'undecided') {
       return {
         verified: false,
         evaluated: false,
-        detail: `Substituting ${variable}=${value} produced no number: ${result}`,
+        detail: `Substituting ${variable}=${value} left a residual this check cannot decide: ${printed}`,
       };
     }
-
-    const verified = Math.abs(numResult) < 1e-8;
+    const verified = residual === 'zero';
     return {
       verified,
       evaluated: true,
       detail: verified
-        ? `Substituting ${variable}=${value}: equation evaluates to ${result} ≈ 0 ✓`
-        : `Substituting ${variable}=${value}: equation evaluates to ${result} ≠ 0`,
+        ? `Substituting ${variable}=${value}: equation evaluates to ${printed} ≈ 0 ✓`
+        : `Substituting ${variable}=${value}: equation evaluates to ${printed} ≠ 0`,
     };
   } catch (error) {
     return {
