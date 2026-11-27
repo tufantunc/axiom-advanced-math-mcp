@@ -12,6 +12,7 @@ export interface DatasetLimits {
   mathLevel5: number;
   omniMath: number;
   cas: number;
+  multivar: number;
 }
 
 export interface BenchmarkConfig {
@@ -45,6 +46,7 @@ const QUICK_SIZES: DatasetLimits = {
   mathLevel5: 50,
   omniMath: 50,
   cas: 60,
+  multivar: 40,
 };
 
 const FULL_SIZES: DatasetLimits = {
@@ -54,6 +56,7 @@ const FULL_SIZES: DatasetLimits = {
   mathLevel5: 635,
   omniMath: 400,
   cas: 240,
+  multivar: 40,
 };
 
 function parseMcpServerCmd(): string[] {
@@ -102,7 +105,8 @@ export function buildConfig(): BenchmarkConfig {
     args.includes('--math-l4') ||
     args.includes('--math-l5') ||
     args.includes('--olympiad') ||
-    args.includes('--cas');
+    args.includes('--cas') ||
+    args.includes('--multivar');
 
   const runGsm8k = !hasDatasetFlag || args.includes('--gsm8k');
   const runMathAll = !hasDatasetFlag || args.includes('--math');
@@ -111,6 +115,7 @@ export function buildConfig(): BenchmarkConfig {
   const runL5 = runMathAll || args.includes('--math-l5');
   const runOlympiad = !hasDatasetFlag || args.includes('--olympiad');
   const runCas = !hasDatasetFlag || args.includes('--cas');
+  const runMultivar = !hasDatasetFlag || args.includes('--multivar');
 
   const limits: DatasetLimits = {
     gsm8k: runGsm8k ? sizes.gsm8k : 0,
@@ -119,6 +124,7 @@ export function buildConfig(): BenchmarkConfig {
     mathLevel5: runL5 ? sizes.mathLevel5 : 0,
     omniMath: runOlympiad ? sizes.omniMath : 0,
     cas: runCas ? sizes.cas : 0,
+    multivar: runMultivar ? sizes.multivar : 0,
   };
 
   // --- Mode label (used in output filenames) ----------------------------
@@ -134,6 +140,7 @@ export function buildConfig(): BenchmarkConfig {
     if (args.includes('--math-l5')) parts.push('math-l5');
     if (args.includes('--olympiad')) parts.push('olympiad');
     if (args.includes('--cas')) parts.push('cas');
+    if (args.includes('--multivar')) parts.push('multivar');
     if (isQuickSize) parts.push('quick');
     mode = parts.join('-');
   }
