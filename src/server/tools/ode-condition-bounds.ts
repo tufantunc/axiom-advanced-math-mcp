@@ -1,11 +1,15 @@
 import { stripEnclosingBrackets } from './compute/arg-parsing.js';
-import { GIAC_NUMBER, excerpt, nestingDepth } from './output-cleanup.js';
+import { excerpt, nestingDepth } from './output-cleanup.js';
+import { conditionCallError } from './ode-cost-bounds.js';
+import { factorialLog10, tokenizeMagnitude, type MagnitudeToken } from './ode-text-tokens.js';
 import { unicodeToAscii } from './unicode-normalize.js';
 
 /**
- * Every bound on an initial condition — its length, its nesting depth, and the
- * size of the number it denotes — and everything else decidable about
- * condition text from the text alone.
+ * Every SIZE bound on an initial condition — its length, its nesting depth,
+ * and the size of the number it denotes — and everything else decidable about
+ * condition text from the text alone. Its COST — what it calls, and what the
+ * whole problem's numbers cost together — is ode-cost-bounds.ts's, which
+ * conditionBoundError applies alongside these.
  *
  * Split from the shape half of the same name (ode-system-shape.ts, which reads
  * the SYSTEM: members, equations, derivative targets) along the one seam that
@@ -13,8 +17,9 @@ import { unicodeToAscii } from './unicode-normalize.js';
  * right-hand side and each condition through implausibleMagnitude,
  * conditionBoundError and conditionsTogetherError below, while nothing in this
  * file imports a symbol from that one. A reverse import would mean the
- * extraction drew the boundary wrong — the three imports above are the same
- * leaf modules the shape half uses, so this module adds no new reach.
+ * extraction drew the boundary wrong — the imports above are the cost module
+ * and text-only leaves, all in the same guarded set as the shape half, so this
+ * module adds no new reach.
  *
  * The invariant is that nothing here EVALUATES anything, and it is checkable
  * rather than asserted. Three mechanisms, and the prose claims only what they
@@ -23,7 +28,7 @@ import { unicodeToAscii } from './unicode-normalize.js';
  *   - No `async` and no `await` in this file, and no engine symbol named in it.
  *     Both are text assertions in ode-system-shape-boundary.test.ts, which
  *     reads this file and the shape half together.
- *   - No path from this file, or from any of the three leaf modules it
+ *   - No path from this file, or from any module it
  *     imports, to `src/server/giac`. That is the real invariant, and only a
  *     walk of the import closure can state it — the same test does that walk,
  *     per guarded file, with this file as one entry of its own rather than
@@ -152,30 +157,6 @@ const MAX_CONDITION_DEPTH = 100;
  */
 const MAX_DENOTED_DIGITS = 3_000;
 
-/**
- * How many decimal digits n! has.
- *
- * Stirling with the 1/(12n) correction rather than a loop over k, because the
- * argument is caller text: `1000000000!` would walk a billion iterations to
- * reach a verdict this can state in closed form. Checked against the exact sum
- * of log10(k) at the sizes that decide anything — 1000! gives 2,568 both ways.
- *
- * Approximate is sound HERE specifically because it feeds a bound with a factor
- * of nine of headroom; the error is far below one digit for n ≥ 2, and this is
- * never used to report a value back to a caller as exact.
- *
- * stats-utils.ts exports `lgamma`, and `factorialLog10(n)` is `lgamma(n+1)/LN10`.
- * Stirling is kept anyway, deliberately: the closed form above is the argument
- * for why a billion-iteration argument costs nothing to bound, and importing it
- * would add a fourth module to the import closure this file's header reasons
- * about. Recorded so the next reader does not re-derive the comparison.
- */
-function factorialLog10(n: number): number {
-  if (n < 2) return 0;
-  const ln = n * Math.log(n) - n + 0.5 * Math.log(2 * Math.PI * n) + 1 / (12 * n);
-  return ln / Math.LN10;
-}
-
 function factorialDigits(n: number): number {
   return n < 2 ? 1 : Math.floor(factorialLog10(n)) + 1;
 }
@@ -224,8 +205,13 @@ function factorialDigits(n: number): number {
  *     counts: it is not load-bearing against a trap, AND it turns away inputs
  *     the engine handles. Kept as a parity bound so the two paths cannot drift
  *     into different rules, with that cost stated rather than implied away.
+ *
+ * A fourth axis, COST, is conditionCallError's in ode-cost-bounds.ts: what a
+ * condition calls. It needs the problem's `unknowns`, because a condition's
+ * own subject (`y(0)`) is a call as far as the text can tell, and only the
+ * caller knows which name is the function being solved for.
  */
-export function conditionBoundError(raw: string): string | undefined {
+export function conditionBoundError(raw: string, unknowns: readonly string[]): string | undefined {
   // ONE string for all three bounds. They measured different ones for a while:
   // magnitude read the normalised text (it has to — `unicodeToAscii` runs
   // downstream at giac-eval.ts, so the guard would otherwise be reading a
@@ -269,7 +255,9 @@ export function conditionBoundError(raw: string): string | undefined {
       'initial conditions are ordinary numbers'
     );
   }
-  return undefined;
+  // After magnitude, so a condition that is both too large and calls something
+  // keeps the magnitude wording the existing rows pin (`max(1000!^12,1)`).
+  return conditionCallError(condition, unknowns);
 }
 
 /**
@@ -352,61 +340,6 @@ type Magnitude =
 
 const UNREADABLE: Magnitude = { kind: 'unreadable' };
 const SYMBOLIC: Magnitude = { kind: 'symbolic' };
-
-type MagnitudeToken = {
-  kind: 'number' | 'name' | 'op' | 'separator';
-  text: string;
-  at: number;
-};
-
-const MAGNITUDE_NUMBER = new RegExp(`^${GIAC_NUMBER}`);
-
-/**
- * The condition's characters, as tokens. Never fails.
- *
- * A character this does not model becomes a SEPARATOR rather than aborting the
- * read, and that is load-bearing: aborting made one unmodelled character a
- * master key. `1000!^12%7` was admitted and evaluated — 152ms, having built the
- * 30,812-digit intermediate — because `%` ended the tokenizer and the whole
- * segment went unmeasured. As a separator it ends one run and starts another,
- * and the run before it is still charged.
- *
- * The numeric pattern is GIAC_NUMBER, the spelling this repo already exports,
- * rather than a second one written here. The local copy dropped the trailing
- * decimal form, so `100.!^200` read as unmodelled where `100!^200` was refused —
- * one character apart, opposite verdicts.
- */
-function tokenizeMagnitude(text: string): MagnitudeToken[] {
-  const tokens: MagnitudeToken[] = [];
-  let at = 0;
-  while (at < text.length) {
-    const rest = text.slice(at);
-    if (/^\s/.test(rest)) {
-      at += 1;
-      continue;
-    }
-    const number = MAGNITUDE_NUMBER.exec(rest)?.[0];
-    if (number !== undefined && Number.isFinite(Number(number))) {
-      tokens.push({ kind: 'number', text: number, at });
-      at += number.length;
-      continue;
-    }
-    const name = /^[A-Za-z_]\w*/.exec(rest)?.[0];
-    if (name !== undefined) {
-      tokens.push({ kind: 'name', text: name, at });
-      at += name.length;
-      continue;
-    }
-    const character = rest[0] ?? '';
-    tokens.push({
-      kind: '+-*/^!()[],'.includes(character) ? 'op' : 'separator',
-      text: character,
-      at,
-    });
-    at += 1;
-  }
-  return tokens;
-}
 
 /**
  * Whether a run left of an `=` is just naming the condition — `y(0)`.
@@ -905,8 +838,9 @@ function denotedDigits(
  * A NAMED function that computes a huge value is emphatically not covered, and
  * cannot be by anything shaped like this: measured, `comb(100000,50000)` returns
  * a 30,101-character answer and leaves the worker dead, and `perm(50000,25000)`
- * and `sum(k!,k,1,20000)` trap outright. That is the COST channel the conditions
- * scan already records as open, not a gap this function is close to closing.
+ * and `sum(k!,k,1,20000)` trap outright. That is a COST, and in a condition
+ * conditionCallError (ode-cost-bounds.ts) refuses each of those calls by name;
+ * on the other channels this function guards it remains open.
  */
 export function implausibleMagnitude(raw: string): string | undefined {
   // Normalised FIRST, because every guard here reads operators out of the text

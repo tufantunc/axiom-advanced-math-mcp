@@ -746,7 +746,7 @@ export function extractOde(problem: string): RouteResult {
         // refusal for a system. Bounding them here refused
         // `desolve([y'=z, z'=-y], y(0)=50000!, z(0)=0, x)` — a system — with the
         // single-equation wording, "cannot solve this equation".
-        const unbounded = isSystem ? undefined : conditionBoundError(rest[i]);
+        const unbounded = isSystem ? undefined : conditionBoundError(rest[i], [function_name]);
         return unbounded === undefined
           ? role
           : ({ kind: 'unsupported', reason: unbounded } as const);
@@ -791,7 +791,7 @@ export function extractOde(problem: string): RouteResult {
     // and keeps the caller's own order.
     const memberConditions = isSystem ? [] : odeMemberConditions(solvedEquation);
     const memberRefusal = memberConditions
-      .map((member) => conditionBoundError(member))
+      .map((member) => conditionBoundError(member, [function_name]))
       .find((reason) => reason !== undefined);
     // And the conditions TOGETHER, through the same function the system path
     // uses so the two cannot drift: conditionBoundError is per condition, so a
@@ -959,7 +959,7 @@ export function extractOde(problem: string): RouteResult {
   const implicitRefusal = isImplicitSystem
     ? undefined
     : (implicitConditions
-        .map((member) => conditionBoundError(member))
+        .map((member) => conditionBoundError(member, [implicitFunction ?? 'y']))
         .find((reason) => reason !== undefined) ?? conditionsTogetherError(implicitConditions));
   return {
     handler: 'calculus',

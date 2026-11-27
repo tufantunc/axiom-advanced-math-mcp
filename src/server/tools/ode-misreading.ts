@@ -1,6 +1,7 @@
 import { stripEnclosingBrackets } from './compute/arg-parsing.js';
 import { escapeForRegExp, splitTopLevel } from './output-cleanup.js';
 import { unicodeToAscii } from './unicode-normalize.js';
+import { odeLiteral } from './ode-text-tokens.js';
 import {
   bracketChainEnd,
   bracketsBalance,
@@ -152,39 +153,6 @@ function builtApplications(operand: string, fn: string): { start: number; text: 
     }
   }
   return found.sort((a, b) => a.start - b.start);
-}
-
-/**
- * Every ASCII spelling that hides text from a bracket count: a string `"`, a
- * quoted name `` ` ``, a comment `#`, `//` or a block-comment opener, an escape
- * `\`, and a control character (Giac's reader stops at NUL).
- */
-// Control characters are what this matches, on purpose.
-// oxlint-disable-next-line no-control-regex
-const LEXICAL_HAZARD = /["#`\\]|\/[*/]|[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/;
-
-/**
- * The first lexical hazard in an ODE's text as the engine will read it — after
- * unicodeToAscii — or undefined.
- *
- * Every bracket count this text goes through (validateExpression's,
- * bracketsBalance's, splitTopLevel's) counts a bracket inside a string, a
- * quoted name or a comment, and Giac's parser does not. So
- * `y'=y+"(")+ifactor(2^64+1)+(")"` balances for all of them, while Giac closes
- * `quote(` — and `desolve(` — at the `)` after the string and evaluates what
- * follows: the quote meant to read the text without evaluating it ran ifactor.
- * Measured the same with `` `(` ``, a block comment holding `(`, and `#` up to a
- * newline.
- *
- * Read on the NORMALISED text, because that is what reaches the engine:
- * unicodeToAscii maps `÷` to `/` and `×` to `*`, so `÷*…*÷` is a block comment
- * by the time Giac reads it, and a check on the raw text answered
- * `y'=y(x-1)+0÷*c*÷` as y'=x-1. The ASCII set is closed: every other printable
- * character is an operator, a bracket or a name character to Giac. A glyph
- * unicodeToAscii leaves alone lexes as `undef`, which hides nothing.
- */
-export function odeLiteral(text: string): string | undefined {
-  return LEXICAL_HAZARD.exec(unicodeToAscii(text))?.[0];
 }
 
 /**

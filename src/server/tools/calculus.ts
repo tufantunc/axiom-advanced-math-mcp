@@ -8,7 +8,8 @@ import { stripEnclosingBrackets } from './compute/arg-parsing.js';
 import { unicodeToAscii } from './unicode-normalize.js';
 import { giacEngine } from '../giac/index.js';
 import { verifyIntegrate, verifyOdeSystem, verifyOdeSolution } from './self-verify.js';
-import { misreadPrintedOde, odeLiteral, odeMembersToQuote } from './ode-misreading.js';
+import { misreadPrintedOde, odeMembersToQuote } from './ode-misreading.js';
+import { literalReason, odeLiteral, quotedReason } from './ode-text-tokens.js';
 import {
   leibnizQuotients,
   odeEquationMembers,
@@ -18,6 +19,7 @@ import {
 } from './ode-system-shape.js';
 import { translateOdeSystem } from './ode-system.js';
 import { implausibleEquationMagnitude } from './ode-condition-bounds.js';
+import { odeCostError } from './ode-cost-bounds.js';
 import { resolveVariable, takesVariable, variableRefusal } from './calculus-variable.js';
 import { DEFAULT_TAYLOR_ORDER, taylorAnswer } from './taylor-answer.js';
 import { definiteIntegralRefusal } from './definite-integral.js';
@@ -232,9 +234,13 @@ function validateSolveOde(args: Record<string, unknown>): string | null {
   // bounds"), where the same right-hand side in a system is refused. First,
   // because the equation is argument zero. A system is left to its own check,
   // which words the refusal for a system.
+  // Two texts, read for two questions: the caller's own equation for its
+  // members' magnitude, and the folded command — the equation with every
+  // condition joined on — for what solving it all together costs.
   const equationText =
     typeof args.original_equation === 'string' ? args.original_equation : String(args.equation);
-  if (parseOdeSystem(equationText) === null) {
+  const isSystem = parseOdeSystem(equationText) !== null;
+  if (!isSystem) {
     for (const member of odeEquationMembers(equationText)) {
       // `d^2y/dx^2` is an order, not a power: a quotient's order is bounded by
       // rewriteLeibniz, which names it, so it is not read as a magnitude here.
@@ -263,6 +269,15 @@ function validateSolveOde(args: Record<string, unknown>): string | null {
       'give the equation, then any conditions as y(0)=1, then the variable ' +
       "and the function, as in desolve(y'=y, y(0)=1, x, y)"
     );
+  }
+  // COST, last, so every size refusal keeps its wording, and before any engine
+  // call. Over the folded command because the roots the solver takes combine
+  // the equation's numbers with the conditions'. A system is bounded the same
+  // way at the end of validateSystemShape, before its first engine call.
+  if (!isSystem) {
+    const folded = replaceLeibnizQuotients(String(args.equation), (q) => q.fn);
+    const costly = odeCostError(folded);
+    if (costly !== undefined) return `solve_ode cannot solve this equation — it ${costly}`;
   }
   return null;
 }
@@ -756,14 +771,7 @@ async function odeMisreadRefusal(args: Record<string, unknown>): Promise<string 
   // every count above and not Giac's parser, which would close the call early
   // and run what follows.
   const literal = odeLiteral(equation);
-  if (literal !== undefined) {
-    const code = literal.codePointAt(0) ?? 0;
-    const shown = code < 0x20 || code === 0x7f ? 'a control character' : literal;
-    return (
-      `it holds ${shown}, which the CAS reads as a string, a comment, a quoted name or an ` +
-      'escape, and an equation holds none of them'
-    );
-  }
+  if (literal !== undefined) return `it ${literalReason(literal)}`;
   if (parseOdeSystem(equation) !== null) return undefined;
   const members = odeMembersToQuote(equation);
   if (members === null) return undefined;
@@ -789,10 +797,7 @@ async function odeMisreadRefusal(args: Record<string, unknown>): Promise<string 
   const atAPoint = `write a condition at a point, as ${fn}(0)=1 or ${fn}'(0)=0`;
   if (misread.kind === 'quoted') {
     // `y'=quote(y(x-1))` answered (2*c_0+x^2-2*x)/2, the solution of y'=x-1.
-    return (
-      `it quotes ${excerpt(misread.expression, 60)}, which the CAS does not read as ${fn} ` +
-      `— remove the quote${misread.inCondition ? ` and ${atAPoint}` : ''}`
-    );
+    return `it ${quotedReason(excerpt(misread.expression, 60), fn, misread.inCondition)}`;
   }
   if (misread.inCondition) {
     // `[y'=y, y(x=0)=1]` answered 0.

@@ -1,6 +1,7 @@
 import { stripEnclosingBrackets } from './compute/arg-parsing.js';
 import { escapeForRegExp, excerpt, splitTopLevel } from './output-cleanup.js';
 import { unicodeToAscii } from './unicode-normalize.js';
+import { DERIVATIVE_NAMES, odeCostError } from './ode-cost-bounds.js';
 import { odeClauses } from './ode-clauses.js';
 import {
   conditionBoundError,
@@ -30,8 +31,8 @@ import {
  *
  *   - No `async` and no `await` in this file, and no engine symbol named in it.
  *     Both are text assertions in ode-system-shape-boundary.test.ts.
- *   - No path from this file, from the bounds module it imports, or from any of
- *     the four leaf modules either of them imports, to `src/server/giac`. That
+ *   - No path from this file, from the bounds modules it imports, or from any
+ *     text-only leaf they import, to `src/server/giac`. That
  *     is the real invariant, and only a walk of the import closure can state
  *     it — the same test does that walk, per guarded file.
  *   - An oxlint no-restricted-imports rule in .oxlintrc.json, which is a DENYLIST
@@ -86,7 +87,7 @@ type Member =
  * were folded in as conditions instead and reported as an unsatisfiable
  * initial-value problem.
  */
-const DERIVATIVE_CALL = /^(diff|derive|deriver)\s*\(/;
+const DERIVATIVE_CALL = new RegExp(String.raw`^(${DERIVATIVE_NAMES.join('|')})\s*\(`);
 
 /**
  * Whether the whole string is one balanced derivative call.
@@ -320,6 +321,21 @@ function odeMembers(equation: string): Member[] {
 }
 
 /**
+ * The members of a SINGLE equation's text, cut where readSingleOde cuts it:
+ * at top-level commas and at the joins odeClauses knows (`and`, `&&`, `∧`).
+ *
+ * The bounds read these, not odeMembers's comma split, because the single
+ * equation path folds an and-joined condition as a condition:
+ * `y'=y and y(0)=ifactor(2^257-1)` passed every per-condition bound as one
+ * comma member and burned the shared worker's 10s budget. A system keeps
+ * odeMembers — which members make a system is parseOdeSystem's question, and
+ * this answers only which members the bounds must see.
+ */
+function singleOdeMembers(equation: string): Member[] {
+  return odeClauses(unicodeToAscii(equation)).map((member) => classify(member.trim()));
+}
+
+/**
  * The initial conditions written as MEMBERS of a bracketed ODE argument.
  *
  * For the path that does NOT get validateSystemShape: `[y'=2*x, y(0)=1]` is one
@@ -333,7 +349,7 @@ function odeMembers(equation: string): Member[] {
  * caller's business, and conditionBoundError is the rule.
  */
 export function odeMemberConditions(equation: string): string[] {
-  return odeMembers(equation)
+  return singleOdeMembers(equation)
     .filter((m): m is Extract<Member, { kind: 'condition' }> => m.kind === 'condition')
     .map((m) => m.text)
     .filter((text) => !takesUnappliedDerivative(text));
@@ -350,7 +366,7 @@ export function odeMemberConditions(equation: string): string[] {
  */
 export function odeEquationMembers(equation: string): string[] {
   return (
-    odeMembers(equation)
+    singleOdeMembers(equation)
       .filter((m) => m.kind === 'equation' || takesUnappliedDerivative(m.text))
       // A bare derivative on the left carries no number; its right side does.
       .map((m) => (m.kind === 'equation' ? m.rhs : m.text))
@@ -858,12 +874,12 @@ export function validateSystemShape(
   // refusal, and the next unrelated call came back as "Giac worker exited (code
   // 1)".
   //
-  // SIZE is bounded here — length, depth and magnitude — and that much is a
-  // property of the call graph rather than a claim. COST is not: a condition
-  // value is `(.+)`, so `y(0)=ifactor(2^257-1)` is twenty-one characters, depth
-  // one, and still wedges the shared worker for its whole budget. main does the
-  // same, so it is not a regression — but this channel is bounded, not closed,
-  // and saying otherwise is how the last four of these were missed.
+  // SIZE is bounded here — length, depth and magnitude — and so is COST, both
+  // as properties of the call graph rather than claims: what a condition CALLS
+  // through conditionBoundError (`y(0)=ifactor(2^257-1)` is twenty-one
+  // characters, depth one, and burned the shared worker's whole budget on
+  // main), and what the right-hand sides and conditions cost TOGETHER through
+  // odeCostError below, before any engine call.
   const parsedConditions: RegExpExecArray[] = [];
   for (const condition of system.conditions) {
     // Matched once, and the match is what readConditions consumes. Checking the
@@ -880,7 +896,10 @@ export function validateSystemShape(
     // measuring them: MAX_PROBE_CHARS and MAX_COMMAND_CHARS, both in
     // ode-system.ts, bound the probe and the finished command and run only after
     // this function has returned.
-    const unbounded = conditionBoundError(condition);
+    // The subject is admitted here because readConditions, below and before
+    // any engine call, refuses a subject that is not one of the functions and
+    // says so by name; the call check would word it as a call.
+    const unbounded = conditionBoundError(condition, [...functions, parsed[1] ?? '']);
     if (unbounded !== undefined) return { error: unbounded };
   }
 
@@ -888,10 +907,20 @@ export function validateSystemShape(
   const together = conditionsTogetherError(system.conditions);
   if (together !== undefined) return { error: together };
 
-  if (parsedConditions.length === 0) return { functions, rhss };
-  const read = readConditions(parsedConditions, functions);
-  if ('error' in read) return read;
-  return { functions, rhss, conditions: read };
+  const read =
+    parsedConditions.length === 0 ? undefined : readConditions(parsedConditions, functions);
+  if (read !== undefined && 'error' in read) return read;
+
+  // COST, after every check above so each keeps its wording, and still before
+  // the probe — the first engine call — because a cost bound that runs after
+  // the engine has seen the text is not one. Over the right-hand sides and the
+  // conditions together, as the single-equation path bounds its folded
+  // command: `[y'=(10^400+1)*z, z'=-y]` held the worker 10s on main finding
+  // eigenvalues.
+  const costly = odeCostError(`[${[...rhss, ...system.conditions].join(',')}]`);
+  if (costly !== undefined) return { error: costly };
+
+  return read === undefined ? { functions, rhss } : { functions, rhss, conditions: read };
 }
 
 /**

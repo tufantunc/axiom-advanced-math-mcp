@@ -1316,15 +1316,20 @@ describe('spellings the router has to tell apart', () => {
     });
 
     it('names the 800-character limit on the shape that reaches it', async () => {
-      // The cap is pinned on the engine's own expansion, which is what it is
-      // actually for: `10^900` is six characters and comes back as 901 digits.
-      // A long condition VALUE no longer gets this far — the condition scan
-      // evaluates it and refuses first — so pinning the cap there would be
-      // pinning a path that no longer exists.
-      const refused = await computeHandler({ problem: "desolve([y'=z+10^900, z'=-y], x)" });
+      // The cap was pinned on the engine's own expansion of `10^900` — six
+      // characters that come back as 901 digits. The problem's HEIGHT bound
+      // (ode-cost-bounds.ts) now refuses that before the engine sees it, and
+      // with the height at most 150 digits a forcing term's expansion cannot
+      // reach 800 characters. What still reaches the cap is condition TEXT that
+      // is long without being large: three symbolic conditions of 254
+      // characters, each inside the per-condition 280.
+      const long = Array.from({ length: 33 }, (_, i) => `alpha${i + 1}`).join('+');
+      const refused = await computeHandler({
+        problem: `desolve([u'=v, v'=w, w'=-u, u(0)=${long}, v(0)=${long}, w(0)=${long}], x)`,
+      });
       expect(refused.isError).toBe(true);
-      expect(text(refused)).toMatch(/becomes 938 characters .*800-character limit/);
-      expect(text(refused)).toMatch(/use a shorter forcing term/);
+      expect(text(refused)).toMatch(/becomes 818 characters .*800-character limit/);
+      expect(text(refused)).toMatch(/use shorter initial conditions/);
 
       const solvable = await computeHandler({ problem: "desolve([y'=z+10^90, z'=-y], x)" });
       expect(solvable.isError).toBe(false);
@@ -1334,8 +1339,14 @@ describe('spellings the router has to tell apart', () => {
       // 35 characters, a 229-character probe and a 46-character command — inside
       // every text bound — and it trapped the engine fatally, after which the
       // next unrelated caller got "Giac worker exited (code 1)".
+      //
+      // `(x+1)^300` itself is now refused before the probe, for what it
+      // expands to (ode-cost-bounds.ts); the degree cap is pinned on `x^300`,
+      // which expands to one term and reaches it.
+      const expands = await computeHandler({ problem: "desolve([y'=z+(x+1)^300, z'=-y], x)" });
+      expect(text(expands)).toMatch(/expands too far \(\(x\+1\)\^300\)/);
       const [attacker, victim] = await Promise.all([
-        computeHandler({ problem: "desolve([y'=z+(x+1)^300, z'=-y], x)" }),
+        computeHandler({ problem: "desolve([y'=z+x^300, z'=-y], x)" }),
         computeHandler({ problem: 'integrate(sin(x)*exp(x), x)' }),
       ]);
       expect(attacker.isError).toBe(true);
@@ -1431,9 +1442,12 @@ describe('spellings the router has to tell apart', () => {
     it('blames the forcing term, not conditions the caller never wrote', async () => {
       // All 938 characters are the engine's expansion of 10^900; there are no
       // initial conditions to shorten.
+      // Now refused before the engine, by the problem's height, which names the
+      // forcing term's own number rather than anything about conditions.
       const r = await computeHandler({ problem: "desolve([y'=z+10^900, z'=-y], x)" });
       expect(r.isError).toBe(true);
-      expect(text(r)).toMatch(/use a shorter forcing term/);
+      expect(text(r)).toMatch(/900 digits together \(10\^900\)/);
+      expect(text(r)).not.toMatch(/use shorter initial conditions/);
     });
 
     it('does not refuse a coefficient merely named after a sentinel', async () => {
@@ -1646,11 +1660,14 @@ describe('spellings the router has to tell apart', () => {
     it('accepts an ordinary exponent in a condition', async () => {
       // Lowering the exponent bound would refuse everyday conditions with no
       // test noticing — the over-refusal direction the 0.333... rows cover for
-      // the digit rule.
+      // the digit rule. 10^150 is the largest power of ten the problem's
+      // height bound admits (ode-cost-bounds.ts); 10^1000 used to be the
+      // pinned edge, and a root of a number that size does not finish.
       const r = await computeHandler({
-        problem: "desolve([y'=z, z'=-y, y(0)=10^1000, z(0)=0], x)",
+        problem: "desolve([y'=z, z'=-y, y(0)=10^150, z(0)=0], x)",
       });
       expect(r.isError).toBe(false);
+      expect(text(r)).toMatch(/^Result: \[\[1(0){150}\*cos\(x\),-1(0){150}\*sin\(x\)\]\]$/m);
       const small = await computeHandler({
         problem: "desolve([y'=z, z'=-y, y(0)=2^10, z(0)=0], x)",
       });
@@ -1773,7 +1790,13 @@ describe('spellings the router has to tell apart', () => {
       // reply unbounded was strictly worse than doing nothing. The number is
       // pinned as well as the direction: legitimate replies are 28 characters for
       // `[y'=z, z'=-y]`, 223 for a nine-equation ring, 329 for a 25-term sum.
-      ["desolve([y'=y*z*(x+1)^1000, z'=-y], x)", /expands to 677259 characters of coefficients/],
+      //
+      // `(x+1)^1000` itself is now refused before the probe, for what it expands
+      // to (ode-cost-bounds.ts); the reply bound is pinned on a multivariate
+      // power the expansion bound admits — 286 terms of small coefficients —
+      // whose reply still runs past 4,000 characters.
+      ["desolve([y'=y*z*(x+1)^1000, z'=-y], x)", /expands too far \(\(x\+1\)\^1000\)/],
+      ["desolve([y'=z*(a+b+c+d)^10, z'=-y], x)", /expands to 4404 characters of coefficients/],
     ])('refuses %s for its reply size, worker intact', async (problem, expected) => {
       const [attacker, victim] = await Promise.all([
         computeHandler({ problem }),
@@ -1806,8 +1829,12 @@ describe('spellings the router has to tell apart', () => {
         computeTool({ problem: 'integrate(sin(11*x)*exp(x), x)' }),
       ]);
       expect(attacker.isError).toBe(true);
+      // Now refused before the probe for its height — `(x+2)^1000` has
+      // coefficients of 302 digits — so the machine-speed race above is gone;
+      // the either-message tolerance is kept for the engine-side bounds this
+      // test was written for, should the cost bound ever admit the input.
       expect(text(attacker)).toMatch(
-        /expands to \d+ characters of coefficients|could not be analysed in the time the CAS allows/
+        /302 digits together|expands too far|expands to \d+ characters of coefficients|could not be analysed in the time the CAS allows/
       );
       expect(text(attacker)).not.toMatch(/RuntimeError/);
       expect(victim.isError).toBe(false);
@@ -2139,12 +2166,12 @@ describe('spellings the router has to tell apart', () => {
 
     it.each([
       // ...while the exponents that appear in real work keep their routes. The
-      // 10^900 case is refused by the COMMAND-length bound, not this one, so it
-      // pins that the magnitude guard did not swallow its neighbour.
+      // 10^900 case is refused by the problem's height bound, not this one, so
+      // it pins that the magnitude guard did not swallow its neighbour.
       ["desolve([y'=z+(x+1)^60, z'=-y], x)", false, /c_0\*cos\(x\)/],
       ["desolve([y'=z+2^10, z'=-y], x)", false, /1024\*sin\(x\)/],
       ["desolve([y'=z, z'=-y, y(0)=2^10, z(0)=0], x)", false, /1024\*cos\(x\)/],
-      ["desolve([y'=z+10^900, z'=-y], x)", true, /use a shorter forcing term/],
+      ["desolve([y'=z+10^900, z'=-y], x)", true, /900 digits together \(10\^900\)/],
     ])('keeps %s on its existing route', async (problem, refused, expected) => {
       const r = await computeHandler({ problem });
       expect(r.isError).toBe(refused);
@@ -2204,7 +2231,10 @@ describe('spellings the router has to tell apart', () => {
       // pole cases the degree bounds never saw, so those two bounds were removed
       // as unreachable rather than kept as dead code.
       ["desolve([y'=z+(x+1)^15/(x-1)^15, z'=-y], x)", /forcing term with a pole/],
-      ["desolve([y'=z+1/(x-1)^400, z'=-y], x)", /forcing term of degree 400/],
+      // `(x-1)^400` is now refused before the probe for what it expands to; the
+      // degree wording is pinned on `1/x^400`, one term that reaches it.
+      ["desolve([y'=z+1/(x-1)^400, z'=-y], x)", /expands too far \(\(x-1\)\^400\)/],
+      ["desolve([y'=z+1/x^400, z'=-y], x)", /forcing term of degree 400/],
     ])('refuses %s without trapping the engine', async (problem, expected) => {
       const [attacker, victim] = await Promise.all([
         computeHandler({ problem }),

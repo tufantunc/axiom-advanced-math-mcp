@@ -1,11 +1,8 @@
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import { giacEngine } from '../src/server/giac/index.js';
 import { computeHandler } from '../src/server/tools/compute/index.js';
-import {
-  misreadPrintedOde,
-  odeLiteral,
-  odeMembersToQuote,
-} from '../src/server/tools/ode-misreading.js';
+import { misreadPrintedOde, odeMembersToQuote } from '../src/server/tools/ode-misreading.js';
+import { odeLiteral } from '../src/server/tools/ode-text-tokens.js';
 import { allText } from './helpers/all-text.js';
 import { resultLine } from './helpers/result-line.js';
 
