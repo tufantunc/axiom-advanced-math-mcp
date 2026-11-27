@@ -104,8 +104,13 @@ describe('candidate pipeline — exponent LHS and chained equalities (run #55/#5
 
   it('guard: wrong coefficients stay wrong through both new paths', () => {
     expect(
-      gradeV2('e^x = 1 + x + \\frac{x^2}{3} + \\mathcal{O}(x^5', '1+x+x^2/2+x^3/6+x^4/24').match
+      gradeV2(
+        'e^x = 1 + x + \\frac{x^2}{3} + \\mathcal{O}(x^5',
+        '1+x+x^2/2+x^3/6+x^4/24'
+      ).match
     ).toBe(false);
-    expect(gradeV2('x=-2 \\text{ or } x=2', '2').match).toBe(false);
+    expect(
+      gradeV2('x=-2 \\text{ or } x=2', '2').match
+    ).toBe(false);
   });
 });

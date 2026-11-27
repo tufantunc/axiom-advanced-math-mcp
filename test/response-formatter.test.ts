@@ -6,11 +6,7 @@ describe('formatToolResponse — verification rendering', () => {
   it('renders a verified line (always, even when true)', () => {
     const r = formatToolResponse({
       result: '{-2, 2}',
-      verification: {
-        verified: true,
-        method: 'substitution',
-        detail: '2/2 roots satisfy the equation',
-      },
+      verification: { verified: true, method: 'substitution', detail: '2/2 roots satisfy the equation' },
     });
     expect(allText(r)).toContain('Verified: ✓ (substitution: 2/2 roots satisfy the equation)');
   });
@@ -18,11 +14,7 @@ describe('formatToolResponse — verification rendering', () => {
     const r = formatToolResponse({
       result: '{i, -i}',
       methodNote: 'csolve (escalated — no real solution verified)',
-      verification: {
-        verified: false,
-        method: 'substitution',
-        detail: '0/2 roots satisfy the equation',
-      },
+      verification: { verified: false, method: 'substitution', detail: '0/2 roots satisfy the equation' },
     });
     const text = allText(r);
     expect(text).toContain('Method: csolve (escalated — no real solution verified)');

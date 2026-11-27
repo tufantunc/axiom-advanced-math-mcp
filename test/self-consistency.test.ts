@@ -4,11 +4,7 @@ import {
   voteBaseline,
   voteToolAugmented,
 } from '../benchmark/runners/self-consistency.js';
-import type {
-  LLMProvider,
-  BaselineResult,
-  ToolAugmentedResult,
-} from '../benchmark/providers/types.js';
+import type { LLMProvider, BaselineResult, ToolAugmentedResult } from '../benchmark/providers/types.js';
 import type { MCPProxy } from '../benchmark/runners/mcp-proxy.js';
 
 describe('majorityVote', () => {
@@ -62,9 +58,7 @@ function makeMockProvider(textsInOrder: string[]): LLMProvider {
       const text = textsInOrder[i++ % textsInOrder.length];
       return {
         text,
-        toolCalls: [
-          { name: 'compute', args: { problem: 'x' }, result: 'Result: 1', success: true },
-        ],
+        toolCalls: [{ name: 'compute', args: { problem: 'x' }, result: 'Result: 1', success: true }],
         turns: 2,
         inputTokens: 50,
         outputTokens: 25,
@@ -98,7 +92,11 @@ describe('voteBaseline', () => {
   });
 
   it('all-different tie-breaks to first sample', async () => {
-    const provider = makeMockProvider(['The answer is 1', 'The answer is 2', 'The answer is 3']);
+    const provider = makeMockProvider([
+      'The answer is 1',
+      'The answer is 2',
+      'The answer is 3',
+    ]);
     const out = await voteBaseline('p', provider, 3, 0.7, 4096);
     expect(out.selfConsistency.winnerIndex).toBe(0);
     expect(out.selfConsistency.agreement).toBeCloseTo(1 / 3, 5);
@@ -112,15 +110,7 @@ describe('voteToolAugmented', () => {
       'Final: \\boxed{16/3}',
       'Final: \\boxed{8}',
     ]);
-    const out = await voteToolAugmented(
-      'int(sqrt(x), x, 0, 4)',
-      provider,
-      fakeProxy,
-      3,
-      0.7,
-      4096,
-      8
-    );
+    const out = await voteToolAugmented('int(sqrt(x), x, 0, 4)', provider, fakeProxy, 3, 0.7, 4096, 8);
     expect(out.selfConsistency.N).toBe(3);
     expect(out.selfConsistency.winnerIndex).toBe(0);
     expect(out.selfConsistency.agreement).toBeCloseTo(2 / 3, 5);

@@ -196,6 +196,7 @@ describe('the text-only halves evaluate nothing', () => {
     ['src/server/tools/ode-system-shape.ts'],
     ['src/server/tools/ode-condition-bounds.ts'],
     ['src/server/tools/ode-cost-bounds.ts'],
+    ['src/server/tools/ode-text-tokens.ts'],
     ['src/server/tools/ode-system.ts'],
     ['src/server/tools/calculus.ts'],
   ])('orphans no docblock onto another docblock in %s', (path) => {
@@ -226,6 +227,7 @@ describe('the text-only halves evaluate nothing', () => {
     ['src/server/tools/ode-system-shape.ts'],
     ['src/server/tools/ode-condition-bounds.ts'],
     ['src/server/tools/ode-cost-bounds.ts'],
+    ['src/server/tools/ode-text-tokens.ts'],
     ['src/server/tools/ode-system.ts'],
     ['src/server/tools/calculus.ts'],
   ])('locates nothing in %s by distance', (path) => {

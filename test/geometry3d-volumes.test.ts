@@ -5,28 +5,13 @@ const text = (r: { content: { text: string }[] }) => r.content.map((c) => c.text
 
 describe('geometry3d volumes', () => {
   it('volume_tetrahedron (unit corner) = 1/6', async () => {
-    const r = await volumeHandler({
-      operation: 'volume_tetrahedron',
-      lists: [
-        [0, 0, 0],
-        [1, 0, 0],
-        [0, 1, 0],
-        [0, 0, 1],
-      ],
-    });
+    const r = await volumeHandler({ operation: 'volume_tetrahedron', lists: [[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]] });
     expect(r.isError).toBe(false);
     expect(text(r)).toContain('0.1666');
   });
 
   it('volume_parallelepiped (unit cube) = 1', async () => {
-    const r = await volumeHandler({
-      operation: 'volume_parallelepiped',
-      lists: [
-        [1, 0, 0],
-        [0, 1, 0],
-        [0, 0, 1],
-      ],
-    });
+    const r = await volumeHandler({ operation: 'volume_parallelepiped', lists: [[1, 0, 0], [0, 1, 0], [0, 0, 1]] });
     expect(r.isError).toBe(false);
     expect(r.content.map((c) => c.text).join('\n')).toMatch(/Result:\s*1\b/);
   });
@@ -43,15 +28,7 @@ describe('geometry3d volumes', () => {
   });
 
   it('volume_tetrahedron errors when a vertex lacks 3 coords', async () => {
-    const r = await volumeHandler({
-      operation: 'volume_tetrahedron',
-      lists: [
-        [0, 0],
-        [1, 0, 0],
-        [0, 1, 0],
-        [0, 0, 1],
-      ],
-    });
+    const r = await volumeHandler({ operation: 'volume_tetrahedron', lists: [[0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]] });
     expect(r.isError).toBe(true);
   });
 

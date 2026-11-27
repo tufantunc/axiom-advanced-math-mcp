@@ -244,9 +244,9 @@ describe('ln alias (natural log)', () => {
       // `precision` mathjs renders the same value as "NaN + NaNi", so passing a
       // documented parameter walked straight past the guard.
       const service = new QuickCalcService();
-      await expect(service.evaluate({ expression: 'sqrt(-1)*0/0', precision: 10 })).rejects.toThrow(
-        /evaluated to NaN/
-      );
+      await expect(
+        service.evaluate({ expression: 'sqrt(-1)*0/0', precision: 10 })
+      ).rejects.toThrow(/evaluated to NaN/);
     });
 
     it('refuses a NaN inside a container', async () => {
@@ -270,10 +270,10 @@ describe('ln alias (natural log)', () => {
   describe('non-finite detection walks the value, not its rendering', () => {
     it.each([
       // Each of these needed a branch the others do not exercise.
-      ['[{a: 0/0}]'], // plain object inside an array — the generic walk
-      ['{a: 0/0}'], // plain object at the top level
-      ['1;0/0'], // ResultSet, from a multi-statement expression
-      ['0/0 m'], // Unit — value, no isNaN()
+      ['[{a: 0/0}]'],          // plain object inside an array — the generic walk
+      ['{a: 0/0}'],            // plain object at the top level
+      ['1;0/0'],               // ResultSet, from a multi-statement expression
+      ['0/0 m'],               // Unit — value, no isNaN()
       ['[[[[[[[[0/0]]]]]]]]'], // deep nesting: the old cap answered this at depth 8
     ])('refuses %s', async (expression) => {
       const service = new QuickCalcService();
@@ -287,9 +287,9 @@ describe('ln alias (natural log)', () => {
       // generic walk alone reports a Decimal NaN clean. Only asking the value
       // itself works, which is why the isNaN/isFinite branch must precede it.
       const service = new QuickCalcService();
-      await expect(service.evaluate({ expression: 'bignumber(0)/bignumber(0)' })).rejects.toThrow(
-        /evaluated to NaN/
-      );
+      await expect(
+        service.evaluate({ expression: 'bignumber(0)/bignumber(0)' })
+      ).rejects.toThrow(/evaluated to NaN/);
     });
 
     it('flags a Decimal infinity through the same branch', async () => {
@@ -320,10 +320,13 @@ describe('ln alias (natural log)', () => {
       // Complex answer as infinite with the suite green.
       'bignumber(1)/bignumber(3)',
       'sqrt(-1)+1',
-    ])('does not flag the finite value %s', async (expression) => {
-      const service = new QuickCalcService();
-      expect((await service.evaluate({ expression })).nonFinite).toBe(false);
-    });
+    ])(
+      'does not flag the finite value %s',
+      async (expression) => {
+        const service = new QuickCalcService();
+        expect((await service.evaluate({ expression })).nonFinite).toBe(false);
+      }
+    );
   });
 
   describe('a self-referential value is answered, not refused as too deep', () => {
@@ -337,9 +340,9 @@ describe('ln alias (natural log)', () => {
 
     it('still finds a NaN inside a cyclic value', async () => {
       const service = new QuickCalcService();
-      await expect(service.evaluate({ expression: 'a={}; a.b=a; a.c=0/0; a' })).rejects.toThrow(
-        /evaluated to NaN/
-      );
+      await expect(
+        service.evaluate({ expression: 'a={}; a.b=a; a.c=0/0; a' })
+      ).rejects.toThrow(/evaluated to NaN/);
     });
   });
 });
@@ -547,7 +550,9 @@ describe('the Giac exact form must be symbolic or integral', () => {
   it('the honest double reaches the surface when the float exact is refused', async () => {
     const r = await quickCalcHandler({ expression: 'sin(1.5)' });
     expect(r.isError).toBe(false);
-    expect(r.content.map((c) => c.text).join('\n')).toMatch(/^Result: 0\.9974949866040544$/m);
+    expect(r.content.map((c) => c.text).join('\n')).toMatch(
+      /^Result: 0\.9974949866040544$/m
+    );
   });
 });
 

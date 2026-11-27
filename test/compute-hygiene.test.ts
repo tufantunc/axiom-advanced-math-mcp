@@ -61,7 +61,9 @@ describe('applyHygiene — optional simplify', () => {
       evaluate: vi.fn().mockResolvedValue('-x/sqrt(1-x^2)'),
     };
     const out = await applyHygiene(env, fakeEngine);
-    expect(fakeEngine.evaluate).toHaveBeenCalledWith('simplify(-1/2*2*x*(sqrt(1-x^2))^-1)');
+    expect(fakeEngine.evaluate).toHaveBeenCalledWith(
+      'simplify(-1/2*2*x*(sqrt(1-x^2))^-1)'
+    );
     expect(out.display).toBe('-x/sqrt(1-x^2)');
   });
 

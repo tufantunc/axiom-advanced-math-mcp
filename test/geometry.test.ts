@@ -6,38 +6,21 @@ import { allText } from './helpers/all-text.js';
 // values must not move by more than the renderer's 10th decimal when they do.
 describe('geometry — 2D distances and magnitudes', () => {
   it('distance of a 3-4-5 pair is exactly 5', async () => {
-    const r = await geometryHandler({
-      operation: 'distance',
-      points: [
-        [0, 0],
-        [3, 4],
-      ],
-    });
+    const r = await geometryHandler({ operation: 'distance', points: [[0, 0], [3, 4]] });
     expect(r.isError).toBe(false);
     expect(allText(r)).toContain('Result: 5');
     expect(allText(r)).toContain('The answer is 5');
   });
 
   it('distance renders √2 to the renderer precision', async () => {
-    const r = await geometryHandler({
-      operation: 'distance',
-      points: [
-        [0, 0],
-        [1, 1],
-      ],
-    });
+    const r = await geometryHandler({ operation: 'distance', points: [[0, 0], [1, 1]] });
     expect(allText(r)).toContain('Result: 1.4142135624');
   });
 
   it('perimeter of the unit square is 4', async () => {
     const r = await geometryHandler({
       operation: 'perimeter_polygon',
-      points: [
-        [0, 0],
-        [1, 0],
-        [1, 1],
-        [0, 1],
-      ],
+      points: [[0, 0], [1, 0], [1, 1], [0, 1]],
     });
     expect(allText(r)).toContain('Result: 4');
   });
@@ -45,11 +28,7 @@ describe('geometry — 2D distances and magnitudes', () => {
   it('perimeter of a 3-4-5 triangle is 12', async () => {
     const r = await geometryHandler({
       operation: 'perimeter_polygon',
-      points: [
-        [0, 0],
-        [3, 0],
-        [3, 4],
-      ],
+      points: [[0, 0], [3, 0], [3, 4]],
     });
     expect(allText(r)).toContain('Result: 12');
   });
@@ -86,10 +65,7 @@ describe('geometry — 2D distances and magnitudes', () => {
     // which switches to the hypot form when the squared sum overflows.
     const r = await geometryHandler({
       operation: 'distance',
-      points: [
-        [0, 0],
-        [1e154, 1e154],
-      ],
+      points: [[0, 0], [1e154, 1e154]],
     });
     expect(allText(r)).toMatch(/Result: 1\.41421\d*e\+154/);
     expect(allText(r)).not.toContain('Infinity');
@@ -99,13 +75,7 @@ describe('geometry — 2D distances and magnitudes', () => {
   it('refuses the slope of a vertical line rather than answering Infinity', async () => {
     // The guard is ordinary input, not an edge case — deleting it ships
     // "Result: Infinity" at isError:false (found unpinned by mutation).
-    const r = await geometryHandler({
-      operation: 'slope',
-      points: [
-        [1, 2],
-        [1, 5],
-      ],
-    });
+    const r = await geometryHandler({ operation: 'slope', points: [[1, 2], [1, 5]] });
     expect(r.isError).toBe(true);
     expect(allText(r)).toMatch(/undefined/i);
   });
@@ -161,13 +131,7 @@ describe('geometry — 2D distances and magnitudes', () => {
       // Pins isPair's arity in the accept direction: a mutant accepting length
       // 2-or-3 answers Result: 4.2426406871 with the z silently discarded.
       {
-        args: async () => ({
-          operation: 'distance' as const,
-          points: [
-            [1, 2, 3],
-            [4, 5, 6],
-          ],
-        }),
+        args: async () => ({ operation: 'distance' as const, points: [[1, 2, 3], [4, 5, 6]] }),
         message: 'points must be (x, y) pairs',
       },
     ],
@@ -194,9 +158,7 @@ describe('geometry — 2D distances and magnitudes', () => {
     // arrive as a refused shape through compute's own routing, not as
     // characters destructured into (NaN, NaN).
     const { extractGeometry } = await import('../src/server/tools/compute/extractors.js');
-    const r = await geometryHandler({
-      ...extractGeometry('line_intersection((1,1,0), (1,-1,2))').args,
-    });
+    const r = await geometryHandler({ ...extractGeometry('line_intersection((1,1,0), (1,-1,2))').args });
     expect(r.isError).toBe(true);
     expect(allText(r)).toContain('lines [a, b, c] triples');
   });

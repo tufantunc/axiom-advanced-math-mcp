@@ -114,10 +114,7 @@ describe('compute gateway — multivariable end-to-end', () => {
   it('gradient through compute()', async () => {
     const r = await computeHandler({ problem: 'gradient(x^2+y^2, [x, y])' });
     expect(r.isError).toBe(false);
-    const flat = r.content
-      .map((c: { text: string }) => c.text)
-      .join('\n')
-      .replace(/\s/g, '');
+    const flat = r.content.map((c: { text: string }) => c.text).join('\n').replace(/\s/g, '');
     expect(flat).toContain('2*x');
   });
 

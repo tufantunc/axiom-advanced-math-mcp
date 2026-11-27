@@ -26,9 +26,9 @@ describe('shouldTrySimplify', () => {
 
   it('triggers on mixed * and / inside nested parens', () => {
     // (..*..)/.. is not enough; we need the * AND / both to be inside parens
-    expect(shouldTrySimplify('(2*x*(x^2-1)*(x^2+1))/(...)')).toBe(false); // top-level / only inside paren operands
+    expect(shouldTrySimplify('(2*x*(x^2-1)*(x^2+1))/(...)')).toBe(false);  // top-level / only inside paren operands
     // A real complex case from the live data:
-    expect(shouldTrySimplify('-1/2*2*x*(sqrt(1-x^2))^-1')).toBe(true); // already covered by ^- rule
+    expect(shouldTrySimplify('-1/2*2*x*(sqrt(1-x^2))^-1')).toBe(true);  // already covered by ^- rule
   });
 
   it('handles empty input safely', () => {

@@ -71,24 +71,8 @@ describe('svg geometry pins', () => {
 
   it('pins grid density: [-30,30] steps by 5 (13 x-tick labels)', async () => {
     const r = await plotToSvg({ expression: 'x', xMin: -30, xMax: 30 });
-    const ticks = [
-      ...r.svg.matchAll(/<text x="[\d.]+" y="[\d.]+" text-anchor="middle">([^<]*)<\/text>/g),
-    ].map((m) => m[1]);
+    const ticks = [...r.svg.matchAll(/<text x="[\d.]+" y="[\d.]+" text-anchor="middle">([^<]*)<\/text>/g)].map((m) => m[1]);
     // divisor 6 gives step 10 (7 labels); the pinned step is 5
-    expect(ticks).toEqual([
-      '-30',
-      '-25',
-      '-20',
-      '-15',
-      '-10',
-      '-5',
-      '0',
-      '5',
-      '10',
-      '15',
-      '20',
-      '25',
-      '30',
-    ]);
+    expect(ticks).toEqual(['-30','-25','-20','-15','-10','-5','0','5','10','15','20','25','30']);
   });
 });
