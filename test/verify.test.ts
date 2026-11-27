@@ -41,7 +41,7 @@ describe('Verify Tool', () => {
       // The diagnostic names WHERE the sampled check failed, at which
       // substitution, with what residual — pin its shape so the failure
       // detail cannot degrade into an unreadable blob.
-      expect(text).toMatch(/At x=[-\d.]+: diff = [-\d.e+]+/);
+      expect(text).toMatch(/At x=[-\d.]+: \|diff\| = [\d.e+-]+/);
     });
 
     it('should reject numeric identity 2+3 = 6', async () => {
@@ -509,7 +509,7 @@ describe('Verify Tool', () => {
 
     // A real counterexample disputes the proof: ln(x^2) = 2*ln(x) simplifies
     // to 0 symbolically, but the numeric arm samples x=-1, where ln(-1) is
-    // complex and the parsed difference is -6.28… — the identity genuinely
+    // complex and |difference| is |-2πi| = 6.28… — the identity genuinely
     // fails off the positive reals. Not verified, checked, LOW confidence:
     // proof and counterexample in one run is a conflict, not certainty.
     it('a numeric counterexample disputes the symbolic proof: ln(x^2) = 2*ln(x)', async () => {
@@ -524,7 +524,7 @@ describe('Verify Tool', () => {
       // "≠" next to a proof line.
       const detail = parsed.checks_performed.join('\n');
       expect(detail).toContain('simplify(LHS - RHS) = 0 ✓');
-      expect(detail).toMatch(/At x=-1: diff = -6\.28/);
+      expect(detail).toMatch(/At x=-1: \|diff\| = 6\.28/);
       expect(parsed.explanation).toContain('in conflict');
     });
 

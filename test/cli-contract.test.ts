@@ -245,6 +245,23 @@ describe('CLI — verify', () => {
     expect(r.stdout.trim()).toBe('false');
   }, 30_000);
 
+  // One residual reader for solve and verify: a true parameterised claim is
+  // TRUE (once FALSE, from parseFloat reading `2.0/k*k-2.0` as 2), a wrong one
+  // FALSE, and an undecidable residual UNKNOWN with exit 1 — never TRUE.
+  it.each([
+    ['x=2/k satisfies x*k=2', 0, 'Verified: TRUE'],
+    ['x=3/k satisfies x*k=2', 2, 'Verified: FALSE'],
+    ['x=abs(k) satisfies x=k', 1, 'Verified: UNKNOWN'],
+  ])(
+    '%s exits %i',
+    async (claim, code, verdict) => {
+      const r = await cli(['verify', claim]);
+      expect(r.code).toBe(code);
+      expect(r.stdout + r.stderr).toContain(verdict);
+    },
+    30_000
+  );
+
   // Exit 2 is a mathematical verdict. A claim that never got checked must not
   // borrow it: `if axiom-math verify "$c"; then ... else echo "disproved"; fi`
   // would otherwise report a syntax error as a refuted theorem.
