@@ -8,7 +8,7 @@ import {
   unicodeToAscii,
 } from '../unicode-normalize.js';
 import { rewriteCombinatorics } from '../combinatorics-rewrite.js';
-import { stripOrderTerm } from '../output-cleanup.js';
+import { stripOrderTerm, seriesRemainderOrders } from '../output-cleanup.js';
 
 export const verifySchema = z.object({
   claim: z
@@ -148,6 +148,8 @@ interface SideReading {
   readsUndefined: boolean;
   /** The reading never came back — the engine errored or answered nothing. */
   unreadable: boolean;
+  /** The reading is a series that broke down: a remainder of order 0 (see seriesRemainderOrders). */
+  brokenSeries?: boolean;
 }
 
 /**
@@ -167,6 +169,17 @@ async function normalizeSide(side: string): Promise<SideReading> {
       // every sampled point substitutes to 0 — and would certify the claim.
       if (containsUndefinedMarker(r)) {
         return { expr: side, readsUndefined: true, unreadable: false };
+      }
+      // A remainder of order 0 is O(1): the expansion broke down where it
+      // started, as at an essential singularity, and says nothing about the
+      // function. Read as a series it certified false claims:
+      // `taylor(exp(1/x), x=0, 3) = 0` was verified with high confidence,
+      // because the difference simplified to the remainder alone, which the
+      // symbolic check takes for zero. The order a caller asked for is not
+      // known here, so a series that stops early but not at once
+      // (`1+x*order_size(x)`) is not caught; compute refuses both.
+      if (seriesRemainderOrders(r).includes(0)) {
+        return { expr: side, readsUndefined: false, unreadable: false, brokenSeries: true };
       }
       if (r.includes('order_size')) {
         const stripped = stripOrderTerm(r);
@@ -710,6 +723,18 @@ async function handleIdentityVerification(
         `Could not read a side of ${lhsReading.expr} = ${rhsReading.expr}: ` +
         `the engine errored or returned no reading.`,
       checks_performed: ['unreadable_side'],
+    };
+  }
+  if (lhsReading.brokenSeries || rhsReading.brokenSeries) {
+    return {
+      verified: false,
+      evaluated: false,
+      confidence: 'low',
+      explanation:
+        `Could not check the claim: a side of ${lhsReading.expr} = ${rhsReading.expr} is a ` +
+        `series that breaks down — the CAS expands it to nothing but O(1), as at an ` +
+        `essential singularity, where there is no Taylor series to compare.`,
+      checks_performed: ['broken_series'],
     };
   }
   const lhs = lhsReading.expr;

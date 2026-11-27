@@ -8,6 +8,8 @@ export interface CacheEntry {
     method: 'substitution' | 'expand' | 'differentiation';
     detail: string;
   };
+  /** See EvaluatedResponse.seriesRemainderOrders in tools/giac-eval.ts. */
+  seriesRemainderOrders?: number[];
 }
 
 const MAX_ENTRIES = 100;

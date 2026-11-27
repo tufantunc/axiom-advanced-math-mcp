@@ -94,6 +94,86 @@ export function stripOrderTerm(expr: string): string {
   return stripped || expr;
 }
 
+/** `s` without one pair of parentheses that encloses all of it, and without spaces. */
+function unwrapParens(s: string): string {
+  const t = s.replaceAll(/\s+/g, '');
+  if (!t.startsWith('(') || !t.endsWith(')')) return t;
+  let depth = 0;
+  for (let i = 0; i < t.length - 1; i++) {
+    if (t[i] === '(') depth++;
+    else if (t[i] === ')') depth--;
+    if (depth === 0) return t; // the first `(` closes before the end: `(a)*(b)`
+  }
+  return t.slice(1, -1);
+}
+
+/**
+ * The operand that ends `s`, read backwards: a parenthesised group, or a run
+ * of name characters. undefined when `s` ends in neither, or when the group is
+ * a function's argument list (`cos(x)`), which is not an operand on its own.
+ */
+function trailingOperand(s: string): string | undefined {
+  if (s.endsWith(')')) {
+    let depth = 0;
+    for (let i = s.length - 1; i >= 0; i--) {
+      if (s[i] === ')') depth++;
+      else if (s[i] === '(') depth--;
+      if (depth === 0) {
+        if (i > 0 && /[\p{L}\p{N}_]/u.test(s[i - 1])) return undefined;
+        return s.slice(i);
+      }
+    }
+    return undefined;
+  }
+  const run = /[\p{L}\p{N}_]+$/u.exec(s);
+  return run ? run[0] : undefined;
+}
+
+/**
+ * The order of each series remainder in a Giac answer: for every
+ * `order_size(B)` it prints, the k of the `B^k*` in front of it — the
+ * remainder is O(B^k). 0 when nothing in front of it is a power of B.
+ *
+ * Giac marks the place a series expansion broke down with the same token it
+ * uses for an ordinary remainder, so the token alone proves nothing: a
+ * successful expansion to order n ends `+x^(n+1)*order_size(x)`, and one that
+ * met an essential singularity is `order_size(x)` — O(1), no information at
+ * all — or stops early, `1+x*order_size(x)` for `1+x*exp(1/x)` to order 3.
+ * The exponent is what tells them apart, and stripOrderTerm, which cuts the
+ * remainder off, threw it away: `taylor(exp(1/x), x, 0, 3)` answered
+ * `order_size(x)` and `taylor(1+x*exp(1/x), x, 0, 3)` answered `1`.
+ */
+export function seriesRemainderOrders(expr: string): number[] {
+  const orders: number[] = [];
+  const marker = 'order_size(';
+  for (let at = expr.indexOf(marker); at !== -1; at = expr.indexOf(marker, at + 1)) {
+    if (at > 0 && /[\p{L}\p{N}_]/u.test(expr[at - 1])) continue; // `my_order_size(`
+    let depth = 0;
+    let end = -1;
+    for (let i = at + marker.length - 1; i < expr.length; i++) {
+      if (expr[i] === '(') depth++;
+      else if (expr[i] === ')') depth--;
+      if (depth === 0) {
+        end = i;
+        break;
+      }
+    }
+    const base = end === -1 ? undefined : unwrapParens(expr.slice(at + marker.length, end));
+    const before = expr.slice(0, at).trimEnd();
+    let order = 0;
+    if (base !== undefined && before.endsWith('*')) {
+      const factor = before.slice(0, -1).trimEnd();
+      const power = /\^\s*(\d+)$/.exec(factor);
+      const operand = trailingOperand(power ? factor.slice(0, power.index).trimEnd() : factor);
+      if (operand !== undefined && unwrapParens(operand) === base) {
+        order = power ? Number(power[1]) : 1;
+      }
+    }
+    orders.push(order);
+  }
+  return orders;
+}
+
 /**
  * Normalize Giac's `solve` list output into clean set/tuple notation.
  *   list[-2,2]    -> {-2, 2}

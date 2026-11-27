@@ -114,6 +114,35 @@ describe('runCommand — compute', () => {
     expect(out).toEqual([]);
     expect(err.join('\n')).toContain('integrate takes a lower and an upper bound — got only "z"');
   }, 30_000);
+
+  // Each printed a number to stdout with exit 0: `order_size(x)`, the
+  // principal value 0, a derivative in y, `diff(x^2,12)`, and a worker trap.
+  it.each([
+    ['taylor(exp(1/x),x,0,3)', 'exp(1/x) has no Taylor series of order 3 at x = 0'],
+    ['integrate(1/(x-1),x,0,2)', 'the integral diverges'],
+    ['diff(2x+y)', 'more than one symbol (x, y)'],
+    // stderr carries the JSON envelope, so the quotes around the name are escaped.
+    ['diff(x^2, DIGITS)', String.raw`\"DIGITS\" is a value`],
+    ['diff(x^2, plus_inf)', String.raw`\"plus_inf\" is a constant`],
+    ['diff(exp(sin(x*y))*cos(x+y)/(1+x^2+y^2),[x,y],6)', 'is more than this computes'],
+  ])('quiet %s is refused on stderr, with nothing on stdout', async (expression, message) => {
+    capture();
+    const code = await runCommand({ kind: 'compute', expression, output: 'quiet' });
+    expect(code).toBe(1);
+    expect(out).toEqual([]);
+    expect(err.join('\n')).toContain(message);
+  }, 30_000);
+
+  it.each([
+    ['taylor(x^4,x,0,3)', '0'],
+    ['integrate(1/sqrt(abs(x)),x,-1,1)', '4'],
+    ['diff(3t^2)', '3*2*t'],
+  ])('quiet %s prints %s', async (expression, value) => {
+    capture();
+    const code = await runCommand({ kind: 'compute', expression, output: 'quiet' });
+    expect(code).toBe(0);
+    expect(out).toEqual([value]);
+  }, 30_000);
 });
 
 describe('runCommand — verify', () => {

@@ -257,6 +257,11 @@ export function extractDiff(problem: string): RouteResult {
   const call = readCalculusCall(problem);
   const { name, parts } = call;
   const expression = parts[0] || '';
+  // A guess is only a placeholder here, marked `variable_guessed`: calculus.ts
+  // asks the engine which names the expression has, and refuses when more than
+  // one could be meant. Guessed from the text alone, `diff(2x+y)` differentiated
+  // by y and `diff(3t^2)` by x — the letter after a digit is not a word on its
+  // own — answering 0.
   let variable = parts[1] || guessVariable(expression);
   // Passed through as typed, not parseInt'd: calculus.ts refuses anything that
   // is not a positive integer. parseInt read `-1` as an order it then ignored,
@@ -285,6 +290,7 @@ export function extractDiff(problem: string): RouteResult {
       operation: 'differentiate',
       expression,
       variable,
+      ...(parts[1] ? {} : { variable_guessed: true }),
       ...(order !== undefined ? { order } : {}),
       ...(refusal !== undefined ? { argument_refusal: refusal } : {}),
     },
@@ -328,6 +334,7 @@ export function extractIntegrate(problem: string): RouteResult {
       operation: 'integrate',
       expression,
       variable,
+      ...(parts[1] ? {} : { variable_guessed: true }),
       ...(lower_bound !== undefined ? { lower_bound } : {}),
       ...(upper_bound !== undefined ? { upper_bound } : {}),
       ...(refusal !== undefined ? { argument_refusal: refusal } : {}),
@@ -395,6 +402,7 @@ export function extractTaylor(problem: string): RouteResult {
       operation: 'taylor',
       expression,
       variable,
+      ...(parts[1] ? {} : { variable_guessed: true }),
       point,
       ...(order !== undefined ? { order } : {}),
       ...(refusal !== undefined ? { argument_refusal: refusal } : {}),

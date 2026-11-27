@@ -19,6 +19,9 @@ import {
 } from './ode-system-shape.js';
 import { translateOdeSystem } from './ode-system.js';
 import { implausibleEquationMagnitude } from './ode-condition-bounds.js';
+import { resolveGuessedVariable, variableValueRefusal } from './calculus-variable.js';
+import { DEFAULT_TAYLOR_ORDER, taylorAnswer } from './taylor-answer.js';
+import { definiteIntegralRefusal } from './definite-integral.js';
 
 /** Giac's spelling of a limit's direction: from the right, from the left, both sides. */
 type GiacLimitDirection = '1' | '-1' | '0';
@@ -78,7 +81,7 @@ function buildSimpleCommand(operation: string, args: Record<string, unknown>): s
       const expr = args.expression as string;
       const v = args.variable as string;
       const pt = (args.point as string) ?? '0';
-      const n = args.order === undefined ? 5 : Number(args.order);
+      const n = args.order === undefined ? DEFAULT_TAYLOR_ORDER : Number(args.order);
       return `taylor(${expr},${v}=${pt},${n})`;
     }
     case 'solve_ode': {
@@ -171,18 +174,53 @@ export const MAX_CALCULUS_ORDER = 100;
 const MAX_DERIVATIVE_ENTRIES = 256;
 
 /**
+ * The most work a derivative with respect to a list may ask for, in units of
+ * `s * (2k)^n`: the expression's length s, k variables, order n.
+ *
+ * The entry cap bounds how many entries there are, not how large each one
+ * grows, and the second is what traps the worker: each order multiplies an
+ * entry by the product and chain rules. `diff(exp(sin(x*y))*cos(x+y)/(1+x^2+y^2),
+ * [x, y], 6)` has 64 entries and traps ("RuntimeError: unreachable"). The trap
+ * follows the size of the answer — every one measured came above about 1.3
+ * million characters — so the bound estimates that size: k^n entries, each
+ * about s * 2^n long.
+ *
+ * Calibrated on 35 expressions of two to five variables (the measurements are
+ * in the PR that added this). The smallest cost that trapped was 73,728
+ * (`diff(tan(tan(tan(x*y))), [x, y], 6)`), and every cost at or under this cap
+ * answered in under a second with at most about 250,000 characters. It still
+ * answers Hessians of two-variable expressions up to about 1,000 characters
+ * and of four-variable ones up to about 250; a gradient (n = 1) of ten
+ * variables up to about 800.
+ *
+ * Only for a list of two or more variables. A single variable grows by much
+ * less per order — `diff(exp(sin(x)), x, 100)` answers in under a second — and
+ * this model would refuse it, so a single variable is bounded by
+ * MAX_CALCULUS_ORDER alone.
+ */
+export const MAX_DERIVATIVE_COST = 16_384;
+
+/**
  * Names Giac reads as constants: differentiating with respect to one is 0.
  * A pattern, not a Set literal — test/operation-coverage.test.ts reads every
  * `new Set([...])` in a handler as operation names it dispatches on. `π` is a
  * letter, so it passes the name check and is caught here; `∞` is not one.
  */
-const CONSTANT_NAME = /^(?:e|i|pi|π|infinity|inf|euler_gamma)$/u;
+const CONSTANT_NAME = /^(?:e|i|pi|π|infinity|inf|plus_inf|minus_inf|unsigned_inf|euler_gamma)$/u;
 
 /**
  * Names Giac reads as values rather than symbols: `diff(x^2, NULL)` answered
- * 2*x, `diff(x^2, undef)` 0, `diff(x^2, true)` stayed unevaluated.
+ * 2*x, `diff(x^2, undef)` 0, `diff(x^2, true)` stayed unevaluated, and
+ * `diff(x^2, DIGITS)` answered `diff(x^2,12)` — DIGITS is the precision
+ * setting. The engine is asked about any other name before the command runs
+ * (variableValueRefusal); these are refused without a round trip.
  */
-const VALUE_NAME = /^(?:NULL|true|false|undef)$/u;
+const VALUE_NAME = /^(?:NULL|true|false|undef|DIGITS)$/u;
+
+/** The operations that take a variable the engine is asked about. */
+function takesVariable(operation: string): boolean {
+  return operation === 'differentiate' || operation === 'integrate' || operation === 'taylor';
+}
 
 /** A name as Giac reads one, `θ` included — the same rule as unicode-normalize. */
 const VARIABLE_NAME = new RegExp(`^${NAME_PATTERN}$`, 'u');
@@ -213,7 +251,8 @@ function nameRefusal(operation: string, text: string): string | null {
 function variableRefusal(
   operation: string,
   variable: unknown,
-  order: unknown = undefined
+  order: unknown = undefined,
+  expression: unknown = ''
 ): string | null {
   const text = String(variable).trim();
   if (operation === 'differentiate' && text.startsWith('[') && text.endsWith(']')) {
@@ -222,12 +261,23 @@ function variableRefusal(
       const refusal = nameRefusal(operation, name);
       if (refusal) return refusal;
     }
+    if (!/^\d+$/.test(String(order ?? '1').trim())) return null;
     const n = order === undefined ? 1 : Number(String(order).trim());
-    if (/^\d+$/.test(String(order ?? '1').trim()) && names.length ** n > MAX_DERIVATIVE_ENTRIES) {
+    const k = names.length;
+    if (k ** n > MAX_DERIVATIVE_ENTRIES) {
       return (
-        `differentiate with ${names.length} variables to order ${n} gives ` +
-        `${names.length}^${n} entries, more than the ${MAX_DERIVATIVE_ENTRIES} this computes — ` +
+        `differentiate with ${k} variables to order ${n} gives ` +
+        `${k}^${n} entries, more than the ${MAX_DERIVATIVE_ENTRIES} this computes — ` +
         'lower the order or list fewer variables'
+      );
+    }
+    const size = unicodeToAscii(String(expression)).replaceAll(/\s+/g, '').length;
+    if (k > 1 && size * (2 * k) ** n > MAX_DERIVATIVE_COST) {
+      return (
+        `differentiate with ${k} variables to order ${n} of an expression this long ` +
+        `(${size} characters) is more than this computes: each order multiplies ` +
+        `the size of all ${k}^${n} entries — lower the order, list fewer variables, ` +
+        'or differentiate a shorter expression'
       );
     }
     return null;
@@ -260,7 +310,7 @@ function calculusArgsRefusal(operation: string, args: Record<string, unknown>): 
   if (typeof args.argument_refusal === 'string') return args.argument_refusal;
   if (!args.expression) return `'expression' is required for ${operation}`;
   if (!args.variable) return `'variable' is required for ${operation}`;
-  return variableRefusal(operation, args.variable, args.order);
+  return variableRefusal(operation, args.variable, args.order, args.expression);
 }
 
 function validateDifferentiate(args: Record<string, unknown>): string | null {
@@ -844,12 +894,24 @@ export async function calculusHandler(input: Record<string, unknown>) {
 
     const leibniz = operation === 'solve_ode' ? rewriteLeibniz(input) : { args: input };
     if ('error' in leibniz) return formatErrorResponse(leibniz.error);
-    const { args } = leibniz;
+    let { args } = leibniz;
 
     const exprToValidate =
       operation === 'solve_ode' ? (args.equation as string) : (args.expression as string);
     const validationError = validateExpression(exprToValidate);
     if (validationError) return formatErrorResponse(validationError.message);
+
+    // The variable as the engine reads it — after every synchronous check, so
+    // text those refuse never reaches the engine.
+    if (takesVariable(operation)) {
+      const resolved = await resolveGuessedVariable(operation, args);
+      if ('error' in resolved) return formatErrorResponse(resolved.error);
+      args = resolved.args;
+      const refusal =
+        (args.variable_guessed === true ? nameRefusal(operation, String(args.variable)) : null) ??
+        (await variableValueRefusal(operation, args.variable));
+      if (refusal) return formatErrorResponse(refusal);
+    }
 
     if (operation === 'solve_ode') {
       const misread = await odeMisreadRefusal(args);
@@ -883,6 +945,14 @@ export async function calculusHandler(input: Record<string, unknown>) {
     } else if (operation !== 'limit' && !response.isError) {
       const refusal = unfinishedAnswerGuard(operation, response.result);
       if (refusal) return refusal;
+      if (operation === 'taylor') {
+        const answer = await taylorAnswer(response, args, giacExpr);
+        if (answer) return answer;
+      }
+      if (operation === 'integrate') {
+        const divergent = await definiteIntegralRefusal(args, response.result);
+        if (divergent) return formatErrorResponse(divergent);
+      }
     }
     return response;
   } catch (error) {
