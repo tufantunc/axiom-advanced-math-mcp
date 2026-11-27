@@ -180,6 +180,8 @@ describe('an application built with a CAS command is refused by name', () => {
     ["desolve(y'=apply(y,x-1), x, y)", 'calls apply, which the CAS runs as a command'],
     ["y'=map(x-1,y)", 'calls map, which the CAS runs as a command'],
     ["y'=of(y,x-1)", 'calls of, which the CAS runs as a command'],
+    // Quoted, as Giac prints the command back: still the command `of`.
+    ["y'='of'(y,x-1)", 'calls of, which the CAS runs as a command'],
     ["y'=hold(y(x-1))", 'calls hold, which the CAS runs as a command'],
     ["y'=unquote(y(x-1))", 'calls unquote, which the CAS runs as a command'],
     ["y'=y+eval(quote(y(x-1)))", 'calls eval, which the CAS runs as a command'],
